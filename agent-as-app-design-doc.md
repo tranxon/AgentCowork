@@ -1,6 +1,6 @@
 # Agent as APP — 设计文档索引
 
-> 版本：v3.0 | 更新日期：2026-04-09
+> 版本：v3.1 | 更新日期：2026-04-09
 
 设计一个去中心化、高安全、可扩展的 AI Agent 运行时平台。核心思想是将每个 Agent 视为独立的"应用包"（类似 Android APP），由统一的 Agent Runtime 进程加载执行，运行在客户端并由轻量级 Gateway 管理生命周期。
 
@@ -21,6 +21,7 @@
 | [07-system-agent.md](./docs/07-system-agent.md) | 系统 Agent：ContentProvider、冷启动注入、身份管理、observe 机制 | 3.7 |
 | [08-security.md](./docs/08-security.md) | 安全设计：隔离、签名、权限、加密等 10 条 | 4 |
 | [09-roadmap-and-scenarios.md](./docs/09-roadmap-and-scenarios.md) | 实现路线图（6 Phase）+ 使用场景示例 | 5 + 6 |
+| [10-dev-framework.md](./docs/10-dev-framework.md) | 开发框架：克隆、Debug Protocol、对话调试、录制回放、发布 | 新增 |
 
 ---
 
@@ -35,3 +36,5 @@
 **想了解系统 Agent 怎么工作？** → [07-system-agent.md](./docs/07-system-agent.md) 的身份管理与 ContentProvider
 
 **想看开发计划？** → [09-roadmap-and-scenarios.md](./docs/09-roadmap-and-scenarios.md)
+
+**想开发/调试 Agent？** → [10-dev-framework.md](./docs/10-dev-framework.md) 的克隆、Debug Protocol、录制回放
