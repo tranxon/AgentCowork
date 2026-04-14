@@ -19,7 +19,7 @@ docs/
 ├── 07-system-agent.md     # System Agent design
 ├── 08-security.md         # Security design (isolation, signing)
 ├── 09-roadmap-and-scenarios.md  # 6-phase implementation plan
-├── 10-dev-framework.md    # DevMode, Debug Protocol
+├── 10-debug-protocol.md   # Debug Protocol (DevMode)
 ├── 11-module-design.md    # Module design index
 └── module-design/         # Detailed crate specs (Rust workspace)
     ├── 00-overview.md     # Workspace structure, crate list

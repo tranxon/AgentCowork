@@ -1,6 +1,6 @@
 # 实现路线图与使用场景
 
-> 版本：v3.0 | 更新日期：2026-04-09
+> 版本：v3.1 | 更新日期：2026-04-14
 
 ---
 
@@ -11,8 +11,9 @@
 - 定义 manifest v1 规范，实现 ZIP 解析。
 - 实现 .agent 包签名机制：密钥对生成（`rollball-keygen`）、签名（`rollball-sign`）、验证（`rollball-verify`）。
 - 实现 Agent Runtime 核心：加载 .agent 包、组装 prompt、LLM 主循环、内置工具（memory, http, shell）。
-- Gateway 基础功能：安装（含签名验证）、卸载、启动/停止进程、Unix Socket 通信。
+- Gateway 基础功能：安装（含签名验证）、卸载、启动/停止进程、Socket 通信。
 - Key Vault 基础功能：加密存储、一次性分发。
+- Gateway CLI 二进制：命令行管理 Agent（install/uninstall/start/stop/list）。
 - 实现一个示例 Agent（天气查询，能调 LLM + 用工具）。
 - 本地目录隔离（不使用命名空间，仅 `--work-dir`）。
 
@@ -40,14 +41,50 @@
 - Rate Limiter（速率令牌分配）。
 - 定时触发器（cron 解析）。
 
-### Phase 5: 云端与生态
+### Phase 5: Desktop App + 开发框架
+
+Desktop App 和开发调试能力在同一阶段交付，因为它们共享 Debug Protocol 基础设施。
+
+#### 5.1: Desktop App 基础（用户模式）
+
+- Gateway HTTP API：Axum HTTP Server，供 Desktop App 和 CLI 使用。
+- Tauri v2 Desktop App 骨架：Rust backend + React frontend。
+- 系统托盘：Gateway 状态指示、快捷操作。
+- Agent 管理界面：安装、卸载、启停、Agent 列表。
+- 对话界面：消息收发、流式输出、工具调用展示。
+- 设置页面：Gateway 连接配置、Provider 管理、Vault API Key 管理。
+- 首次启动引导流程。
+
+#### 5.2: 开发框架（Debug Protocol + 开发者模式）
+
+- Agent Runtime DevMode：`--dev-mode` 启动参数、Debug Protocol Server（WebSocket）。
+- Debug Protocol 实现：执行控制（Pause/Step/Resume）、状态查询、断点系统。
+- 消息快照与回滚机制。
+- Agent 克隆 API（Gateway HTTP API 侧）。
+- 从零创建 Agent 向导。
+- Desktop App 开发者模式：调试面板、单步执行详情、断点管理。
+
+#### 5.3: 开发框架高级
+
+- 消息编辑与重执行。
+- Skill 热加载 + Desktop App Skill 编辑器。
+- Provider 动态切换（调试面板内）。
+- Manifest 编辑器。
+- 录制回放引擎（JSONL 格式）、自动/手动回放。
+
+#### 5.4: 发布工具链
+
+- 发布向导（Desktop App 内）：检查 → 清理 → 打包 → 签名 → 分发。
+- Gateway 发布 API（prepare / build / install-locally / export）。
+
+### Phase 6: 云端与生态
 
 - Memory Sync Service（云端增量同步、冲突解决）。
 - 远程仓库支持（添加仓库、更新、自动下载）。
-- 图形化管理界面（Tauri 或 egui）。
 - Agent 商店原型。
+- 付费 Agent 许可证验证。
 
-### Phase 6: 跨平台适配
+### Phase 7: 跨平台适配
 
 - Windows 适配：Named Pipe 传输、Job Object 隔离、Windows 路径规范。
 - macOS 适配：App Sandbox 隔离、macOS 路径规范。

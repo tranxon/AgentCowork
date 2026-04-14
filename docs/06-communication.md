@@ -1,10 +1,48 @@
 # 通信协议
 
-> 版本：v3.2 | 更新日期：2026-04-13
+> 版本：v3.3 | 更新日期：2026-04-14
 
 ---
 
-## 1. Gateway Service API
+## 0. 通信架构总览
+
+Rollball 平台有三条独立的通信通道，各司其职：
+
+```
+┌────────────────┐         ┌────────────────┐         ┌────────────────┐
+│  Desktop App   │         │  Agent Runtime │         │  Agent Runtime │
+│  / CLI         │         │  (Agent A)     │         │  (Agent B)     │
+└───────┬────────┘         └───────┬────────┘         └───────┬────────┘
+        │                          │                          │
+        │ HTTP API                 │ Socket API               │ Socket API
+        │ (REST + WS)              │ (二进制帧, IPC)            │ (二进制帧, IPC)
+        │                          │                          │
+        ▼                          ▼                          ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                         Gateway (单进程)                              │
+│                                                                      │
+│  HTTP API ──────┐  ┌──────── Socket API ────────┐                   │
+│  (Axum)         │  │                             │                   │
+│  管理面操作       │  │  Agent IPC 操作              │                   │
+│  (CRUD, 对话)    │  │  (Key, Intent, 预算)         │                   │
+│                 │  │                             │                   │
+└─────────────────┘  └─────────────────────────────┘                   │
+└──────────────────────────────────────────────────────────────────────┘
+        ▲                          ▲                          ▲
+        │                          │                          │
+        │                          │ Intent Router 转发        │
+        └──────────────────────────┼──────────────────────────┘
+```
+
+| 通道 | 消费者 | 协议 | 用途 |
+|------|--------|------|------|
+| **Socket API** | Agent Runtime | 二进制帧（自定义） | Key 分发、Intent 通信、预算上报、速率协调 |
+| **HTTP API** | Desktop App / CLI | REST + WebSocket | Agent 管理、对话、Vault、配置 |
+| **Debug Protocol** | Desktop App (DevMode) | JSON-RPC 2.0 over WebSocket | 步进调试、录制回放、Skill 热加载 |
+
+Socket API 和 HTTP API 的详细定义分别在 1-2 节和 9 节（见 [04-gateway.md](./04-gateway.md) 第 9 节）。Debug Protocol 详见 [10-debug-protocol.md](./10-debug-protocol.md)。
+
+## 1. Gateway Service API（Socket API）
 
 Agent Runtime 与 Gateway 通过 **Gateway Service API** 通信。API 的消息格式和交互语义是**平台无关的合同**，传输层由各平台自行选择。
 

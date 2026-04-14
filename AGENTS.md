@@ -30,25 +30,39 @@ agent-study/
 | Gateway design | `docs/04-gateway.md` + `docs/module-design/03-gateway.md` | Lifecycle, IntentRouter, Vault |
 | Memory architecture | `docs/05-memory.md` + `docs/module-design/04-grafeo.md` | Grafeo, layered memory |
 | Security design | `docs/08-security.md` + `docs/module-design/05-vault-sign.md` | Isolation, signing, permissions |
-| Module workspace plan | `docs/module-design/00-overview.md` | 6-crate workspace structure |
-| Implementation roadmap | `docs/09-roadmap-and-scenarios.md` | 6-phase plan |
+| Debug protocol | `docs/10-debug-protocol.md` | DevMode, breakpoints, recording/replay |
+| Tool system | `docs/12-tool-system.md` | Built-in / WASM / Gateway tools |
+| Skill system | `docs/13-skill-system.md` | SKILL.md + Grafeo experience layer |
+| Desktop app | `docs/14-desktop-app.md` | Tauri layout, tray, Gateway HTTP API |
+| Module workspace plan | `docs/module-design/00-overview.md` | 7-crate workspace structure |
+| Implementation roadmap | `docs/09-roadmap-and-scenarios.md` | 7-phase plan |
 
 ## ARCHITECTURE MAP
 
 ```
-Gateway (常驻)
+Desktop App (Tauri v2, 独立进程)
+├── Chat / Agent List / Settings UI
+├── Debug Panel (DevMode)
+└── System Tray
+        │
+        │ Gateway HTTP API (http://127.0.0.1:19876)
+        ▼
+Gateway (常驻独立进程)
 ├── Package Manager — install/upgrade .agent packages
 ├── Lifecycle Manager — spawn/kill agent processes
 ├── Intent Router — cross-agent messaging
 ├── Key Vault — secure API key storage
 ├── Budget Tracker — usage accounting
-└── Rate Limiter — request throttling
+├── Rate Limiter — request throttling
+├── Socket API — Agent Runtime IPC (Unix Socket / Named Pipe)
+└── HTTP API — Desktop App / CLI (Axum, localhost only)
         │
-        │ Gateway Service API (Unix Socket / Named Pipe)
+        │ Gateway Service API (Socket)
         ▼
 Agent Runtime (统一二进制)
 ├── System Agent (com.rollball.system) — identity, preferences
-└── User Agents — each has private Grafeo + LLM direct connection
+├── User Agents — each has private Grafeo + LLM direct connection
+└── DevMode — Debug Protocol (WebSocket, 开发者调试)
 ```
 
 ## CONVENTIONS (THIS PROJECT)

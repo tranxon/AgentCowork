@@ -137,3 +137,7 @@
 > - [07-system-agent.md](./07-system-agent.md) — 系统 Agent 设计
 > - [08-security.md](./08-security.md) — 安全设计
 > - [09-roadmap-and-scenarios.md](./09-roadmap-and-scenarios.md) — 实现路线图与使用场景
+> - [10-debug-protocol.md](./10-debug-protocol.md) — 调试协议（DevMode、断点、录制回放）
+> - [12-tool-system.md](./12-tool-system.md) — 工具系统（Built-in / WASM / Gateway）
+> - [13-skill-system.md](./13-skill-system.md) — 技能系统（SKILL.md + Grafeo 经验层）
+> - [14-desktop-app.md](./14-desktop-app.md) — 桌面应用（Tauri、布局、系统托盘）

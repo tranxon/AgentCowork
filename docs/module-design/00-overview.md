@@ -1,6 +1,6 @@
 # Rollball-AI 模块设计 — 总览
 
-> 版本：v1.0 | 更新日期：2026-04-09
+> 版本：v1.1 | 更新日期：2026-04-14
 
 ---
 
@@ -15,7 +15,7 @@
 | Tool 模式 | 每个工具一个文件 + Tool trait + 工厂注册 | **全面借鉴** | 核心 Tool trait 保留，完整复用 ZeroClaw 工具池，分为 builtin / memory / schedule / integration / agent / browser / dev / skill / mcp / wasm / sop 等类别，manifest 声明驱动按需激活 |
 | Memory 模式 | SQLite/Qdrant/Markdown 多后端 + Memory trait | **替换为 Grafeo** | 设计文档指定 Grafeo 图数据库，需要全新 Memory 抽象层 |
 | Config | 单一巨型 schema.rs（572KB） | **按 crate 拆分** | 每个 crate 只有自己的配置结构，避免巨型配置文件 |
-| Gateway | Axum HTTP 服务器 | **借鉴** | Axum 成熟可靠，但 Rollball Gateway 是 IPC 网关而非 HTTP 网关，通信模型不同 |
+| Gateway | Axum HTTP 服务器 | **借鉴** | Axum 成熟可靠；Rollball Gateway 同时提供 Socket API（Agent Runtime 用）和 HTTP API（Desktop App / CLI 用） |
 | 安全 | SecurityPolicy + sandbox 多后端 | **借鉴** | 保留安全策略模式，增加权限声明驱动 |
 | Feature Flags | 30+ 个 feature | **少量 feature** | Rollball 场景更聚焦，feature flag 控制在 10 个以内 |
 
@@ -41,7 +41,9 @@ rollball-ai/
 │   ├── rollball-vault/           # 密钥加密存储
 │   └── rollball-sign/            # .agent 包签名/验签工具
 ├── apps/
-│   └── rollball-desktop/         # Tauri 桌面应用（Phase 2.5+）
+│   └── rollball-desktop/         # Tauri v2 桌面应用（Phase 5）
+│       ├── src-tauri/            # Rust backend (Gateway/Debug 客户端 + 托盘)
+│       └── web/                  # React 前端 (四栏布局 UI)
 ├── docs/                         # 设计文档
 ├── tests/                        # 集成测试
 └── examples/                     # 示例 Agent 包

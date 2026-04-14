@@ -1,10 +1,38 @@
 # Gateway 组件详细设计
 
-> 版本：v3.0 | 更新日期：2026-04-09
+> 版本：v3.1 | 更新日期：2026-04-14
 
 ---
 
-Gateway 是一个常驻的系统级进程（可表现为系统托盘应用），使用 Rust 实现。Gateway **不代理 Agent 的业务逻辑**（不代理 LLM 调用、不代理工具执行），只负责必须集中化的协调工作。
+Gateway 是一个常驻的系统级进程，使用 Rust 实现。Gateway **不代理 Agent 的业务逻辑**（不代理 LLM 调用、不代理工具执行），只负责必须集中化的协调工作。
+
+Gateway 同时为两类消费者提供服务：
+
+```
+┌──────────────────┐         ┌──────────────────┐
+│  Agent Runtime   │         │  Desktop App     │
+│  (多个进程)       │         │  / CLI           │
+└────────┬─────────┘         └────────┬─────────┘
+         │ Socket API                 │ HTTP API
+         │ (IPC, 长连接)               │ (REST + WS)
+         ▼                            ▼
+┌────────────────────────────────────────────────┐
+│                Gateway (单进程)                 │
+│                                                │
+│  ┌─────────────┐  ┌──────────┐  ┌──────────┐  │
+│  │ Package Mgr │  │ Lifecycle│  │ Intent   │  │
+│  │             │  │ Manager  │  │ Router   │  │
+│  ├─────────────┤  ├──────────┤  ├──────────┤  │
+│  │ Key Vault   │  │ Budget   │  │ Rate     │  │
+│  │             │  │ Tracker  │  │ Limiter  │  │
+│  └─────────────┘  └──────────┘  └──────────┘  │
+└────────────────────────────────────────────────┘
+```
+
+- **Socket API**：给 Agent Runtime 用的 IPC 通道（Unix Socket / Named Pipe）
+- **HTTP API**：给 Desktop App / CLI 用的 REST 接口（Axum，localhost only）
+
+两者共享 Gateway 内部状态，只是接入层不同。
 
 ## 1. Package Manager
 
@@ -135,3 +163,242 @@ bwrap \
   - `memory/`：私有 Grafeo 数据库文件（`private.grafeo`）。
   - `runtime/`：临时文件（socket、pid）。
 - **日志**：Gateway 收集所有 Agent 的 stdout/stderr，写入 `~/.local/share/agent-gateway/logs/`，支持按 Agent 过滤。
+
+## 9. HTTP API（Desktop App / CLI 接入层）
+
+Socket API 是面向 Agent Runtime 进程间通信设计的二进制帧协议，不适合 WebView 直接调用或 CLI 工具消费。为此，Gateway 新增一层 HTTP API，作为 Desktop App 和 CLI 的统一接入点。
+
+### 9.1 为什么需要双 API 层
+
+| 维度 | Socket API | HTTP API |
+|------|-----------|----------|
+| 消费者 | Agent Runtime | Desktop App / CLI |
+| 传输层 | Unix Socket / Named Pipe | HTTP (localhost) |
+| 通信模式 | 长连接 + 双向推送 | 请求/响应 + WebSocket 流式 |
+| 帧格式 | 自定义二进制帧（4B 长度 + 1B 类型 + JSON） | 标准 HTTP/JSON + WebSocket |
+| 认证方式 | 进程级信任（本地 IPC） | localhost only + 可选 token |
+| 用途 | 进程间实时通信（Key 分发、Intent、预算） | 用户界面操作（Agent 管理、对话、配置） |
+
+两者共享 Gateway 内部逻辑（Package Manager、Lifecycle Manager 等），只是接入层不同。HTTP API 是 Socket API 之上的一层薄封装，不引入新的业务逻辑。
+
+### 9.2 HTTP Server 配置
+
+```rust
+// Gateway 进程启动时同时监听两个端口：
+// 1. Socket API（给 Agent Runtime 用）
+// 2. HTTP API（给 Desktop App / CLI 用）
+
+pub struct HttpConfig {
+    /// 监听地址，默认 127.0.0.1
+    pub host: String,
+    /// 监听端口，默认 19876
+    pub port: u16,
+    /// 是否启用 CORS（开发模式），默认 false
+    pub cors_enabled: bool,
+}
+```
+
+- 默认监听 `http://127.0.0.1:19876`，仅 localhost，不对外暴露
+- 端口可在 `config.toml` 中配置
+- 端口冲突时自动递增尝试（19876 → 19877 → 19878...），最终端口写入 pidfile 供 Desktop App 发现
+
+### 9.3 路由定义
+
+```rust
+use axum::{Router, routing::{get, post, put, delete}, extract::WebSocketUpgrade};
+
+pub fn http_routes() -> Router<GatewayState> {
+    Router::new()
+        // 健康检查
+        .route("/health", get(health_check))
+
+        // --- Agent 管理 ---
+        .route("/api/agents", get(list_agents))
+        .route("/api/agents/:id", get(get_agent_detail))
+        .route("/api/agents/install", post(install_agent))         // body: { path: String }
+        .route("/api/agents/:id", delete(uninstall_agent))
+        .route("/api/agents/:id/clone", post(clone_agent))         // body: { mode, new_id }
+        .route("/api/agents/:id/start", post(start_agent))
+        .route("/api/agents/:id/stop", post(stop_agent))
+
+        // --- 对话 ---
+        .route("/api/agents/:id/message", post(send_message))      // body: { content: String }
+        .route("/api/agents/:id/stream", get(agent_stream_ws))     // WebSocket 升级
+
+        // --- Vault ---
+        .route("/api/vault/keys", get(list_keys))
+        .route("/api/vault/keys", post(add_key))                   // body: { provider, key }
+        .route("/api/vault/keys/:provider", delete(remove_key))
+        .route("/api/vault/keys/:provider", put(update_key))       // body: { key: String }
+
+        // --- 配置 ---
+        .route("/api/config", get(get_config))
+        .route("/api/config", put(update_config))                  // body: { ... }
+
+        // --- 系统信息 ---
+        .route("/api/status", get(system_status))
+
+        // --- 发布 ---
+        .route("/api/agents/:id/publish/prepare", post(publish_prepare))
+        .route("/api/agents/:id/publish/build", post(publish_build))
+        .route("/api/agents/:id/publish/install-locally", post(publish_install_locally))
+        .route("/api/agents/:id/publish/export", post(publish_export))
+}
+```
+
+### 9.4 核心接口详情
+
+#### 9.4.1 Agent 管理
+
+```json
+// GET /api/agents
+// → 200
+{
+    "agents": [
+        {
+            "agent_id": "com.example.weather",
+            "name": "Weather Agent",
+            "version": "1.0.0",
+            "status": "running",       // running | stopped | error
+            "dev": false,
+            "pid": 12345               // running 时有值
+        }
+    ]
+}
+
+// POST /api/agents/install
+// Request: { "path": "/path/to/weather.agent" }
+// → 200 { "agent_id": "com.example.weather", "version": "1.0.0" }
+// → 400 { "error": "invalid package" }
+// → 409 { "error": "already installed" }
+
+// POST /api/agents/:id/clone
+// Request: { "mode": "skeleton" | "full", "new_id": "com.example.weather-dev" }
+// → 200 { "agent_id": "com.example.weather-dev", "workspace": "/path/to/workspace" }
+// → 400 { "error": "cannot clone system agent" }
+```
+
+#### 9.4.2 对话
+
+```json
+// POST /api/agents/:id/message
+// Request: { "content": "北京今天天气怎么样" }
+// → 200 { "message_id": "msg-001", "status": "queued" }
+// → 404 { "error": "agent not found" }
+// → 503 { "error": "agent not running" }
+
+// GET /api/agents/:id/stream (WebSocket Upgrade)
+// WebSocket 消息格式：
+// → Client sends: { "type": "message", "content": "..." }
+// ← Server pushes: { "type": "chunk", "delta": "今", "message_id": "msg-001" }
+// ← Server pushes: { "type": "chunk", "delta": "天", "message_id": "msg-001" }
+// ← Server pushes: { "type": "tool_call", "name": "http_get", "params": {...} }
+// ← Server pushes: { "type": "tool_result", "name": "http_get", "result": {...} }
+// ← Server pushes: { "type": "done", "message_id": "msg-001", "usage": {...} }
+```
+
+#### 9.4.3 Vault
+
+```json
+// GET /api/vault/keys
+// → 200
+{
+    "keys": [
+        { "provider": "openai", "has_key": true, "key_preview": "sk-...abc" },
+        { "provider": "anthropic", "has_key": false }
+    ]
+}
+
+// POST /api/vault/keys
+// Request: { "provider": "openai", "key": "sk-proj-..." }
+// → 201 { "provider": "openai" }
+// → 400 { "error": "invalid key format" }
+```
+
+Vault 的 HTTP API **不返回明文 Key**，只返回存在性和脱敏预览（前 3 字符 + `...` + 后 3 字符）。
+
+#### 9.4.4 系统状态
+
+```json
+// GET /api/status
+// → 200
+{
+    "gateway_version": "0.1.0",
+    "uptime_seconds": 3600,
+    "agents_running": 3,
+    "agents_total": 7,
+    "memory_usage_mb": 128
+}
+
+// GET /health
+// → 200 { "status": "ok" }
+```
+
+### 9.5 HTTP API 与 Socket API 的关系
+
+HTTP API 中的 Agent 管理操作（安装/卸载/启停）直接调用 Gateway 内部组件，与 Socket API 的处理逻辑共享：
+
+```
+POST /api/agents/:id/start
+       │
+       ▼
+Gateway::lifecycle_manager().start_agent("com.example.weather")
+       │
+       ▼
+（与 Agent Runtime 通过 Socket 发起的启动请求走同一条代码路径）
+```
+
+对话消息的转发路径：
+
+```
+Desktop App → POST /api/agents/:id/message
+       │
+       ▼
+Gateway → Intent Router → 转发给 Agent Runtime（通过 Socket API）
+       │
+       ▼
+Agent Runtime 处理 → 响应通过 Gateway → Desktop App（WebSocket 推送）
+```
+
+HTTP API 不是独立于 Socket API 的旁路，而是 Socket API 的**管理面封装**。
+
+### 9.6 安全设计
+
+| 措施 | 说明 |
+|------|------|
+| 仅监听 localhost | 默认 `127.0.0.1`，不对外暴露 |
+| Vault Key 脱敏 | GET 接口不返回明文，POST 接口接收明文 |
+| 无 CORS | 生产环境不开启跨域（localhost only 天然限制） |
+| 可选 Auth Token | Gateway 生成随机 token，Desktop App 首次连接时获取，后续请求携带 `Authorization: Bearer <token>` |
+| Agent 安装校验 | 与 Socket API 一样强制验证包签名 |
+
+Auth Token 机制（可选，Phase 5+）：
+```
+Gateway 启动时生成随机 token → 写入 ~/.config/agent-gateway/http_token
+Desktop App 首次连接时读取该文件 → 后续请求携带
+```
+
+### 9.7 Desktop App 发现 Gateway
+
+Desktop App 需要自动发现 Gateway 的 HTTP API 端口：
+
+```rust
+// 发现策略（按优先级）：
+// 1. 读取 Desktop App 自身配置中保存的地址
+// 2. 读取 Gateway 的 pidfile：~/.local/share/agent-gateway/gateway.pid
+//    pidfile 内容：{ "pid": 12345, "http_port": 19876, "socket_path": "..." }
+// 3. 尝试默认地址 http://127.0.0.1:19876/health
+// 4. 提示用户手动配置
+```
+
+## 10. 设计决策记录
+
+| 决策 | 选择 | 理由 |
+|------|------|------|
+| Gateway 不代理业务逻辑 | 纯协调层 | 避免单点瓶颈；Agent Runtime 直连 LLM 延迟更低 |
+| 双 API 层 | Socket + HTTP | Socket API 面向 Agent Runtime IPC（高性能二进制帧），HTTP API 面向 Desktop App/CLI（标准 REST） |
+| HTTP 框架 | Axum | Rust 生态最成熟的 HTTP 框架；Gateway 已在技术选型中确认 |
+| HTTP 端口 | 127.0.0.1:19876 | 仅 localhost，安全；端口可配置；冲突时自动递增 |
+| Vault HTTP 脱敏 | 不返回明文 | 防止 Desktop App 前端漏洞导致 Key 泄露；POST 接口接收明文即可 |
+| Gateway 发现机制 | pidfile + 默认地址 | 简单可靠；pidfile 由 Gateway 启动时写入；Desktop App 按优先级尝试 |
+| Desktop App 与 Gateway 独立 | 独立进程 | 与 opencode/openclaw/zeroclaw 一致；Gateway 可独立运行支持 CLI-only 用户 |
