@@ -10,7 +10,13 @@
 
 - 定义 manifest v1 规范，实现 ZIP 解析。
 - 实现 .agent 包签名机制：密钥对生成（`rollball-keygen`）、签名（`rollball-sign`）、验证（`rollball-verify`）。
-- 实现 Agent Runtime 核心：加载 .agent 包、组装 prompt、LLM 主循环、内置工具（memory, http, shell）。
+- 实现 Agent Runtime 核心：加载 .agent 包、组装 prompt、LLM 主循环（含 Preemptive Trim、Streaming + tool_calls 状态机）、内置工具（memory, http, shell）。
+- History Manager：对话历史 FIFO 裁剪、动态 N 计算、Tool Result 折叠（规则引擎版 HistoryPruner，保留最近 4 轮完整 tool result）。
+- Loop Controller：循环检测三种模式（Exact Repeat / Ping-Pong / No Progress）+ 三级渐进响应（Warning → Block → Break）。
+- Tool Call 单轮去重（HashSet）。
+- Budget Manager：本地预算预检 + 上下文 token 预估校验。
+- Rate Limit 分层：区分可重试限流 / 不可重试余额不足，解析 retry_after，不计入 LLM 重试次数。
+- Context Exceeded Reactive Recovery：Tool Result 折叠 → Emergency History Trim 渐进式恢复。
 - Gateway 基础功能：安装（含签名验证）、卸载、启动/停止进程、Socket 通信。
 - Key Vault 基础功能：加密存储、一次性分发。
 - Gateway CLI 二进制：命令行管理 Agent（install/uninstall/start/stop/list）。
@@ -37,7 +43,7 @@
 - 运行时权限请求机制。
 - 资源限制（cgroups 或 rlimit）。
 - WASM 工具沙箱（Wasmtime 集成）。
-- Prompt Guard 和 approval 机制。
+- Prompt Guard 和 approval 机制（Approval Gate：高风险工具需用户确认，Gateway → Desktop App 确认流程）。
 
 ### Phase 4: 通信与协调
 
