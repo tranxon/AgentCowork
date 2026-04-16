@@ -330,6 +330,17 @@ permissions = ["memory:read"]
 max_memory_mb = 50
 max_execution_time_ms = 5000
 
+# 企业 RAG 工具（可选，对接企业自建知识库）
+[[tools]]
+name = "enterprise_knowledge"
+type = "rag"
+description = "查询企业产品知识库"
+[tools.enterprise_knowledge.rag_config]
+endpoint = "https://rag.internal.company.com/api/query"
+collection = "product_docs"
+auth_ref = "vault:company_rag_token"
+auth_type = "bearer"
+
 # capabilities 用映射语法（action → schema），
 # 与 tools 用数组语法（tools 可重名、需有序）不同，
 # 因为 capabilities 天然是 action 名称到类型的唯一映射。
@@ -378,6 +389,7 @@ read_only_root = true
 | capabilities 语法 | 映射（非数组） | action 名称天然唯一，映射比数组更直观 |
 | 平台兼容性模型 | Android uses-feature（required/optional） | shell 在移动端不可用、文件操作受限，需要声明式降级机制 |
 | target_platforms 默认 | 全平台 | 不声明的 Agent 假设全平台兼容，由运行时检测实际可用性 |
+| RAG 工具声明 | 独立 type="rag" + rag_config 节 | 企业 RAG 是外部服务，需要 endpoint/auth/collection 等独立配置 |
 
 ## 5. 未来扩展（Phase 5+）
 

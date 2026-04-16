@@ -12,6 +12,7 @@
 Tool Dispatcher
 ├── Built-in Tools     # Runtime 内置，Phase 1 即可用
 ├── WASM Tools         # .agent 包自带，Wasmtime 沙箱执行
+├── RAG Tools          # 企业 RAG 接入，查询外部知识库
 └── Gateway Tools      # 需要 Gateway 协调的操作（非 LLM tool_call 触发）
 ```
 
@@ -19,6 +20,7 @@ Tool Dispatcher
 |------|------|---------|--------------|-------|
 | Built-in | Runtime 内置 | 宿主进程内 | 是 | Phase 1 |
 | WASM | .agent 包 tools/ 目录 | Wasmtime 沙箱 | 是 | Phase 1（声明+沙箱）/ Phase 3（完整权限） |
+| RAG | manifest 声明，指向企业 RAG 服务 | 远程 HTTP 调用 | 是 | Phase 2 |
 | Gateway | Gateway Service API | Gateway 进程 | 否（Runtime 内部发起） | Phase 4 |
 
 ## 2. Built-in Tools 清单
@@ -336,7 +338,87 @@ fn execute(input: ToolInput) -> Result<ToolOutput, ToolError> {
 
 所有错误都不终止主循环。错误信息作为 tool result 返回给 LLM，由 LLM 决定下一步（换参数、换工具、或放弃）。
 
-## 4. Gateway Tools（需 Gateway 协调的操作）
+## 4. RAG Tools（企业知识库接入）
+
+RAG 工具让 Agent 对接企业自建的 RAG 知识库，实现"双通道检索"——本地 Grafeo（个人记忆）和企业 RAG（集体知识）并行查询，结果拼接送入 LLM 上下文。Rollball 不托管 RAG 服务，只提供标准化的查询协议适配（详见 00-prd.md §1.13）。
+
+### 4.1 RAG 工具声明
+
+```toml
+[[tools]]
+name = "enterprise_knowledge"
+type = "rag"
+description = "查询企业产品知识库，获取产品参数、技术文档、销售话术等"
+# RAG 服务地址（由 Agent 开发者或企业管理员配置）
+[tools.enterprise_knowledge.rag_config]
+endpoint = "https://rag.internal.company.com/api/query"
+collection = "product_docs"
+# 认证信息引用 Vault（不明文出现在 manifest 中）
+auth_ref = "vault:company_rag_token"
+auth_type = "bearer"              # bearer / api_key / oauth2
+# 查询参数
+max_results = 5
+score_threshold = 0.7
+```
+
+**字段说明：**
+
+| 字段 | 必需 | 说明 |
+|------|------|------|
+| `name` | 是 | 工具名称，LLM 通过此名称调用 |
+| `type` | 是 | 必须为 `"rag"` |
+| `description` | 是 | RAG 知识库的描述，帮助 LLM 判断何时调用 |
+| `rag_config.endpoint` | 是 | RAG 查询服务的 HTTP URL |
+| `rag_config.collection` | 否 | RAG 中的集合/索引/命名空间，用于多租户隔离 |
+| `rag_config.auth_ref` | 是 | 认证凭据引用（Vault 密钥 ID），不明文存储 |
+| `rag_config.auth_type` | 否 | 认证方式，默认 `bearer` |
+| `rag_config.max_results` | 否 | 单次查询最大返回条数，默认 5 |
+| `rag_config.score_threshold` | 否 | 最低相关性阈值（0-1），低于此值的结果不返回，默认 0.7 |
+
+### 4.2 RAG 工具执行流程
+
+```
+LLM 输出 tool_call: { name: "enterprise_knowledge", arguments: { query: "Q3 产品发布计划" } }
+       │
+       ▼
+Runtime 解析 tool_call
+       │
+       ├─ 从 Vault 获取认证凭据（一次性，不缓存在进程内存）
+       │
+       ├─ 构造 RAG 查询请求（POST endpoint）
+       │   body: { query, collection, top_k, score_threshold }
+       │   headers: { Authorization: Bearer <token> }
+       │
+       ├─ 发送 HTTP 请求（超时 10 秒）
+       │
+       ├─ 解析响应，标注来源（source_url / chunk_id）
+       │
+       └─ 构造 tool result 返回给 LLM
+```
+
+### 4.3 RAG 工具的降级与安全
+
+| 规则 | 说明 |
+|------|------|
+| 离线降级 | RAG 服务不可达时，返回空结果，不阻塞 Agent 运行 |
+| 凭据安全 | auth_ref 引用 Vault 密钥，Runtime 每次调用时从 Vault 获取，不缓存在进程内存或环境变量 |
+| 结果标注 | 每条 RAG 结果标注 source_url 和 chunk_id，供 LLM 和用户追溯来源 |
+| 查询范围限制 | collection 字段限定查询范围，防止跨租户数据泄露 |
+| 网络权限 | RAG 工具的 endpoint 受 `network:<url_pattern>` 权限控制 |
+
+### 4.4 与本地 Memory 的关系
+
+RAG 工具和本地 Grafeo 是两条完全独立的检索通道：
+
+| 维度 | 本地 Grafeo（memory_recall） | 企业 RAG（rag tool） |
+|------|---------------------------|-------------------|
+| 数据所有权 | 用户个人 | 企业所有 |
+| 存储位置 | 本地文件（rusqlite） | 企业 RAG 服务（远程） |
+| 数据类型 | 个人偏好、交互历史、自传体 | 产品文档、业务流程、内部规范 |
+| 检索方式 | 向量 + 全文 + 关联扩散（图扩展） | 向量检索 + 可选混合关键词 + 元数据过滤 |
+| 隐私边界 | Agent 私有，打包分享时按 PrivacyLevel 过滤 | 企业管理，Agent 只读 |
+
+RAG 检索结果与本地 Grafeo 检索结果在瞬态层拼接后统一送入 LLM 上下文，但不整合进 Memory 系统的抽象层——两者查询范式和存储模型完全不同。
 
 以下操作不属于"工具"（不由 LLM tool_call 触发），而是 Runtime 在特定流程中主动向 Gateway 发起的请求，通过 Gateway Service API 通信：
 
@@ -400,3 +482,5 @@ LLM 输出 tool_calls: [{name, arguments}, ...]
 | Builtin 范围 | 仅平台基础设施级 | SaaS 集成（Jira/Notion/LinkedIn 等）由独立 Agent 提供，不内置；垂直能力走 WASM Tool 或独立 Agent |
 | web_fetch/web_search 内置 | 是 | 几乎所有 Agent 都需要，是平台级基础设施；web_search 的 Search API Key 由 Vault 分发 |
 | file_edit/glob_search/content_search 内置 | 是 | 文件操作三件套（读+写+编辑+搜索），缺少任一个都会导致 Agent 用 file_write 模拟低效操作 |
+| RAG 工具类型 | 独立 type="rag" | 企业 RAG 是外部服务接入，不是内置工具也不是 WASM 工具，需要独立的声明和执行模型 |
+| RAG 凭据安全 | Vault 引用，运行时获取 | 与内置工具 API Key 管理一致，不明文出现在 manifest 或进程环境变量 |

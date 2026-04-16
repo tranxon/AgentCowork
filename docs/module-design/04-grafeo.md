@@ -209,7 +209,7 @@ CREATE TABLE memory_nodes (
     decay_score  REAL DEFAULT 1.0,
 
     -- 隐私
-    privacy      TEXT DEFAULT 'Personal' -- Public / Personal / Sensitive
+    privacy      TEXT DEFAULT 'Personal' -- Public / Personal / Sensitive（打包分享时过滤）
 );
 
 -- 沉淀层：关系边

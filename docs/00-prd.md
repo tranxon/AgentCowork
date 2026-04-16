@@ -1,6 +1,6 @@
 # Rollball 平台需求定义
 
-> 版本：v1.0 | 更新日期：2026-04-15
+> 版本：v1.2 | 更新日期：2026-04-16
 >
 > 本文档从设计文档（01~14）和设计对话中反向提取需求，作为平台功能的权威需求来源。设计文档描述"怎么做"，本文档描述"做什么"和"为什么"。
 
@@ -10,7 +10,7 @@
 
 Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 APK 是声明式包，Agent Runtime 如 ART 是统一执行引擎，Gateway 如 AMS 管理生命周期。
 
-**目标用户**：个人用户和小团队，需要在本地运行多个 AI Agent 并让它们协作完成任务的场景。
+**目标用户**：个人用户和小团队，以及企业用户。核心差异在于企业用户可以在 Agent 中接入自己部署的 RAG 知识库，实现企业级知识增强。
 
 **核心价值主张**：
 
@@ -18,7 +18,9 @@ Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 
 - 进程级隔离——每个 Agent 独立运行、互不干扰
 - 仿生记忆——Agent 拥有分层记忆系统，能记住、能遗忘、能学习
 - 跨 Agent 协作——通过 Intent 机制实现 Agent 间通信
+- 隐私安全分享——Agent 可自由分享给他人，Personal/Sensitive 数据自动剥离，只带走"Agent 能力"而非"用户记忆"
 - 跨平台——同一 .agent 包在桌面和移动端运行
+- 企业级扩展——通过标准 RAG 接口接入企业知识库，无需平台托管数据
 
 ---
 
@@ -82,9 +84,9 @@ Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 
 | MEM-05 | 关联扩散检索：1-2 跳图扩展，支持跨层（经历层↔沉淀层） | P1 | 检索质量 |
 | MEM-06 | 自传体记忆：六维度自我认知，从 manifest 自动派生，注入 System Prompt | P1 | Agent 自我认知 |
 | MEM-07 | 程序记忆：跨 Skill 的通用行为模式 | P2 | 自学习能力 |
-| MEM-08 | 隐私分级：PrivacyLevel（Public/Personal/Sensitive），LLM 自动判断 | P1 | 隐私保护 |
+| MEM-08 | 隐私分级：PrivacyLevel（Public/Personal/Sensitive），LLM 自动判断。控制的是"数据打包分享时是否包含该节点"——Personal/Sensitive 节点在 Agent 分享导出时剥离，Public 节点保留。LLM 上下文中的数据无法从技术上访问控制，只能通过 prompt 约定约束 | P1 | 打包边界隐私保护 |
 | MEM-09 | 离线巩固：空闲时触发专用 LLM 调用，将经历层提炼到沉淀层 | P2 | 记忆质量提升 |
-| MEM-10 | 云端同步：Zone-Based 策略，identity/preferences 强制本地，knowledge/enterprise 允许同步 | P2 | 多设备同步 |
+| MEM-10 | Grafeo Zone-Based Cloud Sync：identity / preferences / knowledge / work 四区均可同步（平台明文托管，多设备体验一致）。enterprise Zone 改名为 work Zone（个人工作记忆，与企业 RAG 无关）。隐私分级与同步策略解耦——PrivacyLevel 控制打包边界，Zone 控制同步分区 | P1 | 多设备同步 |
 | MEM-11 | 内容分类压缩：工件性内容（代码/文件/命令输出）仅存摘要 + ArtifactRef 引用 | P1 | 防 Grafeo 膨胀 |
 | MEM-12 | Embedding 本地生成（ONNX Runtime），离线可用 | P1 | 向量检索前提 |
 
@@ -185,6 +187,43 @@ Rollball 是一个"Agent as APP"平台。核心隐喻借鉴 Android：Agent 如 
 | PLT-04 | 各平台传输层实现不同（Unix Socket / Named Pipe / Local TCP），但不影响包兼容性 | P1 | 实现层差异 |
 | PLT-05 | 移动端能力降级：shell 不可用、文件操作路径收窄、Skill 级联降级 | P2 | 优雅降级 |
 
+### 1.13 企业 RAG 集成
+
+> 企业级 Agent 不是 Rollball 平台内置的能力，而是 Agent 开发的一种范式——Agent 开发者通过标准 RAG 接口对接企业知识库，用户感知到的只是一个普通的 Agent。
+
+**设计原则**：
+
+- **纯对接，不托管**：Rollball 不运营 RAG 服务，知识属于企业自己
+- **隔离优先**：本地 Grafeo（个人记忆）和企业 RAG（集体知识）是两条独立的检索通道，互不干扰
+- **通用接入**：企业可对接任意符合标准接口的 RAG 系统（Milvus / Qdrant / Weaviate / Elasticsearch + Embedding / 商业 RAG SaaS）
+
+#### 1.13.1 双通道检索模型
+
+| 通道 | 存储 | 内容 | 所有权 |
+|------|------|------|--------|
+| 本地记忆通道 | Grafeo（图数据库） | 个人偏好、交互历史、自传体、经历、语义沉淀 | 用户本地 |
+| 企业知识通道 | 企业自建 RAG | 产品文档、业务流程、行业知识、内部规范 | 企业所有 |
+
+Agent 检索记忆时并行执行两条通道，检索结果按来源标记后拼接送入 LLM 上下文。LLM 能够同时引用个人经验和企业知识，但两者的隐私边界和所有权清晰：个人的不上去，企业的不下来。
+
+#### 1.13.2 RAG 工具定义
+
+| 编号 | 需求 | 优先级 | 说明 |
+|------|------|--------|------|
+| RAG-01 | manifest 中声明 `[[tools]]` 类型为 `rag`，提供企业 RAG 服务地址（URL）和认证信息 | P1 | 企业 RAG 接入标准方式 |
+| RAG-02 | RAG 工具支持标准查询接口（向量检索 + 可选混合关键词检索 + 元数据过滤） | P1 | 兼容主流 RAG 系统 |
+| RAG-03 | RAG 工具支持企业认证（API Key / OAuth 2.0 / Bearer Token） | P1 | 企业安全要求 |
+| RAG-04 | RAG 认证信息走 Vault 管理，不明文暴露在 manifest 或进程环境 | P1 | 安全底线 |
+| RAG-05 | RAG 查询结果标注来源（source_url / chunk_id），供 LLM 和用户追溯 | P1 | 可解释性 |
+| RAG-06 | manifest 中声明 RAG 知识库的查询范围（namespace / collection / index），运行时按此约束查询 | P2 | 多租户隔离 |
+| RAG-07 | RAG 工具离线降级：RAG 服务不可达时跳过该通道，不阻塞 Agent 运行 | P1 | 离线鲁棒性 |
+
+#### 1.13.3 架构边界
+
+企业 RAG 集成严格限定为检索通道，不向上整合进 Memory 系统抽象层。原因：Grafeo 是图数据库（支持关联扩散、遗忘衰减），RAG 是向量检索（批量查询、无状态），两者查询范式和存储模型完全不同。强行统一抽象会引入不必要的复杂度，且企业 RAG 的多租户隔离、数据写入权限与 Grafeo 的模型不兼容。
+
+企业 RAG 集成属于"企业级 Agent 开发范式"，不要求所有 Agent 都支持 RAG，也不出现在 Rollball 核心平台的功能承诺中。
+
 ---
 
 ## 2. 非功能需求
@@ -277,6 +316,14 @@ PKG-01~05, FMT-01~03, RUN-01~03, RUN-07~09, MEM-01~03, TOL-01, TOL-05, SKL-01~02
 
 用户在手机上使用同一套 .agent 包。shell 工具不可用、文件操作受限，但 Agent 仍可通过 HTTP 工具和 Memory 工具正常工作，Skill 自动降级跳过不可用工具依赖的步骤。
 
+### 5.5 企业 Agent 场景
+
+某企业开发"销售助手 Agent"，manifest 声明 `[[tools]] type = "rag"`，指向企业内部的 Qdrant RAG 服务（含产品知识库、销售话术库、合规文档）。用户安装后在 Desktop App 与 Agent 对话，Agent 同时查询本地 Grafeo（记住该用户的偏好、历史提问）和企业 RAG（检索产品参数、竞品对比、合规要点），拼接后给出回答。RAG 服务由企业自己运维，Rollball 平台不接触任何企业数据，用户量增长对 Rollball 云端压力为零。
+
+### 5.6 Agent 打包分享场景
+
+用户将自己调教好的"私人助手 Agent"分享给朋友。打包时，PrivacyLevel 过滤自动剥离 Personal/Sensitive 节点（朋友无法看到原用户的偏好、历史对话、私密信息）。打包后的 Agent 保留了：Agent 自学的 SkillIteration 和调教经验（Agent 能力）、ProceduralNode（通用行为模式）、行事风格和擅长领域（AutobiographicalNode 中关于 Agent 自身的部分）。朋友安装后，Agent 在新的 Grafeo 上运行，记忆为空，从头开始积累。
+
 ---
 
 ## 6. 术语表
@@ -295,3 +342,61 @@ PKG-01~05, FMT-01~03, RUN-01~03, RUN-07~09, MEM-01~03, TOL-01, TOL-05, SKL-01~02
 | ContentProvider | 系统 Agent 提供的只读数据服务，其他 Agent 通过 Intent 查询 |
 | identity_deps | Agent 声明的身份依赖字段，启动时由 Gateway 注入 |
 | Platform Key | 平台签发密钥，用于系统 Agent 签名 |
+| 企业 RAG | 企业自建的 RAG 知识库服务，Agent 通过标准 rag 工具接入，不经 Rollball 云端中转 |
+| 双通道检索 | Agent 同时查询本地 Grafeo 和企业 RAG 两条通道的检索模式 |
+| work Zone | Grafeo 沉淀层中与个人工作相关的记忆分区（原 enterprise Zone），与 Rollball 企业 RAG 无关 |
+| PrivacyLevel | 节点级隐私标记（Public/Personal/Sensitive），控制 Agent 打包分享时是否包含该节点，与云端同步策略解耦 |
+
+---
+
+## 7. 架构决策记录（ADR）
+
+### ADR-001：企业 RAG 定位
+
+**状态**：已接受
+
+**上下文**：
+从个人和小团队扩展到企业用户场景时，需要回答两个问题：（1）企业 RAG 与本地 Grafeo 是同一层还是不同通道？（2）Rollball 是否要自己托管 RAG 服务？
+
+**决策**：
+
+1. 采用双通道检索模型（Mode A）：本地 Grafeo 和企业 RAG 是两条独立的检索通道，结果拼接后送入 LLM 上下文。两者不整合进统一的记忆抽象层。
+2. Rollball 不托管 RAG 服务（Option 1）：企业自建或采购 RAG 系统，Rollball 在 manifest 中声明 RAG 接入点（URL + 认证），运行时作为标准工具调用。Rollball 云端零状态。
+3. 企业 RAG 定位为"企业级 Agent 开发范式"，不属于 Rollball 核心平台功能承诺。
+
+**权衡**：
+
+- 得：架构侵入最小，隐私边界清晰，企业自主可控，云端压力仅来自接入管理（轻量）
+- 失：RAG 查询结果与本地记忆检索质量依赖 Agent 自己拼接，无统一排序；企业需自建/采购 RAG，有一定接入门槛
+
+**前提**：若未来出现大量中小企业无法自建 RAG 的场景，可叠加"托管 RAG 服务"作为增值选项，与纯对接模式并存。
+
+### ADR-002：PrivacyLevel 边界与 Cloud Sync 模型
+
+**状态**：已接受
+
+**上下文**：
+讨论 Grafeo 云端同步时出现两个问题：（1）Sensitive 数据不上云导致跨设备不一致，是否影响功能？（2）"enterprise Zone"与"企业 RAG"命名重叠，是否造成混淆？
+
+**决策**：
+
+1. Grafeo Cloud Sync 全部 Zone 明文同步，平台托管。遵循主流互联网平台实践（Google/iCloud/Notion 均明文存储），同设备体验一致，风险与主流平台同量级。
+2. PrivacyLevel 作用域限定为**打包边界控制**：Personal/Sensitive 节点在 Agent 分享导出时剥离，Public 节点保留。网络边界和跨 Agent 边界暂不考虑。
+3. "enterprise Zone"改名为"work Zone"：原指个人工作相关记忆，与企业 RAG 完全无关。改名消除歧义。
+4. PrivacyLevel 与 Cloud Sync 策略完全解耦：PrivacyLevel 控制打包时"带不带"，Cloud Sync 控制"同步到哪里"。LLM 上下文中的数据无技术访问控制手段，靠 prompt 约定约束。
+
+**打包边界语义**（PrivacyLevel 的实际意义）：
+
+| 节点类型 | Personal/Sensitive 剥离后剩余 |
+|---------|-----------------------------|
+| Personal 节点（用户偏好、历史） | 不打包 |
+| Sensitive 节点（私密信息） | 不打包 |
+| Agent 自学的 SkillIteration / SkillExperience | 保留——这是 Agent 能力的体现 |
+| Agent 的 ProceduralNode | 保留——跨次学会的通用行为 |
+| AutobiographicalNode（关于 Agent 自身） | 保留行事风格、擅长领域；剥离关于用户的认知 |
+| ArtifactRef | 保留引用，剥离原始内容（工件性内容已在写入时分类压缩） |
+
+**权衡**：
+
+- 得：边界清晰、实现简单、多设备体验完整、打包分享隐私安全
+- 失：平台明文存储用户全部记忆，依赖平台信任和隐私承诺（与主流平台同等风险）
