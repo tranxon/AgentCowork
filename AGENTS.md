@@ -73,6 +73,30 @@ Agent Runtime (统一二进制)
 - ZeroClaw is **reference only** — not source of truth for RollBall design
 - Rust implementation follows workspace pattern: `rollball-core`, `rollball-runtime`, `rollball-gateway`, `rollball-grafeo`, `rollball-vault`, `rollball-sign`
 
+## ZEROCLAW CODE REUSE
+
+ZeroClaw is a complete Agent implementation. RollBall may reuse its code under the following rules:
+
+**Allowed reuse** — adapt complete, self-contained modules or functions:
+- Tool trait and provider trait definitions
+- Schema清洗 logic, streaming parsers, loop detectors
+- History management (token calculation, FIFO trimming)
+- Security decorators (PathGuardedTool, RateLimitedTool)
+- Vault encryption logic
+
+**Required attribution** — mark adapted code:
+```
+// Adapted from zeroclaw/src/xxx.rs
+// Rollball deviation: <reason if significantly modified>
+```
+
+**Do NOT** reference zeroclaw as a workspace dependency. Copy and adapt instead.
+
+**Do NOT reuse** — requires re-implementation:
+- ZeroClaw's monolithic schema.rs (RollBall splits config per crate)
+- ZeroClaw's single-process agent loop (RollBall needs IPC layer)
+- ZeroClaw's config-driven mechanism (RollBall uses manifest-driven)
+
 ## ANTI-PATTERNS (THIS PROJECT)
 
 - Do NOT edit `zeroclaw/` — it is a separate reference project

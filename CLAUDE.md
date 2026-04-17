@@ -103,6 +103,34 @@ cargo fmt --all -- --check
 - Review priority: CRITICAL (security/memory safety) > HIGH (logic/error handling) > MEDIUM (quality/performance) > LOW (style/docs)
 - Prefer well-maintained crates with security audit history; avoid unnecessary dependencies
 
+## ZeroClaw 代码复用准则
+
+ZeroClaw 是完整的 Agent 软件实现，Rollball 在开发中应优先复用其代码，避免重复造轮子。
+
+**可复用条件**：
+- 代码边界清晰（完整的模块、完整的函数、独立的 trait）
+- 不需要对原代码做大幅修改即可适配 Rollball 的架构
+- Rollball 设计文档中明确标注"借鉴 ZeroClaw"的部分
+
+**优先复用领域**：
+- Tool trait 和工具池注册机制（`tools/`）
+- Provider trait 和工厂模式
+- Schema 清洗逻辑
+- History Manager 的 token 计算和裁剪策略
+- Streaming 响应解析
+- JSON-RPC 协议处理
+- Security Policy 和装饰器模式（`PathGuardedTool`、`RateLimitedTool`）
+
+**不可直接复用（需要重新设计）**：
+- 与 Rollball 架构不兼容的部分（如 ZeroClaw 单进程模式 vs Rollball 多进程 IPC 模式）
+- 与 Rollball 特有的 .agent 包、签名机制、Intent 路由深度耦合的逻辑
+- ZeroClaw 特定的配置格式和内部状态管理
+
+**复用时的要求**：
+- 在代码注释中标明来源：`// Adapted from ZeroClaw: <file_path>`
+- 显著修改时说明改动原因：`// Rollball deviation: <reason>`
+- 直接复制到 Rollball crate 内（作为 fork 或 adaptation），而非通过 workspace 依赖引用 zeroclaw crate
+
 ## Anti-Patterns
 
 - Do NOT edit `zeroclaw/` from this project root — it is a separate reference project
