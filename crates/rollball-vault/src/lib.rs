@@ -1,0 +1,11 @@
+//! rollball-vault — Encrypted API key storage
+//!
+//! Provides secure storage for LLM API keys with:
+//! - Password-derived master key (Argon2id)
+//! - ChaCha20-Poly1305 AEAD encryption
+//! - One-time key distribution via IPC
+
+pub mod vault;
+pub mod encryption;
+pub mod key_derivation;
+pub mod error;

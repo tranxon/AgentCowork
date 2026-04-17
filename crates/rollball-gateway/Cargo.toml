@@ -1,0 +1,27 @@
+[package]
+name = "rollball-gateway"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+description = "Gateway - Agent lifecycle manager and IPC coordinator"
+
+[[bin]]
+name = "rollball-gateway"
+path = "src/main.rs"
+
+[dependencies]
+rollball-core.workspace = true
+rollball-sign.workspace = true
+rollball-vault.workspace = true
+tokio.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+zip.workspace = true

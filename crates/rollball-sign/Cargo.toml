@@ -1,0 +1,32 @@
+[package]
+name = "rollball-sign"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+description = ".agent package signing and verification toolchain"
+
+[[bin]]
+name = "rollball-keygen"
+path = "src/bin/keygen.rs"
+
+[[bin]]
+name = "rollball-sign"
+path = "src/bin/sign.rs"
+
+[[bin]]
+name = "rollball-verify"
+path = "src/bin/verify.rs"
+
+[dependencies]
+rollball-core.workspace = true
+ed25519-dalek.workspace = true
+x509-cert.workspace = true
+sha2.workspace = true
+zip.workspace = true
+clap.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+rand.workspace = true

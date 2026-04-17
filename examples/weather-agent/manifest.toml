@@ -1,0 +1,48 @@
+# Weather Agent Example
+# Phase 1: Simple weather query agent
+
+agent_id = "com.example.weather"
+version = "1.0.0"
+name = "Weather Agent"
+description = "A weather query agent that remembers your city preference"
+author = "Rollball Team"
+runtime_version = "0.1.0"
+system = false
+dev = false
+
+permissions = [
+    "Network:https://wttr.in",
+    "MemoryRead",
+    "MemoryWrite",
+]
+
+triggers = []
+identity_deps = []
+
+[[tools]]
+name = "weather"
+
+[[tools]]
+name = "memory_store"
+
+[[tools]]
+name = "memory_recall"
+
+[llm]
+provider = "openai"
+model = "gpt-4"
+temperature = 0.7
+
+[memory]
+enabled = true
+retention_days = 30
+
+[resources]
+max_memory_mb = 256
+idle_timeout_secs = 3600
+
+[sandbox]
+enabled = false
+
+[capabilities.weather_query]
+description = "Query weather for a location"

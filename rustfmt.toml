@@ -1,0 +1,3 @@
+[formatter.rust]
+command = "rustfmt"
+options = ["--edition", "2024"]

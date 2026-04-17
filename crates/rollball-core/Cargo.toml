@@ -1,0 +1,17 @@
+[package]
+name = "rollball-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+description = "Shared types, protocols, and traits for Rollball.AI"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+futures-core.workspace = true

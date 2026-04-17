@@ -1,0 +1,83 @@
+[workspace]
+members = [
+    "crates/rollball-core",
+    "crates/rollball-memory",
+    "crates/rollball-runtime",
+    "crates/rollball-gateway",
+    "crates/rollball-grafeo",
+    "crates/rollball-vault",
+    "crates/rollball-sign",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.87"
+
+[workspace.dependencies]
+# 异步运行时
+tokio = { version = "1.50", default-features = false, features = ["rt-multi-thread", "macros", "time", "net", "io-util", "sync", "process", "io-std", "fs", "signal"] }
+
+# 序列化
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# 错误处理
+anyhow = "1.0"
+thiserror = "2.0"
+
+# 日志
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "ansi", "env-filter"] }
+
+# 异步 trait
+async-trait = "0.1"
+
+# 加密
+chacha20poly1305 = "0.10"
+rand = "0.10"
+
+# 配置
+toml = "1.0"
+directories = "6.0"
+
+# 时间
+chrono = { version = "0.4", features = ["clock", "std", "serde"] }
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+
+# 数据库
+rusqlite = { version = "0.37", features = ["bundled"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+
+# ZIP
+zip = { version = "8.1", default-features = true, features = ["deflate-flate2"] }
+
+# 并发原语
+parking_lot = "0.12"
+
+# UUID
+uuid = { version = "1.22", features = ["v4", "std"] }
+
+# Stream
+futures-core = "0.3"
+
+# 签名
+ed25519-dalek = { version = "2.1", features = ["std"] }
+x509-cert = "0.2"
+sha2 = "0.10"
+
+# 密钥保护
+secrecy = "0.10"
+
+# 内部 crate 引用
+rollball-core = { path = "crates/rollball-core" }
+rollball-memory = { path = "crates/rollball-memory" }
+rollball-grafeo = { path = "crates/rollball-grafeo" }
+rollball-vault = { path = "crates/rollball-vault" }
+rollball-sign = { path = "crates/rollball-sign" }

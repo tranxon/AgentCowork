@@ -1,0 +1,8 @@
+[package]
+name = "clippy-toml"
+version = "0.1.0"
+edition = "2024"
+
+[lints.clippy]
+# All warnings are errors
+all = { level = "deny", priority = -1 }
