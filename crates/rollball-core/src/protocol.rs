@@ -37,7 +37,12 @@ pub enum GatewayRequest {
 #[serde(tag = "type")]
 pub enum GatewayResponse {
     /// API key release result
-    KeyReleaseResult { api_key: String },
+    KeyReleaseResult {
+        /// The released API key on success
+        api_key: Option<String>,
+        /// Error message on failure (e.g. "unauthenticated session", vault error)
+        error: Option<String>,
+    },
     /// Intent delivery confirmation
     IntentDelivered { message_id: String },
     /// Intent received from another Agent

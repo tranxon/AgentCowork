@@ -68,10 +68,10 @@ impl BudgetGuard {
 
         // Check daily cost limit
         if let Some(daily_cost) = self.budget.daily_cost_usd
-            && self.session_cost_usd > daily_cost {
+            && self.session_cost_usd >= daily_cost {
             return BudgetCheckResult::Exceeded {
                 reason: format!(
-                    "Daily cost limit: ${:.4} > ${:.4}",
+                    "Daily cost limit: ${:.4} >= ${:.4}",
                     self.session_cost_usd, daily_cost
                 ),
                 action: self.budget.exceeded_action.clone(),

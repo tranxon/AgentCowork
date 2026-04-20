@@ -85,7 +85,14 @@ impl GatewayClient {
         };
 
         match self.send_and_recv(request).await {
-            Ok(GatewayResponse::KeyReleaseResult { api_key }) => Ok(api_key),
+            Ok(GatewayResponse::KeyReleaseResult { api_key: Some(key), error: None }) => Ok(key),
+            Ok(GatewayResponse::KeyReleaseResult { api_key: None, error: Some(e) }) => Err(e),
+            Ok(GatewayResponse::KeyReleaseResult { api_key: None, error: None }) => {
+                Err("KeyRelease returned no key and no error".to_string())
+            }
+            Ok(GatewayResponse::KeyReleaseResult { api_key: Some(_), error: Some(_) }) => {
+                Err("KeyRelease returned both key and error".to_string())
+            }
             Ok(other) => Err(format!("Unexpected response type: {:?}", other)),
             Err(e) => Err(e),
         }
