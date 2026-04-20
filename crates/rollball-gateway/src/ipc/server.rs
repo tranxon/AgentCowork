@@ -127,17 +127,17 @@ impl IpcServer {
                 match state.vault.get_key(provider) {
                     Ok(api_key) => {
                         tracing::info!("KeyRelease for agent={}, provider={}", id, provider);
-                        GatewayResponse::KeyReleaseResult { api_key }
+                        GatewayResponse::KeyReleaseResult { api_key: Some(api_key), error: None }
                     }
                     Err(e) => {
                         tracing::warn!("KeyRelease failed for agent={}, provider={}: {}", id, provider, e);
-                        GatewayResponse::KeyReleaseResult { api_key: String::new() }
+                        GatewayResponse::KeyReleaseResult { api_key: None, error: Some(e.to_string()) }
                     }
                 }
             }
             None => {
                 tracing::warn!("KeyRelease from unauthenticated session {}", conn_id);
-                GatewayResponse::KeyReleaseResult { api_key: String::new() }
+                GatewayResponse::KeyReleaseResult { api_key: None, error: Some("unauthenticated session".into()) }
             }
         }
     }

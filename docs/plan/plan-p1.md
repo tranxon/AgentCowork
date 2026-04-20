@@ -450,6 +450,17 @@ rollball-core (S1)
 | S5.1 | 示例天气 Agent | examples/ | S4 | 完成 | manifest+prompts+签名+验证 |
 | S5.2 | 端到端测试套件 | tests/ | S4 | 完成 | 8项测试全部通过 |
 
+### 6.3 Code Review 修复追踪
+
+基于 `docs/review/01-code-review.md` 的第二轮系统性审查（2026-04-20），以下问题已修复：
+
+| 问题编号 | 严重度 | 问题描述 | 涉及文件 | 修复状态 | 验证结果 |
+|----------|--------|----------|----------|----------|----------|
+| #16 | P2 | IPC Handler 错误返回空字符串 | `rollball-gateway/src/ipc/server.rs` | ✅ 已修复 | Handler 错误返回改为 `error: Option<String>`，Runtime client 适配 4 种情况处理 |
+| #17 | P2 | KeyReleaseResult 语义模糊 | `rollball-core/src/protocol.rs` | ✅ 已修复 | 改为 `{ api_key: Option<String>, error: Option<String> }`，可区分成功/Key不存在/Vault未解锁/其他错误 |
+
+**验证结果**：`cargo check` / `cargo test` / `cargo clippy` 全部通过（135+ 测试通过）
+
 ---
 
 ## 7. ZeroClaw 代码复用准则
