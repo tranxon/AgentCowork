@@ -28,3 +28,7 @@ zip.workspace = true
 parking_lot.workspace = true
 directories.workspace = true
 toml.workspace = true
+
+[dev-dependencies]
+rollball-sign = { workspace = true }
+zip = { workspace = true }

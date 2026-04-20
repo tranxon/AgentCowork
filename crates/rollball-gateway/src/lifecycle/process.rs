@@ -64,6 +64,7 @@ pub async fn spawn_agent_process(
 
     // On Unix, create a new process group so we can kill the entire group later
     #[cfg(unix)]
+    #[allow(unused_imports)]
     {
         use std::os::unix::process::CommandExt;
         cmd.process_group(0);

@@ -43,42 +43,39 @@ impl BudgetGuard {
     /// Check if budget allows a new request with the given estimated tokens
     pub fn check(&self, estimated_tokens: u64) -> BudgetCheckResult {
         // Check daily token limit
-        if let Some(daily_limit) = self.budget.daily_tokens {
-            if self.session_tokens + estimated_tokens > daily_limit {
-                return BudgetCheckResult::Exceeded {
-                    reason: format!(
-                        "Daily token limit: used {} + estimated {} > limit {}",
-                        self.session_tokens, estimated_tokens, daily_limit
-                    ),
-                    action: self.budget.exceeded_action.clone(),
-                };
-            }
+        if let Some(daily_limit) = self.budget.daily_tokens
+            && self.session_tokens + estimated_tokens > daily_limit {
+            return BudgetCheckResult::Exceeded {
+                reason: format!(
+                    "Daily token limit: used {} + estimated {} > limit {}",
+                    self.session_tokens, estimated_tokens, daily_limit
+                ),
+                action: self.budget.exceeded_action.clone(),
+            };
         }
 
         // Check monthly token limit
-        if let Some(monthly_limit) = self.budget.monthly_tokens {
-            if self.session_tokens + estimated_tokens > monthly_limit {
-                return BudgetCheckResult::Exceeded {
-                    reason: format!(
-                        "Monthly token limit: used {} + estimated {} > limit {}",
-                        self.session_tokens, estimated_tokens, monthly_limit
-                    ),
-                    action: self.budget.exceeded_action.clone(),
-                };
-            }
+        if let Some(monthly_limit) = self.budget.monthly_tokens
+            && self.session_tokens + estimated_tokens > monthly_limit {
+            return BudgetCheckResult::Exceeded {
+                reason: format!(
+                    "Monthly token limit: used {} + estimated {} > limit {}",
+                    self.session_tokens, estimated_tokens, monthly_limit
+                ),
+                action: self.budget.exceeded_action.clone(),
+            };
         }
 
         // Check daily cost limit
-        if let Some(daily_cost) = self.budget.daily_cost_usd {
-            if self.session_cost_usd > daily_cost {
-                return BudgetCheckResult::Exceeded {
-                    reason: format!(
-                        "Daily cost limit: ${:.4} > ${:.4}",
-                        self.session_cost_usd, daily_cost
-                    ),
-                    action: self.budget.exceeded_action.clone(),
-                };
-            }
+        if let Some(daily_cost) = self.budget.daily_cost_usd
+            && self.session_cost_usd > daily_cost {
+            return BudgetCheckResult::Exceeded {
+                reason: format!(
+                    "Daily cost limit: ${:.4} > ${:.4}",
+                    self.session_cost_usd, daily_cost
+                ),
+                action: self.budget.exceeded_action.clone(),
+            };
         }
 
         BudgetCheckResult::Allowed

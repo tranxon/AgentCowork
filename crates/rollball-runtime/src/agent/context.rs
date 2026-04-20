@@ -7,7 +7,6 @@ use rollball_core::manifest::AgentManifest;
 use rollball_core::providers::traits::{ChatMessage, ChatRequest, MessageRole};
 
 use crate::agent::history::HistoryManager;
-use crate::error::{Result, RuntimeError};
 
 /// Context builder for LLM requests
 pub struct ContextBuilder {
@@ -101,7 +100,6 @@ pub fn build_tool_definitions(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rollball_core::manifest::LlmConfig;
 
     fn test_manifest() -> AgentManifest {
         AgentManifest::from_toml(r#"

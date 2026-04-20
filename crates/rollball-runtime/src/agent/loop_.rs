@@ -7,7 +7,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use rollball_core::providers::traits::{
-    ChatMessage, ChatResponse, MessageRole, Provider, StreamEvent, ToolCall,
+    ChatMessage, MessageRole, Provider, ToolCall,
 };
 use rollball_core::tools::traits::Tool;
 
@@ -216,9 +216,9 @@ impl AgentLoop {
                 ) {
                     LoopDetectionResult::NoLoop => {}
                     LoopDetectionResult::LoopDetected {
-                        pattern,
+                        pattern: _,
                         level,
-                        count,
+                        count: _,
                         message,
                     } => {
                         tracing::warn!(message = %message, level = ?level, "Loop detected");
@@ -267,10 +267,10 @@ mod tests {
 
     #[test]
     fn test_agent_loop_creation() {
-        let config = RuntimeConfig::default();
+        let _config = RuntimeConfig::default();
         // We can't easily test the full loop without a mock provider,
         // but we can verify construction
-        let budget = rollball_core::Budget {
+        let _budget = rollball_core::Budget {
             daily_tokens: Some(100000),
             monthly_tokens: None,
             daily_cost_usd: Some(10.0),

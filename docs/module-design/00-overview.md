@@ -71,7 +71,7 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-rust-version = "1.87"
+rust-version = "1.95"
 
 [workspace.dependencies]
 # 异步运行时

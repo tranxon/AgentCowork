@@ -447,8 +447,8 @@ rollball-core (S1)
 | S4.3 | 包管理器 | rollball-gateway | S3 | 完成 | install+uninstall+upgrade |
 | S4.4 | 生命周期管理器 | rollball-gateway | S3 | 完成 | process spawn/kill/health+idle timeout |
 | S4.5 | Key Vault 集成 | rollball-gateway | S3 | 完成 | VaultFacade+KeyRelease分发 |
-| S5.1 | 示例天气 Agent | examples/ | S4 | 待开始 | |
-| S5.2 | 端到端测试套件 | tests/ | S4 | 待开始 | |
+| S5.1 | 示例天气 Agent | examples/ | S4 | 完成 | manifest+prompts+签名+验证 |
+| S5.2 | 端到端测试套件 | tests/ | S4 | 完成 | 8项测试全部通过 |
 
 ---
 
@@ -491,7 +491,7 @@ Rollball 开发中优先复用 ZeroClaw 的代码，避免重复造轮子。
 
 ### 7.1 代码风格
 
-- Rust edition 2024，rust-version 1.87
+- Rust edition 2024，rust-version 1.95
 - 所有 crate 通过 `cargo clippy --all-targets -- -D warnings`
 - 模块内按 `lib.rs` → 子模块顺序组织
 - 错误处理用 `thiserror`，传播用 `?`
@@ -519,7 +519,7 @@ Scope: core / sign / vault / runtime / gateway / cli / docs
 | **M1: 基础就绪** | S1 全部完成；`cargo check --all` 通过 | ✅ 完成 |
 | **M2: Runtime 可运行** | S2 全部完成；Runtime 可加载 manifest 并调用 mock LLM | ✅ 完成 |
 | **M3: Gateway 可管理** | S3 全部完成；Gateway 可 install/start/stop Agent | ✅ 完成 |
-| **M4: MVP 交付** | S4 全部完成；天气 Agent 端到端运行 | 待开始 |
+| **M4: MVP 交付** | S4 全部完成；天气 Agent 端到端运行 | ✅ 完成 |
 
 ---
 

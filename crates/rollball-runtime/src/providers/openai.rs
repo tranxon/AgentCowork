@@ -125,6 +125,7 @@ struct NativeChoice {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct NativeResponseMessage {
     #[serde(default)]
     content: Option<String>,
@@ -162,6 +163,7 @@ struct StreamDelta {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct StreamToolCallDelta {
     index: Option<u64>,
     id: Option<String>,
@@ -190,50 +192,48 @@ fn convert_messages(messages: &[ChatMessage]) -> Vec<NativeMessage> {
             };
 
             // Handle tool messages
-            if matches!(m.role, MessageRole::Tool) {
-                if let Ok(value) = serde_json::from_str::<serde_json::Value>(&m.content) {
-                    let tool_call_id = value
-                        .get("tool_call_id")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string);
-                    let content = value
-                        .get("content")
-                        .and_then(serde_json::Value::as_str)
-                        .map(ToString::to_string);
-                    return NativeMessage {
-                        role: role.to_string(),
-                        content,
-                        tool_call_id,
-                        tool_calls: None,
-                    };
-                }
+            if matches!(m.role, MessageRole::Tool)
+                && let Ok(value) = serde_json::from_str::<serde_json::Value>(&m.content) {
+                let tool_call_id = value
+                    .get("tool_call_id")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string);
+                let content = value
+                    .get("content")
+                    .and_then(serde_json::Value::as_str)
+                    .map(ToString::to_string);
+                return NativeMessage {
+                    role: role.to_string(),
+                    content,
+                    tool_call_id,
+                    tool_calls: None,
+                };
             }
 
             // Handle assistant messages with tool_calls
-            if matches!(m.role, MessageRole::Assistant) {
-                if let Some(ref tool_calls) = m.tool_calls {
-                    let native_calls: Vec<NativeToolCall> = tool_calls
-                        .iter()
-                        .map(|tc| NativeToolCall {
-                            id: Some(tc.id.clone()),
-                            kind: Some(tc.call_type.clone()),
-                            function: NativeFunctionCall {
-                                name: tc.function.name.clone(),
-                                arguments: tc.function.arguments.clone(),
-                            },
-                        })
-                        .collect();
-                    return NativeMessage {
-                        role: role.to_string(),
-                        content: if m.content.is_empty() {
-                            None
-                        } else {
-                            Some(m.content.clone())
+            if matches!(m.role, MessageRole::Assistant)
+                && let Some(ref tool_calls) = m.tool_calls {
+                let native_calls: Vec<NativeToolCall> = tool_calls
+                    .iter()
+                    .map(|tc| NativeToolCall {
+                        id: Some(tc.id.clone()),
+                        kind: Some(tc.call_type.clone()),
+                        function: NativeFunctionCall {
+                            name: tc.function.name.clone(),
+                            arguments: tc.function.arguments.clone(),
                         },
-                        tool_call_id: None,
-                        tool_calls: Some(native_calls),
-                    };
-                }
+                    })
+                    .collect();
+                return NativeMessage {
+                    role: role.to_string(),
+                    content: if m.content.is_empty() {
+                        None
+                    } else {
+                        Some(m.content.clone())
+                    },
+                    tool_call_id: None,
+                    tool_calls: Some(native_calls),
+                };
             }
 
             NativeMessage {
@@ -406,10 +406,9 @@ impl Provider for OpenAIProvider {
                                 return;
                             }
 
-                            if let Some(event) = parse_sse_line(&line) {
-                                if tx.send(Some(event)).await.is_err() {
+                            if let Some(event) = parse_sse_line(&line)
+                                && tx.send(Some(event)).await.is_err() {
                                     return; // receiver dropped
-                                }
                             }
                         }
                     }
@@ -469,10 +468,9 @@ fn parse_sse_line(line: &str) -> Option<StreamEvent> {
     let chunk: StreamChunk = serde_json::from_str(data).ok()?;
 
     for choice in chunk.choices {
-        if let Some(content) = &choice.delta.content {
-            if !content.is_empty() {
-                return Some(StreamEvent::Content(content.clone()));
-            }
+        if let Some(content) = &choice.delta.content
+            && !content.is_empty() {
+            return Some(StreamEvent::Content(content.clone()));
         }
 
         if let Some(tool_calls) = choice.delta.tool_calls {

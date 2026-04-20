@@ -273,6 +273,7 @@ mod tests {
         assert_eq!(tool.spec().name, "http_request");
     }
 
+    #[test]
     fn test_parse_method_default() {
         assert_eq!(HttpRequestTool::parse_method(&serde_json::json!({})), reqwest::Method::GET);
     }

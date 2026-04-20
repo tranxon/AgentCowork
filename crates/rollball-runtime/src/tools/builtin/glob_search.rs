@@ -42,7 +42,7 @@ impl Tool for GlobSearchTool {
                     let path = entry.path();
                     if path.is_dir() {
                         walk_dir(&path, base, pattern, results);
-                    } else if let Some(rel) = path.strip_prefix(base).ok() {
+                    } else if let Ok(rel) = path.strip_prefix(base) {
                         let rel_str = rel.to_string_lossy().replace('\\', "/");
                         if glob_match(pattern, &rel_str) {
                             results.push(rel_str);

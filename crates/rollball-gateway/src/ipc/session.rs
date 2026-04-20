@@ -68,7 +68,7 @@ impl SessionManager {
     /// Create a new session for a connection
     pub fn create_session(&mut self, conn_id: &str) -> &mut Session {
         self.sessions.entry(conn_id.to_string())
-            .or_insert_with(Session::new)
+            .or_default()
     }
 
     /// Get a session by connection ID

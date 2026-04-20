@@ -118,7 +118,7 @@ impl Tool for MemoryStoreTool {
         Ok(ToolResult {
             ok: true,
             content: format!(
-                "Stored memory: {key} (category: {valid_category}, agent: {}, id: {memory_id})",
+                "Stored memory: {key} = {content} (category: {valid_category}, agent: {}, id: {memory_id})",
                 self.agent_id
             ),
             error: None,

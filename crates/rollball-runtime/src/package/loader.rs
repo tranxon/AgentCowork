@@ -5,7 +5,6 @@
 //! and extracts prompt files.
 
 use std::fs;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use rollball_core::AgentManifest;

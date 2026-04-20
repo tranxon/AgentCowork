@@ -9,7 +9,7 @@
 use ed25519_dalek::{Signature, VerifyingKey, Verifier as Ed25519Verifier};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{Cursor, Read};
 use std::path::Path;
 
 use crate::error::{Result, SignError};
@@ -90,7 +90,7 @@ pub fn verify_package(package_path: &Path) -> Result<VerificationResult> {
 
     // Compute fingerprint
     let mut hasher = Sha256::new();
-    hasher.update(&public_key_bytes);
+    hasher.update(public_key_bytes);
     let fingerprint = format!("{:x}", hasher.finalize());
 
     let signer_name = match cert.identity {
@@ -177,6 +177,7 @@ pub struct VerificationResult {
 mod tests {
     use super::*;
     use crate::keygen::KeyType;
+    use std::io::Write;
 
     fn create_test_zip(path: &Path) {
         let file = fs::File::create(path).unwrap();

@@ -85,62 +85,57 @@ impl Tool for MemoryRecallTool {
         }
 
         // Validate date strings
-        if let Some(s) = since {
-            if chrono::DateTime::parse_from_rfc3339(s).is_err() {
-                return Ok(ToolResult {
-                    ok: false,
-                    content: String::new(),
-                    error: Some(format!(
-                        "Invalid 'since' date: {s}. Expected RFC 3339 format, e.g. 2025-03-01T00:00:00Z"
-                    )),
-                    token_usage: None,
-                });
-            }
+        if let Some(s) = since
+            && chrono::DateTime::parse_from_rfc3339(s).is_err() {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some(format!(
+                    "Invalid 'since' date: {s}. Expected RFC 3339 format, e.g. 2025-03-01T00:00:00Z"
+                )),
+                token_usage: None,
+            });
         }
-        if let Some(u) = until {
-            if chrono::DateTime::parse_from_rfc3339(u).is_err() {
-                return Ok(ToolResult {
-                    ok: false,
-                    content: String::new(),
-                    error: Some(format!(
-                        "Invalid 'until' date: {u}. Expected RFC 3339 format, e.g. 2025-03-01T00:00:00Z"
-                    )),
-                    token_usage: None,
-                });
-            }
+        if let Some(u) = until
+            && chrono::DateTime::parse_from_rfc3339(u).is_err() {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some(format!(
+                    "Invalid 'until' date: {u}. Expected RFC 3339 format, e.g. 2025-03-01T00:00:00Z"
+                )),
+                token_usage: None,
+            });
         }
-        if let (Some(s), Some(u)) = (since, until) {
-            if let (Ok(s_dt), Ok(u_dt)) = (
+        if let (Some(s), Some(u)) = (since, until)
+            && let (Ok(s_dt), Ok(u_dt)) = (
                 chrono::DateTime::parse_from_rfc3339(s),
                 chrono::DateTime::parse_from_rfc3339(u),
-            ) {
-                if s_dt >= u_dt {
-                    return Ok(ToolResult {
-                        ok: false,
-                        content: String::new(),
-                        error: Some("'since' must be before 'until'".to_string()),
-                        token_usage: None,
-                    });
-                }
-            }
+            )
+            && s_dt >= u_dt {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some("'since' must be before 'until'".to_string()),
+                token_usage: None,
+            });
         }
 
         // Validate search_mode
-        if let Some(mode) = params.get("search_mode").and_then(|v| v.as_str()) {
-            if !["bm25", "embedding", "hybrid"].contains(&mode) {
-                return Ok(ToolResult {
-                    ok: false,
-                    content: String::new(),
-                    error: Some(format!(
-                        "Invalid search_mode '{}'. Must be bm25, embedding, or hybrid",
-                        mode
-                    )),
-                    token_usage: None,
-                });
-            }
+        if let Some(mode) = params.get("search_mode").and_then(|v| v.as_str())
+            && !["bm25", "embedding", "hybrid"].contains(&mode) {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some(format!(
+                    "Invalid search_mode '{}'. Must be bm25, embedding, or hybrid",
+                    mode
+                )),
+                token_usage: None,
+            });
         }
 
-        let limit = params
+        let _limit = params
             .get("limit")
             .and_then(Value::as_u64)
             .map_or(5, |v| v.min(20)) as usize;
@@ -151,11 +146,11 @@ impl Tool for MemoryRecallTool {
         if !query.is_empty() {
             filter_desc.push(format!("query='{}'", query));
         }
-        if since.is_some() {
-            filter_desc.push(format!("since={}", since.unwrap()));
+        if let Some(s) = since {
+            filter_desc.push(format!("since={s}"));
         }
-        if until.is_some() {
-            filter_desc.push(format!("until={}", until.unwrap()));
+        if let Some(u) = until {
+            filter_desc.push(format!("until={u}"));
         }
 
         Ok(ToolResult {

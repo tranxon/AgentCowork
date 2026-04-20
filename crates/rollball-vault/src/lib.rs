@@ -9,3 +9,6 @@ pub mod vault;
 pub mod encryption;
 pub mod key_derivation;
 pub mod error;
+
+// Re-export primary type for convenience
+pub use vault::Vault;

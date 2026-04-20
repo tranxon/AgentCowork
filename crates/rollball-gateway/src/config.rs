@@ -130,7 +130,7 @@ impl GatewayConfig {
     pub fn ensure_dirs(&self) -> Result<(), GatewayError> {
         for dir in [&self.vault_dir, &self.packages_dir, &self.data_dir] {
             std::fs::create_dir_all(dir)
-                .map_err(|e| GatewayError::Io(e))?;
+                .map_err(GatewayError::Io)?;
         }
         Ok(())
     }

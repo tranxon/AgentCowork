@@ -65,7 +65,7 @@ impl Cli {
         let rt = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .map_err(|e| crate::error::RuntimeError::Io(e))?;
+            .map_err(crate::error::RuntimeError::Io)?;
 
         rt.block_on(async_main(config))
     }
@@ -88,6 +88,11 @@ impl Cli {
 async fn async_main(config: RuntimeConfig) -> Result<()> {
     use crate::package::loader::load_package;
     use crate::package::prompt_builder::build_system_prompt;
+    use crate::agent::context::ContextBuilder;
+    use crate::agent::loop_::AgentLoop;
+    use crate::tools::builtin;
+    use crate::tools::registry::ToolRegistry;
+    use crate::providers::router::create_provider;
 
     // Step 1: Load .agent package
     tracing::info!(path = %config.package_path, "Loading .agent package");
@@ -105,8 +110,133 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
         "System prompt built"
     );
 
-    // TODO: Step 3-9 — initialize provider, tool registry, history, IPC, and run main loop
-    tracing::warn!("Agent main loop not yet implemented — exiting after package load");
+    // Step 3: Initialize LLM Provider
+    let api_key = resolve_api_key(&loaded.manifest);
+    let base_url = std::env::var("ROLLBALL_LLM_BASE_URL").ok();
+    let provider = create_provider(
+        &loaded.manifest.llm.provider,
+        api_key.as_deref(),
+        base_url.as_deref(),
+    );
+    tracing::info!(
+        provider = %provider.name(),
+        model = %loaded.manifest.llm.model,
+        "Provider initialized"
+    );
+
+    // Step 4: Build tool registry + activate by manifest
+    let mut registry = ToolRegistry::new();
+    for tool in builtin::all_builtin_tools(&config.work_dir, &config.agent_id) {
+        registry.register(tool);
+    }
+    let active_tools = registry.activate(&loaded.manifest, &config.work_dir, 60);
+    tracing::info!(
+        total = registry.all().len(),
+        active = active_tools.len(),
+        "Tools activated"
+    );
+
+    // Step 5: Build tool definitions for LLM context
+    let tool_specs: Vec<(String, serde_json::Value)> = active_tools
+        .iter()
+        .map(|t| {
+            let spec = t.spec();
+            (spec.name.clone(), serde_json::to_value(&spec).unwrap_or_default())
+        })
+        .collect();
+    let tool_definitions = crate::agent::context::build_tool_definitions(
+        &loaded.manifest,
+        &tool_specs,
+    );
+
+    // Step 6: Build context builder
+    let context_builder = ContextBuilder::new(system_prompt)
+        .with_tools(tool_definitions);
+
+    // Step 7: Create budget (unlimited for standalone mode)
+    let budget = rollball_core::Budget {
+        daily_tokens: None,
+        monthly_tokens: None,
+        daily_cost_usd: None,
+        monthly_cost_usd: None,
+        exceeded_action: "warn".to_string(),
+    };
+
+    // Step 8: Create AgentLoop
+    let mut agent_loop = AgentLoop::new(
+        config.clone(),
+        loaded.manifest.clone(),
+        provider,
+        active_tools,
+        budget,
+    );
+
+    // Step 9: Run interactive chat loop
+    run_chat_loop(&mut agent_loop, &context_builder).await
+}
+
+/// Resolve API key from environment variables (standalone mode)
+///
+/// Priority:
+/// 1. ROLLBALL_LLM_API_KEY (generic override)
+/// 2. OPENAI_API_KEY / OLLAMA_API_KEY (provider-specific)
+fn resolve_api_key(manifest: &rollball_core::AgentManifest) -> Option<String> {
+    if let Ok(key) = std::env::var("ROLLBALL_LLM_API_KEY")
+        && !key.is_empty() {
+        return Some(key);
+    }
+
+    let env_key = match manifest.llm.provider.as_str() {
+        "ollama" => "OLLAMA_API_KEY",
+        _ => "OPENAI_API_KEY",
+    };
+
+    std::env::var(env_key).ok().filter(|k| !k.is_empty())
+}
+
+/// Run interactive stdin chat loop
+async fn run_chat_loop(
+    agent_loop: &mut crate::agent::loop_::AgentLoop,
+    context_builder: &crate::agent::context::ContextBuilder,
+) -> Result<()> {
+    use std::io::{self, BufRead, Write};
+
+    println!("RollBall Agent Runtime — type messages and press Enter (Ctrl+C to exit)");
+    println!();
+
+    let stdin = io::stdin();
+    let mut stdout = io::stdout();
+
+    for line in stdin.lock().lines() {
+        let line = line.map_err(crate::error::RuntimeError::Io)?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        if trimmed == "/quit" || trimmed == "/exit" {
+            println!("Goodbye!");
+            return Ok(());
+        }
+
+        match agent_loop.run(trimmed, context_builder).await {
+            Ok(response) => {
+                println!("
+--- Agent ---
+{response}
+");
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Agent loop error");
+                println!("
+--- Error ---
+{e}
+");
+            }
+        }
+
+        stdout.flush().ok();
+    }
 
     Ok(())
 }

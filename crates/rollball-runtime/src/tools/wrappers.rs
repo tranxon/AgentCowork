@@ -132,28 +132,25 @@ impl Tool for PathGuardedTool {
     async fn execute(&self, params: Value) -> rollball_core::error::Result<ToolResult> {
         if self.is_filesystem_tool() {
             // Check path parameter
-            if let Some(path) = params["path"].as_str() {
-                if let Err(e) = self.validate_path(path) {
-                    return Ok(ToolResult {
-                        ok: false,
-                        content: String::new(),
-                        error: Some(e),
-                        token_usage: None,
-                    });
-                }
+            if let Some(path) = params["path"].as_str()
+                && let Err(e) = self.validate_path(path) {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some(e),
+                    token_usage: None,
+                });
             }
             // file_edit uses "file_path" instead of "path"
-            if self.inner.name() == "file_edit" {
-                if let Some(file_path) = params["file_path"].as_str() {
-                    if let Err(e) = self.validate_path(file_path) {
-                        return Ok(ToolResult {
-                            ok: false,
-                            content: String::new(),
-                            error: Some(e),
-                            token_usage: None,
-                        });
-                    }
-                }
+            if self.inner.name() == "file_edit"
+                && let Some(file_path) = params["file_path"].as_str()
+                && let Err(e) = self.validate_path(file_path) {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some(e),
+                    token_usage: None,
+                });
             }
         }
         self.inner.execute(params).await

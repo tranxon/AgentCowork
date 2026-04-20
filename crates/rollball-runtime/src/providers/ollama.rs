@@ -105,6 +105,7 @@ struct OllamaFunctionCall {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OllamaChatResponse {
     message: OllamaResponseMessage,
     #[serde(default)]
@@ -116,6 +117,7 @@ struct OllamaChatResponse {
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct OllamaResponseMessage {
     role: String,
     #[serde(default)]

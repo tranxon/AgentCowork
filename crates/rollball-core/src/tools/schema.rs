@@ -54,25 +54,23 @@ pub fn clean_schema(schema: Value) -> Value {
 
             // Clean allOf / oneOf / anyOf
             for combiner in &["allOf", "oneOf", "anyOf"] {
-                if let Some(subschemas) = map.remove(*combiner) {
-                    if let Value::Array(arr) = subschemas {
-                        let cleaned: Vec<Value> = arr.into_iter().map(clean_schema).collect();
-                        if !cleaned.is_empty() {
-                            map.insert(
-                                (*combiner).to_string(),
-                                Value::Array(cleaned),
-                            );
-                        }
+                if let Some(Value::Array(arr)) = map.remove(*combiner) {
+                    let cleaned: Vec<Value> = arr.into_iter().map(clean_schema).collect();
+                    if !cleaned.is_empty() {
+                        map.insert(
+                            (*combiner).to_string(),
+                            Value::Array(cleaned),
+                        );
                     }
                 }
             }
 
             // Normalize type: if it's an array with one element, flatten to string
-            if let Some(Value::Array(types)) = map.get_mut("type") {
-                if types.len() == 1 {
-                    let single = types.pop().unwrap();
-                    map.insert("type".into(), single);
-                }
+            if let Some(Value::Array(types)) = map.get_mut("type")
+                && types.len() == 1
+            {
+                let single = types.pop().unwrap();
+                map.insert("type".into(), single);
             }
 
             Value::Object(map)

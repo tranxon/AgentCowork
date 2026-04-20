@@ -10,17 +10,21 @@ runtime_version = "0.1.0"
 system = false
 dev = false
 
-permissions = [
-    "Network:https://wttr.in",
-    "MemoryRead",
-    "MemoryWrite",
-]
+[[permissions]]
+type = "Network"
+value = "https://wttr.in"
+
+[[permissions]]
+type = "MemoryRead"
+
+[[permissions]]
+type = "MemoryWrite"
 
 triggers = []
 identity_deps = []
 
 [[tools]]
-name = "weather"
+name = "http_request"
 
 [[tools]]
 name = "memory_store"

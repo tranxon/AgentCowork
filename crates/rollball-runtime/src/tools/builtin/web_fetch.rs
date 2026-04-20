@@ -48,7 +48,7 @@ fn strip_html_tags(html: &str) -> String {
         match ch {
             '<' => {
                 in_tag = true;
-                if result.len() > 0 && !result.ends_with(' ') && !result.ends_with('\n') { result.push(' '); }
+                if !result.is_empty() && !result.ends_with(' ') && !result.ends_with('\n') { result.push(' '); }
             }
             '>' => {
                 in_tag = false;

@@ -7,8 +7,6 @@
 
 use std::collections::HashMap;
 
-use rollball_core::providers::traits::{ChatMessage, MessageRole, ToolCall};
-
 /// Loop detection result
 #[derive(Debug, Clone)]
 pub enum LoopDetectionResult {
@@ -135,10 +133,9 @@ impl LoopDetector {
         }
 
         // Check No Progress
-        if self.config.no_progress_enabled {
-            if let Some(result) = self.check_no_progress(tool_name, result_content) {
-                return result;
-            }
+        if self.config.no_progress_enabled
+            && let Some(result) = self.check_no_progress(tool_name, result_content) {
+            return result;
         }
 
         // Reset hit counters if no loop detected (different tool used successfully)
@@ -373,8 +370,8 @@ mod tests {
         for _ in 0..3 {
             detector.check("weather", "{city:Shanghai}", "Sunny");
         }
-        let result = detector.check("weather", "{city:Shanghai}", "Sunny");
-        let result = detector.check("weather", "{city:Shanghai}", "Sunny");
+        let _result = detector.check("weather", "{city:Shanghai}", "Sunny");
+        let _result = detector.check("weather", "{city:Shanghai}", "Sunny");
         let result = detector.check("weather", "{city:Shanghai}", "Sunny");
         if let LoopDetectionResult::LoopDetected { level, .. } = &result {
             assert_eq!(*level, ResponseLevel::Break); // Third hit = Break

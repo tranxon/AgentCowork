@@ -161,9 +161,9 @@ pub mod hex {
         s
     }
 
-    pub fn decode(s: &str) -> Result<Vec<u8>, ()> {
-        if s.len() % 2 != 0 {
-            return Err(());
+    pub fn decode(s: &str) -> std::result::Result<Vec<u8>, super::HexDecodeError> {
+        if !s.len().is_multiple_of(2) {
+            return Err(super::HexDecodeError);
         }
         let mut bytes = Vec::with_capacity(s.len() / 2);
         for i in (0..s.len()).step_by(2) {
@@ -172,7 +172,7 @@ pub mod hex {
             let high = if high > 9 { high - 39 } else { high };
             let low = if low > 9 { low - 39 } else { low };
             if high > 15 || low > 15 {
-                return Err(());
+                return Err(super::HexDecodeError);
             }
             bytes.push(high << 4 | low);
         }
@@ -180,10 +180,21 @@ pub mod hex {
     }
 }
 
+/// Error type for hex decoding failures
+#[derive(Debug, Clone)]
+pub struct HexDecodeError;
+
+impl std::fmt::Display for HexDecodeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid hex string")
+    }
+}
+
+impl std::error::Error for HexDecodeError {}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_keypair_generate() {

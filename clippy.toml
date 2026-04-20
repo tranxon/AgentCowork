@@ -1,8 +1,2 @@
-[package]
-name = "clippy-toml"
-version = "0.1.0"
-edition = "2024"
-
-[lints.clippy]
-# All warnings are errors
-all = { level = "deny", priority = -1 }
+# Clippy configuration
+# All warnings are errors via CI: cargo clippy --all-targets -- -D warnings

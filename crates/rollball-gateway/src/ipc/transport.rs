@@ -87,7 +87,7 @@ struct UnixSocketConnection {
 #[cfg(unix)]
 impl TransportConnection for UnixSocketConnection {
     fn recv_frame(&mut self) -> Result<Option<Frame>, GatewayError> {
-        use std::io::{Read, Write};
+        use std::io::Read;
         
         // Read header: 4 bytes body_len + 1 byte msg_type
         let mut header = [0u8; Frame::HEADER_SIZE];
@@ -130,7 +130,7 @@ impl TransportConnection for UnixSocketConnection {
 
     fn peer_desc(&self) -> String {
         format!("unix:{}", self.stream.peer_addr()
-            .map(|a| a.to_string())
+            .map(|a| format!("{:?}", a))
             .unwrap_or_else(|_| "unknown".to_string()))
     }
 }

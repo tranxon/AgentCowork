@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
-use crate::error::{Result, SignError};
+use crate::error::Result;
 use crate::keygen::load_keypair;
 use crate::keygen::KeyType;
 use crate::signing_block::{
@@ -166,7 +166,6 @@ fn write_signed_zip(original_data: &[u8], block: &SigningBlock, output_path: &Pa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
     use std::io::Write;
 
     fn create_test_zip(path: &Path) {

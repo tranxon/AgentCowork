@@ -11,7 +11,9 @@
 //! └── ...
 //! ```
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
+#[cfg(test)]
+use secrecy::ExposeSecret;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -175,7 +177,7 @@ mod tests {
         let dir = temp_vault_dir("open").join("new_vault");
         let _ = fs::remove_dir_all(&dir);
 
-        let vault = Vault::open(&dir).unwrap();
+        let _vault = Vault::open(&dir).unwrap();
         assert!(dir.exists());
 
         let _ = fs::remove_dir_all(temp_vault_dir("open"));

@@ -4,9 +4,8 @@
 //! Rollball deviation: uses rollball-core ChatMessage types; token estimation
 //! uses char-based approximation instead of tiktoken.
 
-use rollball_core::providers::traits::{ChatMessage, MessageRole, ToolCall};
+use rollball_core::providers::traits::{ChatMessage, MessageRole};
 
-use crate::error::{Result, RuntimeError};
 
 /// History manager for conversation
 pub struct HistoryManager {
