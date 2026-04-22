@@ -1,8 +1,9 @@
 # Rollball Phase 2 开发计划
 
-> 版本：v1.4 | 更新日期：2026-04-22
+> 版本：v1.5 | 更新日期：2026-04-22
 >
 > 本计划基于 `docs/09-roadmap-and-scenarios.md` v3.1 和 `docs/review/04-p2-s2-design-review.md` S2 设计评审。
+> v1.5 更新：基于竞品对标和 Benchmark 审查（07/08-memory-review）的设计补充落地。主要变更：新增 Abstention 拒答机制（S2.15）、冲突检测升级为三层信号模型（S2.10）、质量评估框架扩展（S2.12.3/12.4 LongMemEval + 在线 LLM Judge）、巩固管道边界明确化（S2.6 即时/离线 Prompt 分工、PendingNode 升级条件、防重复提取）、关联扩散新增检索权重动态调整（S2.8）、删除不必要的数据迁移任务（S2.14.2）。
 > v1.4 更新：S2 阶段全面迁移至 grafeo-engine（v0.5.39）— 存储后端从 rusqlite 切换为 GrafeoDB，数据模型从 SQL 表结构改为 LPG 标签属性图，向量/全文/混合检索复用 Grafeo 原生 HNSW/BM25/RRF，关联扩散引入 GQL 图遍历 + PageRank + topology_boost + 社区检测。
 > v1.3 更新：S2.6 简化 memory_store 接口（自然语言替代三元组）、S2.7 完善 Purge 三条路径、S2.8 自适应 graph_expand、S5.4 分层 Token 计数方案；新增 S2.10-S2.14 任务（冲突检测、隐私访问控制、质量评估、工程约束、备份迁移）。
 
@@ -199,6 +200,19 @@
 | S2.6.2 PendingKnowledgeNode 写入 | `consolidation/instant.rs` | 即时写入带 embedding 的 Pending 节点，支持向量和 BM25 检索 |
 | S2.6.3 冲突候选标记 | `consolidation/instant.rs` | 新节点 embedding 相似度 > 0.85 时标记候选冲突 |
 | S2.6.4 离线巩固占位（Phase 3）| `consolidation/offline.rs` | 三元组提取、冲突分类、证据验证 |
+| S2.6.5 PendingKnowledgeNode 升级条件 | `consolidation/instant.rs` | confidence >= 0.85（LLM 输出 high）时直接创建正式 KnowledgeNode（status=Active），无需离线确认 |
+| S2.6.6 防重复提取机制 | `consolidation/instant.rs` | 离线巩固前查询已有 KnowledgeNode，embedding 相似度 > 0.95 跳过写入 |
+
+**即时/离线 Prompt 分工（v1.5 明确化）**：
+
+| 维度 | 即时提取（每轮 Tool Call） | 离线巩固（Phase 3 批量回放） |
+|------|---------------------------|----------------------------|
+| Prompt 规模 | ~100 tokens | ~500 tokens |
+| 职责 | 事实识别、类型标注、关键词提取、置信度评估 | 关联发现、冲突判定、模式提炼、质量评估、Artifact 摘要增强 |
+| 不做的事 | 关联发现、冲突判定、模式提炼、质量评估 | — |
+| 产出 | PendingKnowledgeNode / 正式 KnowledgeNode（confidence≥0.85） | 升级/降级 PendingNode、新建正式 KnowledgeNode |
+
+详见 `docs/05-memory.md` §4.1、§4.2
 
 **memory_store 新接口设计**：
 - 旧设计：三元组 `{subject, predicate, object}`，LLM 负担重且不可靠
@@ -242,6 +256,18 @@
 | S2.8.4 topology_boost 图连通性排序 | `retrieval.rs` | `hybrid_search` 启用 `topology_boost` 选项，高连通性节点（被更多边引用）在检索结果中排名提升 |
 | S2.8.5 社区检测集成 | `semantic/graph.rs` | `CALL grafeo.louvain()` 发现记忆社区，辅助 graph_expand 优先扩展同一社区内节点 |
 | S2.8.6 扩展限制（3跳/早期终止/总数20）| `retrieval/graph_expand.rs` | 性能保障：本轮扩展最高分 < 阈值、累积结果已满足 token 预算、达到总节点上限（20）|
+| S2.8.7 检索权重动态调整 | `retrieval.rs` | `memory_hint.type`（s/f/r/i）驱动 RRF 权重动态化；`hybrid_search_weighted` 基础结构已在 retrieval.rs 实现，待完成 Runtime 层根据 hint_type 选择权重配置 |
+
+**memory_hint.type 驱动的检索权重配置**：
+
+| type | 含义 | 向量权重 | 关键词权重 | 图扩散权重 | graph_expand 启用 |
+|------|------|---------|----------|----------|------------------|
+| `s` | 语义搜索 | 0.8 | 0.2 | 0.0 | 是（保守阈值） |
+| `f` | 事实查找 | 0.5 | 0.5 | 0.0 | 否 |
+| `r` | 关联扩散 | 0.6 | 0.2 | 0.2 | 是（激进阈值） |
+| `i` | 身份查询 | 0.3 | 0.7 | 0.0 | 否 |
+
+详见 `docs/05-memory.md` §6.6、§1（Memory Hint 指令）
 
 **Graph Expand 更新设计**：
 - max_hops 从 2 提高到 3，但通过早期终止大多数查询在 1-2 跳停止
@@ -271,21 +297,30 @@
 MemoryManager 包含业务逻辑（Token 裁剪策略、优先级排序等），归属 rollball-runtime。
 rollball-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 
-#### S2.10 任务：冲突检测与处理
+#### S2.10 任务：冲突检测与处理（三层信号模型）
 
-| 任务 | 文件 | 验收标准 |
-|------|------|---------|
-| S2.10.1 ConflictDetector 模块 | `semantic/conflict.rs` | embedding 相似度 > 0.85 触发候选冲突标记 |
-| S2.10.2 冲突分类（离线 LLM）| `consolidation/offline.rs` | evolution/correction/ambiguous 三类 |
-| S2.10.3 自动解决策略 | `consolidation/offline.rs` | evolution→新值Active旧值Dormant；correction→替换；ambiguous→标记待确认 |
-| S2.10.4 冲突报告生成 | `consolidation/offline.rs` | ambiguous 累计 3+ 时触发用户确认 |
+| 任务 | 文件 | 验收标准 | 状态 |
+|------|------|---------|------|
+| S2.10.1 `conflict.rs` 基础结构 | `semantic/conflict.rs` | `detect_conflict` 函数 + 单元测试（三层信号输入 → ConflictSignal 输出）| ✅ 已完成 |
+| S2.10.2 三层信号集成到巩固管道 | `consolidation/instant.rs` | PendingKnowledgeNode 写入时自动调用三层信号检测，标记候选冲突 | ⬚ |
+| S2.10.3 启发式快速路径 | `semantic/conflict.rs` | Evolution（时间差>7天+变化词）和 Correction（时间差<24h+否定词）自动判定，无需 LLM | ⬚ |
+| S2.10.4 ambiguous 用户确认流程 | `consolidation/offline.rs` | ambiguous 累计 3+ 时通过 System Prompt 注入引导 Agent 自然询问用户确认 | ⬚ |
+| S2.10.5 LLM 离线仲裁 | `consolidation/offline.rs` | Phase 3：LLM 批量处理 ambiguous 候选，精确分类 evolution/correction/ambiguous | ⬚ |
 
-**冲突分类设计**：
-- Evolution：新值替换旧值，记录 conflict_log（上下文中有"我搬家了"）
-- Correction：用户主动纠正，降低旧来源可信度（上下文中有"不是3月，是5月"）
-- Ambiguous：无法确定，两个都 Active，标记 conflict_group_id
+**三层冲突信号模型（v1.5 升级）**：
 
-详见 docs/review/04-p2-s2-design-review.md §6.9
+| 层级 | 信号 | 检测机制 | 动态阈值 |
+|------|------|---------|---------|
+| **Layer 1** | 语义相似度 | embedding cosine similarity | Fact 0.85 / Preference 0.80 / Relation 0.90 |
+| **Layer 2** | 时间冲突 | 同一 subject 24h 内矛盾陈述 | `db.history()` CDC API 获取创建时间 |
+| **Layer 3** | 上下文冲突 | source_episode 含否定词 | 正则匹配（"不是"/"其实"/"actually"/"correction"等）|
+
+**启发式快速路径**：
+- Evolution：时间差 > 7天 + 含变化词（"搬家了"、"换工作"）→ 新值 Active，旧值 Dormant，confidence=0.8
+- Correction：时间差 < 24h + 含否定词（"不是 X，是 Y"）→ 新值 Active，旧值 Dormant + 降低旧来源可信度，confidence=0.9
+- Ambiguous：不满足以上任一 → 标记 conflict_group_id，两个都 Active，交由离线 LLM 仲裁
+
+详见 `docs/05-memory.md` §6.4、`docs/module-design/04-grafeo.md` §冲突检测（Multi-Signal Conflict Detection）
 
 #### S2.11 任务：隐私访问控制
 
@@ -306,21 +341,25 @@ rollball-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 
 | 任务 | 文件 | 验收标准 |
 |------|------|---------|
-| S2.12.1 可观测指标 | `memory/stats.rs` | 节点分布/检索统计/冲突统计/衰减统计 |
+| S2.12.1 可观测指标 | `memory/stats.rs` | 节点分布/检索统计/冲突统计/衰减统计；**新增 RetrievalMetrics**（`types.rs` 已定义）：result_count/avg_score/max_score/abstention_triggered/retrieval_level/graph_expand_nodes/hint_type |
 | S2.12.2 SLA 定义 | `memory/stats.rs` | hybrid_search P99 < 100ms (1K nodes)，P99 < 500ms (10K nodes) |
-
-**Phase 3 对接开源 Benchmark：**
-
-| 任务 | 文件 | 验收标准 |
-|------|------|---------|
-| S2.12.3 LongMemEval 集成测试 | `tests/` | 5 维评估（IE/MR/TR/KU/Abs）|
+| S2.12.3 LongMemEval 5 维基础集成 | `tests/` | Phase 2 末期验证：综合目标 65%+，各维度不低于 50%，Abs >= 60%。覆盖 IE（信息提取）/ MR（多会话推理）/ TR（时序推理）/ KU（知识更新）/ Abs（拒答） |
+| S2.12.4 在线 LLM Judge 评估框架 | `memory/judge.rs` | 轻量模型（qwen3:1.7b）异步评估检索结果相关性，采样率 10%，输入 Top-3 结果，输出 1-5 分相关性评分。用于校准 RRF 分数偏差和识别系统性检索弱点 |
 
 **质量评估设计**：
-- Phase 2 建立可观测基础设施，Phase 3 对接开源 Benchmark
+- Phase 2 建立可观测基础设施（RetrievalMetrics + SLA + LongMemEval-S 验证）
+- Phase 3 扩展为完整 Benchmark 对接（LongMemEval 完整集 + BEAM MDS + Accuracy@1M）
 - 采纳 LongMemEval 5 维作为 RollBall 记忆系统的评估标准
 - 衰减参数通过 manifest 可配置，Phase 3 用真实数据校准
 
-详见 docs/review/04-p2-s2-design-review.md §6.11
+**LongMemEval 分阶段目标**：
+
+| 阶段 | 综合目标 | IE | MR | TR | KU | Abs |
+|------|---------|-----|-----|-----|-----|------|
+| Phase 2 | 65%+ | 70%+ | 60%+ | 55%+ | 60%+ | 60%+ |
+| Phase 3 | 75%+ | 80%+ | 70%+ | 65%+ | 75%+ | 75%+ |
+
+详见 `docs/05-memory.md` §11、`docs/review/04-p2-s2-design-review.md` §6.11
 
 #### S2.13 任务：工程约束与降级策略
 
@@ -336,15 +375,41 @@ rollball-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 
 详见 docs/review/04-p2-s2-design-review.md §6.12、§6.14、docs/module-design/04-grafeo.md §CDC / History
 
-#### S2.14 任务：备份与迁移
+#### S2.14 任务：备份与恢复
 
 | 任务 | 文件 | 验收标准 |
 |------|------|---------|
 | S2.14.1 自动备份 | rollball-grafeo | 每天增量备份（`.grafeo` 单文件级），保留 7 天日备份 + 4 周周备份 |
-| S2.14.2 数据迁移 | rollball-grafeo | LPG 无 Schema 版本迁移概念；索引通过 API 动态创建；数据迁移通过 GQL 导出/导入实现 |
+| S2.14.2 ~~数据迁移~~ | — | **不需要（无历史 SQLite 数据）**。RollBall 从 Phase 2 起直接使用 Grafeo，不存在 rusqlite → Grafeo 的历史数据迁移需求。LPG 无 Schema 版本迁移概念，索引通过 API 动态创建 |
 | S2.14.3 故障恢复 | rollball-grafeo | Grafeo WAL 重放自动恢复；必要时从 `.grafeo` 备份文件还原 |
 
 详见 docs/review/04-p2-s2-design-review.md §6.16、docs/module-design/04-grafeo.md §索引说明
+
+#### S2.15 任务：Abstention 阈值机制实现
+
+| 任务 | 文件 | 验收标准 |
+|------|------|---------|
+| S2.15.1 min_score 过滤逻辑 | `retrieval.rs` | `hybrid_search` 返回结果后，过滤 score < min_score 的项；过滤后为空则触发 Abstention。基础结构已在 retrieval.rs 实现 |
+| S2.15.2 Runtime 层集成 | `rollball-runtime/src/memory/manager.rs` | `MemoryQuery.min_score` 从 Agent manifest.toml `[memory.retrieval]` 配置读取，默认 0.6 |
+| S2.15.3 System Prompt 动态注入 | `rollball-runtime/src/prompt/builder.rs` | Abstention 触发时注入拒答指引（约 30 tokens）："当检索分数不足时回复'我不确定这个信息'，不要猜测" |
+| S2.15.4 manifest 可配置 | `rollball-core/src/manifest.rs` | 支持 `[memory.retrieval]` 表配置 `min_score = 0.6`，工具型 Agent 可降至 0.5，学习型可升至 0.7 |
+
+**默认阈值与可配置性**：
+
+| Agent 类型 | min_score | 说明 |
+|-----------|-----------|------|
+| 默认 | 0.6 | 保守值，精度优先 |
+| 工具型 | 0.5 | 容忍较低匹配，宁可多答 |
+| 学习型 | 0.7 | 严格匹配，宁缺毋滥 |
+
+**与检索降级策略的关系**：
+Abstention 在 Level 0-3 降级策略之后生效，是最终质量门控。Level 0-3 解决"Grafeo 可用性"问题，Abstention 解决"检索质量"问题，两者正交。
+
+**工时**：2d
+**依赖**：S2.4（向量索引）、S2.5（全文索引）完成后
+**预期测试数**：4
+
+详见 `docs/05-memory.md` §6.5（Abstention 机制）
 
 ---
 
@@ -537,15 +602,16 @@ rollball-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 | S2.3 | 沉淀层（Semantic）实现 | rollball-grafeo | S2 | S2.1 | 15 | ⬚ |
 | S2.4 | 向量索引（grafeo-engine HNSW）集成 | rollball-grafeo | S2 | S2.1 | 6 | ⬚ |
 | S2.5 | 全文索引（grafeo-engine BM25）集成 | rollball-grafeo | S2 | S2.1 | 4 | ⬚ |
-| S2.6 | 巩固管道（Consolidation）| rollball-grafeo | S2 | S2.2,S2.3 | 10 | ⬚ |
+| S2.6 | 巩固管道（Consolidation）| rollball-grafeo | S2 | S2.2,S2.3 | 14 | ⬚ |
 | S2.7 | 遗忘衰减机制（Decay）| rollball-grafeo | S2 | S2.3 | 8 | ⬚ |
-| S2.8 | 关联扩散检索（GQL + PageRank + topology_boost）| rollball-grafeo | S2 | S2.3,S2.4,S2.5 | 12 | ⬚ |
+| S2.8 | 关联扩散检索（GQL + PageRank + topology_boost + 动态权重）| rollball-grafeo | S2 | S2.3,S2.4,S2.5 | 14 | ⬚ |
 | S2.9 | MemoryManager 集成 | rollball-runtime | S2 | S2.0~S2.8 | 12 | ⬚ |
-| S2.10 | 冲突检测与处理 | rollball-grafeo | S2 | S2.6 | 8 | ⬚ |
+| S2.10 | 冲突检测与处理（三层信号）| rollball-grafeo | S2 | S2.6 | 10 | 🚧 |
 | S2.11 | 隐私访问控制 | rollball-gateway | S2 | S2.10 | 6 | ⬚ |
-| S2.12 | 质量评估框架 | rollball-grafeo | S2 | S2.0~S2.11 | 5 | ⬚ |
+| S2.12 | 质量评估框架（RetrievalMetrics + LongMemEval + LLM Judge）| rollball-grafeo | S2 | S2.0~S2.11 | 10 | ⬚ |
 | S2.13 | 工程约束与降级策略 | rollball-grafeo | S2 | S2.4 | 10 | ⬚ |
-| S2.14 | 备份与迁移 | rollball-grafeo | S2 | S2.0 | 4 | ⬚ |
+| S2.14 | 备份与恢复 | rollball-grafeo | S2 | S2.0 | 3 | ⬚ |
+| S2.15 | Abstention 阈值机制实现 | rollball-grafeo, rollball-runtime | S2 | S2.4,S2.5 | 4 | ⬚ |
 | S3.1 | System Agent 包和清单 | examples/system-agent | S3 | - | 3 | ⬚ |
 | S3.2 | 身份信息系统 | rollball-core | S3 | - | 6 | ⬚ |
 | S3.3 | 冷启动身份注入 | rollball-gateway | S3 | S3.1,S3.2,S1.2 | 5 | ⬚ |
@@ -562,7 +628,7 @@ rollball-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 | S5.5 | 端到端集成测试 | tests/ | S5 | S1~S4 | 10 | ⬚ |
 | S5.6 | 多 Agent 协作示例 | examples/ | S5 | S3,S4 | 4 | ⬚ |
 
-**总计：38 个任务，预期 325+ 测试**
+**总计：39 个任务，预期 341+ 测试**
 
 ---
 

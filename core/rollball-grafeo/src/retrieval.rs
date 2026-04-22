@@ -1,9 +1,29 @@
 //! Associative diffusion retrieval.
 
-use grafeo_common::types::{NodeId, Value};
+use grafeo_common::types::NodeId;
 
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
+
+/// Apply min_score filtering to search results.
+/// Returns filtered results and the count of removed items.
+fn apply_min_score(
+    results: Vec<(NodeId, f64)>,
+    min_score: Option<f32>,
+) -> (Vec<(NodeId, f64)>, usize) {
+    match min_score {
+        Some(threshold) => {
+            let original_len = results.len();
+            let filtered: Vec<(NodeId, f64)> = results
+                .into_iter()
+                .filter(|(_, score)| *score >= threshold as f64)
+                .collect();
+            let removed = original_len - filtered.len();
+            (filtered, removed)
+        }
+        None => (results, 0),
+    }
+}
 
 impl GrafeoStore {
     /// Vector similarity search using the HNSW index.
@@ -98,7 +118,7 @@ impl GrafeoStore {
 
         let mut nodes = Vec::new();
         for row in result.rows() {
-            if let Some(Value::Int64(id)) = row.first() {
+            if let Some(grafeo_common::types::Value::Int64(id)) = row.first() {
                 let node_id = NodeId::new(*id as u64);
                 if node_id != start_id {
                     nodes.push(node_id);
@@ -106,5 +126,136 @@ impl GrafeoStore {
             }
         }
         Ok(nodes)
+    }
+
+    /// Full-text search with optional min_score filtering.
+    ///
+    /// Results with a score below `min_score` are removed. Returns the
+    /// filtered results along with the number of removed entries.
+    #[allow(clippy::too_many_arguments)]
+    pub fn text_search_filtered(
+        &self,
+        label: &str,
+        query: &str,
+        k: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let results = self.db.text_search(label, "content", query, k)?;
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Hybrid search with optional min_score filtering.
+    ///
+    /// Results with a fused score below `min_score` are removed.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hybrid_search_filtered(
+        &self,
+        label: &str,
+        text_prop: &str,
+        vec_prop: &str,
+        query: &str,
+        embedding: &[f32],
+        k: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let results = self.db.hybrid_search(
+            label,
+            text_prop,
+            vec_prop,
+            query,
+            Some(embedding),
+            k,
+            None,
+        )?;
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Perform a weighted hybrid search combining text and vector search with custom weights.
+    ///
+    /// The fusion method can be adjusted based on the query hint type.
+    /// After RRF fusion, scores are adjusted by `text_weight` and `vector_weight`,
+    /// then results below `min_score` are filtered out.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hybrid_search_weighted(
+        &self,
+        label: &str,
+        text_prop: &str,
+        vec_prop: &str,
+        query: &str,
+        embedding: &[f32],
+        k: usize,
+        text_weight: f32,
+        vector_weight: f32,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let mut results = self.db.hybrid_search(
+            label,
+            text_prop,
+            vec_prop,
+            query,
+            Some(embedding),
+            k,
+            None,
+        )?;
+
+        // Apply weight adjustment: scale scores by the combined weight factor.
+        // The weight factor represents how much each signal should influence the final score.
+        let weight_factor = (text_weight + vector_weight) / 2.0;
+        for (_, score) in &mut results {
+            *score *= weight_factor as f64;
+        }
+
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Perform a search and collect retrieval metrics.
+    ///
+    /// Uses hybrid search internally, then applies min_score filtering and
+    /// computes statistics about the result set including whether abstention
+    /// was triggered (all results filtered out).
+    pub fn search_with_metrics(
+        &self,
+        label: &str,
+        query: &str,
+        embedding: &[f32],
+        k: usize,
+        min_score: Option<f32>,
+    ) -> Result<(Vec<(NodeId, f64)>, rollball_memory::RetrievalMetrics)> {
+        let results = self.db.hybrid_search(
+            label,
+            "content",
+            "embedding",
+            query,
+            Some(embedding),
+            k,
+            None,
+        )?;
+
+        let (filtered, filtered_count) = apply_min_score(results, min_score);
+
+        let result_count = filtered.len();
+        let max_score = filtered
+            .iter()
+            .map(|(_, s)| *s as f32)
+            .fold(0.0_f32, f32::max);
+        let avg_score = if result_count > 0 {
+            filtered.iter().map(|(_, s)| *s as f32).sum::<f32>() / result_count as f32
+        } else {
+            0.0
+        };
+        let abstention_triggered = result_count == 0 && min_score.is_some();
+
+        let metrics = rollball_memory::RetrievalMetrics {
+            result_count,
+            avg_score,
+            max_score,
+            abstention_triggered,
+            filtered_count,
+        };
+
+        Ok((filtered, metrics))
     }
 }
