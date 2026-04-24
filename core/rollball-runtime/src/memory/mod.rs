@@ -1,3 +1,8 @@
 //! Memory module (Grafeo client)
 
-// TODO: Implement memory operations wrapper for Phase 2
+pub mod manager;
+
+pub use manager::{
+    ConversationRecord, InjectedMemory, MemoryManager, MemoryManagerConfig, RetrievedMemory,
+    RetrievalResult,
+};

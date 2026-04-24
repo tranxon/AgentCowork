@@ -4,12 +4,13 @@
 //! Grafeo is the primary implementation (Phase 2).
 
 use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::Result;
 
 /// Memory node with metadata
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryNode {
     pub id: String,
     pub content: String,
@@ -19,7 +20,7 @@ pub struct MemoryNode {
 }
 
 /// Privacy level for memory nodes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum PrivacyLevel {
     Public,
     Personal,

@@ -15,6 +15,7 @@ path = "src/main.rs"
 rollball-core.workspace = true
 rollball-memory.workspace = true
 rollball-grafeo.workspace = true
+grafeo-common.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 reqwest.workspace = true

@@ -15,6 +15,14 @@ pub enum GrafeoError {
 
     #[error("Memory error: {0}")]
     Memory(String),
+
+    #[error("Invalid embedding dimension: expected {expected}, got {got}")]
+    InvalidDimension {
+        /// Expected dimension (EMBEDDING_DIM).
+        expected: usize,
+        /// Actual dimension provided.
+        got: usize,
+    },
 }
 
 pub type Result<T> = std::result::Result<T, GrafeoError>;

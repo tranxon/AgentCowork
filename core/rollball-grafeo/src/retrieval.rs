@@ -4,6 +4,7 @@ use grafeo_common::types::NodeId;
 
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
+use crate::index_config::validate_embedding_dim;
 
 /// Apply min_score filtering to search results.
 /// Returns filtered results and the count of removed items.
@@ -97,12 +98,15 @@ impl GrafeoStore {
         Ok(results)
     }
 
-    /// Graph expansion: traverse from a start node up to `max_hops` away.
+    /// Graph expansion (simple): traverse from a start node up to `max_hops` away.
     ///
     /// Returns a deduplicated list of reachable [`NodeId`]s (excluding the
     /// start node itself). The `threshold` parameter is reserved for future
     /// score-based pruning and currently has no effect.
-    pub fn graph_expand(
+    ///
+    /// For the full-featured expansion with scoring and early stopping,
+    /// see [`crate::spreading::graph_expand`].
+    pub fn graph_expand_simple(
         &self,
         start_id: NodeId,
         max_hops: usize,
@@ -168,6 +172,83 @@ impl GrafeoStore {
             k,
             None,
         )?;
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Vector search with configurable ef and min_score filtering.
+    ///
+    /// Validates the embedding dimension before searching.
+    /// Returns `(NodeId, score)` pairs sorted by descending similarity.
+    pub fn vector_search_with_params(
+        &self,
+        label: &str,
+        embedding: &[f32],
+        k: usize,
+        ef_search: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        validate_embedding_dim(embedding)?;
+        let raw = self.db.vector_search(label, "embedding", embedding, k, Some(ef_search), None)?;
+        // Convert distance to similarity score: for cosine, distance ∈ [0, 2],
+        // convert to a [0, 1] similarity by (2.0 - distance) / 2.0.
+        let results: Vec<(NodeId, f64)> = raw
+            .into_iter()
+            .map(|(id, dist)| (id, (2.0 - f64::from(dist)) / 2.0))
+            .collect();
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Text search on a specific field with min_score filtering.
+    ///
+    /// Searches the BM25 index for `field` on the given `label`.
+    pub fn text_search_with_filter(
+        &self,
+        label: &str,
+        field: &str,
+        query: &str,
+        k: usize,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        let results = self.db.text_search(label, field, query, k)?;
+        let (filtered, _) = apply_min_score(results, min_score);
+        Ok(filtered)
+    }
+
+    /// Full hybrid search: vector + text with custom weights and min_score.
+    ///
+    /// Combines BM25 text search and HNSW vector search, applying
+    /// `text_weight` and `vector_weight` to scale the fused scores.
+    /// Results below `min_score` are filtered out.
+    #[allow(clippy::too_many_arguments)]
+    pub fn hybrid_search_full(
+        &self,
+        label: &str,
+        query: &str,
+        embedding: &[f32],
+        k: usize,
+        text_weight: f32,
+        vector_weight: f32,
+        min_score: Option<f32>,
+    ) -> Result<Vec<(NodeId, f64)>> {
+        validate_embedding_dim(embedding)?;
+        let mut results = self.db.hybrid_search(
+            label,
+            "content",
+            "embedding",
+            query,
+            Some(embedding),
+            k,
+            None,
+        )?;
+
+        // Apply weight adjustment: scale scores by the combined weight factor.
+        let weight_factor = f64::from((text_weight + vector_weight) / 2.0);
+        for (_, score) in &mut results {
+            *score *= weight_factor;
+        }
+
         let (filtered, _) = apply_min_score(results, min_score);
         Ok(filtered)
     }
@@ -257,5 +338,265 @@ impl GrafeoStore {
         };
 
         Ok((filtered, metrics))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index_config::{HnswConfig, validate_embedding_dim};
+    use crate::types::{labels, EMBEDDING_DIM};
+    use grafeo_common::types::Value;
+
+    /// Helper: create an in-memory GrafeoStore for testing.
+    fn test_store() -> GrafeoStore {
+        GrafeoStore::new_in_memory().unwrap()
+    }
+
+    /// Helper: generate a test embedding vector of the expected dimension.
+    fn test_embedding() -> Vec<f32> {
+        vec![0.1f32; EMBEDDING_DIM]
+    }
+
+    /// Helper: store an Episodic node with both content and embedding.
+    ///
+    /// Creates the node with content first, then sets the embedding via
+    /// `set_node_property` so the vector index auto-updates.
+    fn store_episode(store: &GrafeoStore, content: &str, embedding: &[f32]) -> NodeId {
+        let id = store
+            .store_node(labels::EPISODIC, [("content", Value::from(content))])
+            .unwrap();
+        store.db().set_node_property(
+            id,
+            "embedding",
+            Value::Vector(std::sync::Arc::from(embedding.to_vec().into_boxed_slice())),
+        );
+        id
+    }
+
+    // =====================================================================
+    // Test 1: HNSW config defaults
+    // =====================================================================
+
+    #[test]
+    fn test_hnsw_config_default_values() {
+        let config = HnswConfig::default();
+        assert_eq!(config.m, 16);
+        assert_eq!(config.ef_construction, 100);
+        assert_eq!(config.ef_search, 64);
+        assert_eq!(config.dim, EMBEDDING_DIM);
+    }
+
+    // =====================================================================
+    // Test 2: HNSW config builder pattern
+    // =====================================================================
+
+    #[test]
+    fn test_hnsw_config_builder() {
+        let config = HnswConfig::new(768)
+            .with_m(32)
+            .with_ef_construction(200)
+            .with_ef_search(128);
+        assert_eq!(config.m, 32);
+        assert_eq!(config.ef_construction, 200);
+        assert_eq!(config.ef_search, 128);
+        assert_eq!(config.dim, 768);
+    }
+
+    // =====================================================================
+    // Test 3: vector_search_with_params returns results for indexed data
+    // =====================================================================
+
+    #[test]
+    fn test_vector_search_with_params_basic() {
+        let store = test_store();
+        let emb = test_embedding();
+        store_episode(&store, "test content", &emb);
+
+        let results = store
+            .vector_search_with_params(labels::EPISODIC, &emb, 5, 64, None)
+            .unwrap();
+        assert_eq!(results.len(), 1);
+        // Cosine similarity of identical vectors should be ~1.0
+        let (_, score) = results[0];
+        assert!(score > 0.9, "expected similarity > 0.9, got {score}");
+    }
+
+    // =====================================================================
+    // Test 4: vector_search_with_params rejects wrong dimension
+    // =====================================================================
+
+    #[test]
+    fn test_vector_search_with_params_wrong_dim() {
+        let store = test_store();
+        let bad_emb = vec![0.1f32; 128];
+
+        let result = store.vector_search_with_params(labels::EPISODIC, &bad_emb, 5, 64, None);
+        assert!(result.is_err(), "expected error for wrong dimension");
+    }
+
+    // =====================================================================
+    // Test 5: text_search_with_filter returns results
+    // =====================================================================
+
+    #[test]
+    fn test_text_search_with_filter_basic() {
+        let store = test_store();
+        let emb = test_embedding();
+        store_episode(&store, "the quick brown fox", &emb);
+        store_episode(&store, "the lazy dog", &emb);
+
+        let results = store
+            .text_search_with_filter(labels::EPISODIC, "content", "quick fox", 5, None)
+            .unwrap();
+        assert!(!results.is_empty(), "expected at least one result");
+    }
+
+    // =====================================================================
+    // Test 6: text_search_with_filter with min_score filtering
+    // =====================================================================
+
+    #[test]
+    fn test_text_search_with_filter_min_score() {
+        let store = test_store();
+        let emb = test_embedding();
+        store_episode(&store, "the quick brown fox jumps over", &emb);
+        store_episode(&store, "unrelated data about rust programming", &emb);
+
+        // Without min_score — should return results
+        let all = store
+            .text_search_with_filter(labels::EPISODIC, "content", "quick fox", 5, None)
+            .unwrap();
+        assert!(!all.is_empty());
+
+        // With very high min_score — should filter everything out
+        let filtered = store
+            .text_search_with_filter(labels::EPISODIC, "content", "quick fox", 5, Some(999.0))
+            .unwrap();
+        assert!(filtered.is_empty(), "expected all results filtered out by high min_score");
+    }
+
+    // =====================================================================
+    // Test 7: hybrid_search_full basic functionality
+    // =====================================================================
+
+    #[test]
+    fn test_hybrid_search_full_basic() {
+        let store = test_store();
+        let emb = test_embedding();
+        store_episode(&store, "machine learning algorithms", &emb);
+
+        let results = store
+            .hybrid_search_full(
+                labels::EPISODIC,
+                "machine learning",
+                &emb,
+                5,
+                0.5,
+                0.5,
+                None,
+            )
+            .unwrap();
+        assert!(!results.is_empty(), "expected at least one result");
+    }
+
+    // =====================================================================
+    // Test 8: hybrid_search_full rejects wrong dimension
+    // =====================================================================
+
+    #[test]
+    fn test_hybrid_search_full_wrong_dim() {
+        let store = test_store();
+        let bad_emb = vec![0.1f32; 128];
+
+        let result = store.hybrid_search_full(
+            labels::EPISODIC,
+            "test query",
+            &bad_emb,
+            5,
+            0.5,
+            0.5,
+            None,
+        );
+        assert!(result.is_err(), "expected error for wrong embedding dimension");
+    }
+
+    // =====================================================================
+    // Test 9: validate_embedding_dim correctness
+    // =====================================================================
+
+    #[test]
+    fn test_validate_embedding_dim_ok_and_err() {
+        // Valid
+        let ok_emb = vec![0.0f32; EMBEDDING_DIM];
+        assert!(validate_embedding_dim(&ok_emb).is_ok());
+
+        // Wrong dimension
+        let bad_emb = vec![0.0f32; 128];
+        let err = validate_embedding_dim(&bad_emb).unwrap_err();
+        match err {
+            crate::error::GrafeoError::InvalidDimension { expected, got } => {
+                assert_eq!(expected, EMBEDDING_DIM);
+                assert_eq!(got, 128);
+            }
+            other => panic!("expected InvalidDimension, got: {other}"),
+        }
+
+        // Empty
+        let empty: Vec<f32> = Vec::new();
+        let err = validate_embedding_dim(&empty).unwrap_err();
+        match err {
+            crate::error::GrafeoError::InvalidDimension { expected, got } => {
+                assert_eq!(expected, EMBEDDING_DIM);
+                assert_eq!(got, 0);
+            }
+            other => panic!("expected InvalidDimension, got: {other}"),
+        }
+    }
+
+    // =====================================================================
+    // Test 10: index recovery after close and reopen
+    // =====================================================================
+
+    #[test]
+    fn test_index_recovery_after_reopen() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("recovery_test.grafeo");
+
+        let emb = test_embedding();
+
+        // Phase 1: create store, add data, verify search works
+        {
+            let store = GrafeoStore::open(&db_path).unwrap();
+            store_episode(&store, "persistent memory content", &emb);
+
+            // Verify vector search works before close
+            let results = store
+                .vector_search_with_params(labels::EPISODIC, &emb, 5, 64, None)
+                .unwrap();
+            assert_eq!(results.len(), 1);
+
+            store.close().unwrap();
+        }
+
+        // Phase 2: reopen and verify index is still usable
+        {
+            let store = GrafeoStore::open(&db_path).unwrap();
+
+            // Rebuild vector index since HNSW is not persisted automatically
+            store.db().rebuild_vector_index(labels::EPISODIC, "embedding").unwrap();
+            store.db().rebuild_text_index(labels::EPISODIC, "content").unwrap();
+
+            let results = store
+                .vector_search_with_params(labels::EPISODIC, &emb, 5, 64, None)
+                .unwrap();
+            assert_eq!(results.len(), 1, "index should recover after reopen");
+
+            // Text search should also work
+            let text_results = store
+                .text_search_with_filter(labels::EPISODIC, "content", "persistent memory", 5, None)
+                .unwrap();
+            assert!(!text_results.is_empty(), "text index should recover after reopen");
+        }
     }
 }

@@ -5,7 +5,10 @@
 //! - Layer 2: Temporal conflict (same subject within time window)
 //! - Layer 3: Context negation (negation words in source episode)
 
+use grafeo_common::types::NodeId;
 use rollball_memory::{ConflictSignal, ConflictType};
+
+use crate::types::NodeStatus;
 
 /// Default semantic similarity thresholds by node sub-type.
 pub const FACT_THRESHOLD: f32 = 0.85;
@@ -29,6 +32,58 @@ const EVOLUTION_KEYWORDS: &[&str] = &[
 
 /// Time threshold (in hours) beyond which a conflict is more likely evolution.
 const EVOLUTION_TIME_THRESHOLD_HOURS: f64 = 168.0; // 7 days
+
+/// Action recommended by the conflict resolver.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConflictAction {
+    /// Auto-resolve: new replaces old.
+    AutoReplace { old_node_id: NodeId, new_status: NodeStatus },
+    /// Both kept, marked for user confirmation.
+    MarkAmbiguous { conflict_group_id: String },
+    /// Defer to LLM offline arbitration (Phase 3).
+    DeferToLLM,
+}
+
+/// Extended conflict resolution with action recommendations.
+#[derive(Debug, Clone)]
+pub struct ConflictResolution {
+    /// The original conflict signal.
+    pub signal: ConflictSignal,
+    /// Recommended action.
+    pub action: ConflictAction,
+    /// Whether LLM arbitration is required.
+    pub requires_llm: bool,
+}
+
+/// Resolve a conflict signal into an actionable resolution.
+///
+/// Heuristic fast-path:
+/// - `Evolution` → auto-replace (old → Dormant).
+/// - `Correction` → auto-replace (old → Dormant).
+/// - `Ambiguous` → mark for user confirmation.
+pub fn resolve_conflict(signal: &ConflictSignal, existing_node_id: NodeId) -> ConflictResolution {
+    let action = match signal.suggested_type {
+        ConflictType::Evolution => ConflictAction::AutoReplace {
+            old_node_id: existing_node_id,
+            new_status: NodeStatus::Dormant,
+        },
+        ConflictType::Correction => ConflictAction::AutoReplace {
+            old_node_id: existing_node_id,
+            new_status: NodeStatus::Dormant,
+        },
+        ConflictType::Ambiguous => ConflictAction::MarkAmbiguous {
+            conflict_group_id: format!("cg_{}", existing_node_id.as_u64()),
+        },
+    };
+
+    let requires_llm = signal.suggested_type == ConflictType::Ambiguous;
+
+    ConflictResolution {
+        signal: signal.clone(),
+        action,
+        requires_llm,
+    }
+}
 
 /// Detect conflict signals between a new node and an existing node.
 ///
@@ -141,5 +196,56 @@ mod tests {
         assert!(contains_evolution_keyword("我搬到了上海"));
         assert!(contains_evolution_keyword("I moved to Berlin"));
         assert!(!contains_evolution_keyword("hello world"));
+    }
+
+    // =====================================================================
+    // resolve_conflict tests
+    // =====================================================================
+
+    #[test]
+    fn test_resolve_conflict_evolution() {
+        let signal = detect_conflict(0.88, 0.85, 200.0, "I moved to Berlin").unwrap();
+        let existing = NodeId::new(42);
+        let resolution = resolve_conflict(&signal, existing);
+        assert_eq!(resolution.signal.suggested_type, ConflictType::Evolution);
+        assert!(!resolution.requires_llm);
+        assert_eq!(
+            resolution.action,
+            ConflictAction::AutoReplace {
+                old_node_id: existing,
+                new_status: NodeStatus::Dormant,
+            }
+        );
+    }
+
+    #[test]
+    fn test_resolve_conflict_correction() {
+        let signal = detect_conflict(0.90, 0.85, 2.0, "actually not correct").unwrap();
+        let existing = NodeId::new(7);
+        let resolution = resolve_conflict(&signal, existing);
+        assert_eq!(resolution.signal.suggested_type, ConflictType::Correction);
+        assert!(!resolution.requires_llm);
+        assert_eq!(
+            resolution.action,
+            ConflictAction::AutoReplace {
+                old_node_id: existing,
+                new_status: NodeStatus::Dormant,
+            }
+        );
+    }
+
+    #[test]
+    fn test_resolve_conflict_ambiguous() {
+        let signal = detect_conflict(0.87, 0.85, 50.0, "some neutral content").unwrap();
+        let existing = NodeId::new(99);
+        let resolution = resolve_conflict(&signal, existing);
+        assert_eq!(resolution.signal.suggested_type, ConflictType::Ambiguous);
+        assert!(resolution.requires_llm);
+        assert_eq!(
+            resolution.action,
+            ConflictAction::MarkAmbiguous {
+                conflict_group_id: format!("cg_{}", existing.as_u64()),
+            }
+        );
     }
 }
