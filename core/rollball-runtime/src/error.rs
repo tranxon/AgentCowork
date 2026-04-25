@@ -45,6 +45,15 @@ pub enum RuntimeError {
 
     #[error("Tool timeout: {0}")]
     ToolTimeout(String),
+
+    #[error("WASM error: {0}")]
+    Wasm(String),
+
+    #[error("WASM fuel exhausted: {0}")]
+    WasmFuelExhausted(String),
+
+    #[error("WASM memory limit exceeded: {0}")]
+    WasmMemoryLimit(String),
 }
 
 pub type Result<T> = std::result::Result<T, RuntimeError>;
