@@ -101,7 +101,7 @@ fn test_gateway_install_weather_agent() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     // Create weather agent ZIP
     let zip_path = temp_dir.join("weather.agent");
@@ -127,7 +127,7 @@ fn test_gateway_install_upgrade_weather_agent() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     // Install v1
     let zip_path = temp_dir.join("weather-v1.agent");
@@ -177,7 +177,7 @@ async fn test_gateway_full_lifecycle() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     // Step 1: Install
     let zip_path = temp_dir.join("weather.agent");

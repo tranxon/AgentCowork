@@ -67,19 +67,8 @@ mod tests {
         let perm_toml = permissions
             .iter()
             .map(|p| {
-                let (t, v) = match p {
-                    Permission::Network(v) => ("Network", v.as_deref()),
-                    Permission::FilesystemRead(v) => ("FilesystemRead", v.as_deref()),
-                    Permission::FilesystemWrite(v) => ("FilesystemWrite", v.as_deref()),
-                    Permission::MemoryRead => ("MemoryRead", None),
-                    Permission::MemoryWrite => ("MemoryWrite", None),
-                    Permission::IntentSend(v) => ("IntentSend", v.as_deref()),
-                    Permission::IntentReceive(v) => ("IntentReceive", v.as_deref()),
-                    Permission::IdentityRead => ("IdentityRead", None),
-                    Permission::IdentityWrite => ("IdentityWrite", None),
-                    Permission::Shell => ("Shell", None),
-                    Permission::Wasm => ("Wasm", None),
-                };
+                let t = p.type_name();
+                let v = p.type_value();
                 if let Some(val) = v {
                     format!("[[permissions]]\ntype = \"{}\"\nvalue = \"{}\"", t, val)
                 } else {

@@ -169,6 +169,42 @@ impl Permission {
             Permission::Wasm => "wasm",
         }
     }
+
+    /// Get the type name for DB/serialization storage.
+    /// Returns the PascalCase variant name (e.g., "Network", "FilesystemRead").
+    pub fn type_name(&self) -> &str {
+        match self {
+            Permission::Network(_) => "Network",
+            Permission::FilesystemRead(_) => "FilesystemRead",
+            Permission::FilesystemWrite(_) => "FilesystemWrite",
+            Permission::MemoryRead => "MemoryRead",
+            Permission::MemoryWrite => "MemoryWrite",
+            Permission::IntentSend(_) => "IntentSend",
+            Permission::IntentReceive(_) => "IntentReceive",
+            Permission::IdentityRead => "IdentityRead",
+            Permission::IdentityWrite => "IdentityWrite",
+            Permission::Shell => "Shell",
+            Permission::Wasm => "Wasm",
+        }
+    }
+
+    /// Get the scoped value for DB/serialization storage.
+    /// Returns Some(value) for permissions with scope, None otherwise.
+    pub fn type_value(&self) -> Option<&str> {
+        match self {
+            Permission::Network(v) => v.as_deref(),
+            Permission::FilesystemRead(v) => v.as_deref(),
+            Permission::FilesystemWrite(v) => v.as_deref(),
+            Permission::IntentSend(v) => v.as_deref(),
+            Permission::IntentReceive(v) => v.as_deref(),
+            Permission::MemoryRead
+            | Permission::MemoryWrite
+            | Permission::IdentityRead
+            | Permission::IdentityWrite
+            | Permission::Shell
+            | Permission::Wasm => None,
+        }
+    }
 }
 
 // Custom TOML serialization using tagged enum format
@@ -182,51 +218,9 @@ impl Serialize for Permission {
             value: Option<String>,
         }
 
-        let repr = match self {
-            Permission::Network(v) => PermissionRepr {
-                perm_type: "Network".into(),
-                value: v.clone(),
-            },
-            Permission::FilesystemRead(v) => PermissionRepr {
-                perm_type: "FilesystemRead".into(),
-                value: v.clone(),
-            },
-            Permission::FilesystemWrite(v) => PermissionRepr {
-                perm_type: "FilesystemWrite".into(),
-                value: v.clone(),
-            },
-            Permission::MemoryRead => PermissionRepr {
-                perm_type: "MemoryRead".into(),
-                value: None,
-            },
-            Permission::MemoryWrite => PermissionRepr {
-                perm_type: "MemoryWrite".into(),
-                value: None,
-            },
-            Permission::IntentSend(v) => PermissionRepr {
-                perm_type: "IntentSend".into(),
-                value: v.clone(),
-            },
-            Permission::IntentReceive(v) => PermissionRepr {
-                perm_type: "IntentReceive".into(),
-                value: v.clone(),
-            },
-            Permission::IdentityRead => PermissionRepr {
-                perm_type: "IdentityRead".into(),
-                value: None,
-            },
-            Permission::IdentityWrite => PermissionRepr {
-                perm_type: "IdentityWrite".into(),
-                value: None,
-            },
-            Permission::Shell => PermissionRepr {
-                perm_type: "Shell".into(),
-                value: None,
-            },
-            Permission::Wasm => PermissionRepr {
-                perm_type: "Wasm".into(),
-                value: None,
-            },
+        let repr = PermissionRepr {
+            perm_type: self.type_name().to_string(),
+            value: self.type_value().map(|s| s.to_string()),
         };
         repr.serialize(serializer)
     }

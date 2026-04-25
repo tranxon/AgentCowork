@@ -110,7 +110,7 @@ impl Cli {
         init_tracing(&self.log_level);
 
         let config = GatewayConfig::from_cli(&self)?;
-        let mut gateway = Gateway::new(config);
+        let mut gateway = Gateway::new(config)?;
 
         match self.command {
             Some(Commands::Install { package }) => {

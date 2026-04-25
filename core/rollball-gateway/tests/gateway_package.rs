@@ -56,7 +56,7 @@ fn test_gateway_install_and_list() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     let list = gateway.list_agents();
     assert!(list.is_empty(), "Should start with no agents");
@@ -80,7 +80,7 @@ fn test_gateway_uninstall() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     let zip_path = temp_dir.join("test.agent");
     create_test_agent_zip(&zip_path, "com.test.uninstall");
@@ -103,7 +103,7 @@ fn test_gateway_install_duplicate_fails() {
     fs::create_dir_all(&temp_dir).expect("Failed to create temp dir");
 
     let config = test_gateway_config(&temp_dir);
-    let mut gateway = Gateway::new(config);
+    let mut gateway = Gateway::new(config).unwrap();
 
     let zip_path = temp_dir.join("test.agent");
     create_test_agent_zip(&zip_path, "com.test.dup");
