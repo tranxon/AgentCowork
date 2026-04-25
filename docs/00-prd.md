@@ -572,3 +572,48 @@ Phase 1 在 Runtime 层实施三层防御：
 - 得：Phase 1 无需 OS 特定 API，纯 Rust 逻辑，覆盖 80% 的攻击场景；为 Phase 2+ OS 沙箱提供审计基线
 - 失：Phase 1 不能阻止所有攻击——复杂 shell 管道 / 变量替换 / base64 编码的 payload 可能绕过命令风险评级；子进程链追踪困难（子进程再启动子进程）
 - 替代方案否决：Phase 1 直接上 OS 沙箱（跨平台覆盖不够）、禁止 shell 工具（丧失核心能力）、仅靠 approval gate 无来源追踪（无法区分"执行自己写的脚本"和"执行下载的脚本"）
+
+### ADR-006：跨平台 IPC 传输层提前实现（Phase 2）
+
+**状态**：已接受
+
+**上下文**：
+
+当前 Gateway IPC 通信层仅支持 Unix Socket（Linux/macOS），Windows 平台的 Named Pipe 传输是空壳（`listen()` 返回 Ok 但 `accept()` 直接 Err）。`server.rs` 中 9 个函数 + 整个测试模块被 `#[cfg(unix)]` 标记，参数类型硬编码为 `tokio::net::UnixStream`/`unix::OwnedReadHalf`，导致 Windows 上全部编译期剔除。开发者在 Windows 环境无法运行端到端 IPC 测试，只能用蹩脚方式绕过。
+
+原计划跨平台适配在 Phase 7 执行，但当前阶段（Phase 2）的 IPC 代码量尚小（server.rs ~930 行），重构成本低。若延后，`#[cfg(unix)]` 污染会随功能增加而扩散，重构代价指数增长。
+
+**决策**：
+
+1. **引入平台无关的 `AsyncTransport` trait**（定义在 `rollball-core`，被 Gateway 和 Runtime 共享）：将 `recv_frame`/`send_frame` 从传输实现中提升为 trait 方法，消除 server.rs 对 `tokio::net::UnixStream` 的直接依赖。
+
+2. **传输层实现按平台条件编译**：`#[cfg(unix)]` 只出现在 `UnixTransport` 实现内部；`#[cfg(windows)]` 只出现在 `NamedPipeTransport` 实现内部。server.rs 和 client.rs 完全不含平台条件编译。
+
+3. **Server 端抽象**：新增 `AsyncTransportServer` trait（listen/accept 返回 `Box<dyn AsyncTransportConnection>`），`IpcServer::listen()` 内部通过工厂函数选择实现。
+
+4. **Runtime 端补全**：当前 `UnixSocketTransport` 的 `send_frame`/`recv_frame` 是 placeholder（connect 后不存 stream），需补全为真正的读写；`WindowsNamedPipeTransport` 从 stub 升级为完整实现。
+
+5. **Config 平台感知**：默认 socket_path 在 Windows 上为 `\\.\pipe\rollball-gateway`，在 Linux/macOS 上为 `{config_dir}/gateway.sock`。
+
+6. **Local TCP 不在本次范围**：移动端（Android/iOS）的 Local TCP 传输仍留在 Phase 7。
+
+**改动范围**：
+
+| 文件 | 改动类型 | 说明 |
+|------|---------|------|
+| `rollball-core/src/transport.rs` | 新增 | `AsyncTransportConnection` + `AsyncTransportServer` trait |
+| `rollball-gateway/src/ipc/transport.rs` | 重写 | Unix/NamedPipe 双实现 + 工厂函数 |
+| `rollball-gateway/src/ipc/server.rs` | 重构 | 去除全部 `#[cfg(unix)]`，参数改为 `Box<dyn AsyncTransportConnection>` |
+| `rollball-runtime/src/ipc/transport.rs` | 重写 | Unix 真正实现 + Named Pipe 完整实现 |
+| `rollball-runtime/src/ipc/client.rs` | 小改 | 适配新 trait |
+| `rollball-gateway/src/config.rs` | 小改 | 平台感知默认 socket_path |
+| `rollball-core/src/lib.rs` | 小改 | 增加 transport 模块导出 |
+
+**权衡**：
+
+- 得：Windows 开发环境可直接跑通端到端测试；`#[cfg(unix)]` 污染彻底消除；后续新增传输（Local TCP）只需添加实现，无需改 server/client；代码量小时重构成本低
+- 失：占用 Phase 2 约 4-5 天工时；trait 抽象引入少量间接调用开销（可忽略）；Windows Named Pipe 的 `connect` 语义与 Unix Socket 略有差异（需在 accept 侧处理 `CreateInstance` + `Connect` 的两步模式）
+- 替代方案否决：
+  - 仅在 Windows 上用 Local TCP（127.0.0.1）绕过——违反"统一合同层"设计原则，且引入端口占用和防火墙问题
+  - 全平台统一用 Local TCP——性能差（内核态 vs 用户态拷贝），且移动端场景才需要
+  - 保持现状靠 WSL 开发——每天付"蹩脚绕过"的税，且无法在 Windows CI 上跑测试

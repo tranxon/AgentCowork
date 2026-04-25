@@ -106,7 +106,7 @@ impl AgentLoop {
 
             // ① Budget pre-check
             // Query remote budget from Gateway if connected
-            if let Some(ref client) = self.ipc_client {
+            if let Some(ref mut client) = self.ipc_client {
                 match client.query_budget(&self.manifest.llm.provider).await {
                     Ok((remaining_tokens, remaining_cost)) => {
                         tracing::debug!(
@@ -248,7 +248,7 @@ impl AgentLoop {
             }
 
             // ⑦ Usage report (async, non-blocking)
-            if let Some(ref client) = self.ipc_client {
+            if let Some(ref mut client) = self.ipc_client {
                 if let Some(usage) = &response.usage {
                     let report = rollball_core::budget::UsageReport {
                         agent_id: self.manifest.agent_id.clone(),

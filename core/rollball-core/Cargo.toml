@@ -17,6 +17,7 @@ uuid.workspace = true
 futures-core.workspace = true
 toml.workspace = true
 grafeo-common.workspace = true
+directories.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["rt", "macros"] }

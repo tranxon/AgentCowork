@@ -92,21 +92,18 @@ impl Cli {
 /// Attempt to connect to Gateway via the given socket path.
 /// Returns Some(client) on success, None on failure (graceful fallback to standalone mode).
 async fn connect_gateway_client(socket_path: &str) -> Option<crate::ipc::client::GatewayClient> {
-    match crate::ipc::client::GatewayClient::connect(socket_path) {
-        Ok(client) => {
-            if let Err(e) = client.connect_transport(socket_path).await {
-                tracing::warn!(
-                    "Failed to connect transport to Gateway at {}: {}",
-                    socket_path,
-                    e
-                );
-                return None;
-            }
+    let mut client = crate::ipc::client::GatewayClient::new(socket_path);
+    match client.connect().await {
+        Ok(()) => {
             tracing::info!("Connected to Gateway at {}", socket_path);
             Some(client)
         }
         Err(e) => {
-            tracing::warn!("Failed to create Gateway client for {}: {}", socket_path, e);
+            tracing::warn!(
+                "Failed to connect to Gateway at {}: {}",
+                socket_path,
+                e
+            );
             None
         }
     }
