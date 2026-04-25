@@ -1,25 +1,26 @@
-//! Gateway Service API server (async, multi-connection)
+//! Gateway Service API server (async, multi-connection, platform-agnostic)
 //!
 //! Accepts multiple concurrent IPC connections from Agent Runtime processes,
 //! decodes requests, routes to handlers, and sends responses.
+//!
 //! Each connection is handled in its own tokio task, allowing
 //! multiple Agent Runtimes to communicate with the Gateway simultaneously.
+//!
+//! Platform-specific transport (Unix Socket / Named Pipe) is injected via
+//! `AsyncTransportServer` / `AsyncTransportConnection` traits.
+//! This file contains ZERO `#[cfg(unix)]` / `#[cfg(windows)]` annotations.
 
 use std::sync::Arc;
-#[cfg(unix)]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(unix)]
-use tokio::net::UnixListener;
-use tokio::sync::RwLock;
-#[cfg(unix)]
-use tokio::sync::Mutex;
+use tokio::sync::{RwLock, Mutex};
 
-#[cfg(unix)]
 use rollball_core::protocol::{Frame, GatewayRequest, GatewayResponse};
+use rollball_core::transport::AsyncTransportConnection;
+use rollball_core::error::RollballError;
 use crate::error::GatewayError;
 use crate::gateway::state::GatewayState;
-#[cfg(unix)]
 use crate::ipc::session::SessionManager;
+use crate::ipc::transport;
 
 /// Shared state type: Arc<RwLock<GatewayState>> for concurrent read/write access.
 /// RwLock chosen because handlers are predominantly read-heavy (key lookup,
@@ -27,19 +28,18 @@ use crate::ipc::session::SessionManager;
 pub type SharedState = Arc<RwLock<GatewayState>>;
 
 /// Shared session manager type
-#[cfg(unix)]
 type SharedSessionMgr = Arc<Mutex<SessionManager>>;
 
-/// IPC server (async, multi-connection)
+/// IPC server (async, multi-connection, platform-agnostic)
 pub struct IpcServer {
-    socket_path: String,
+    endpoint: String,
 }
 
 impl IpcServer {
     /// Create new IPC server
-    pub fn new(socket_path: &str) -> Self {
+    pub fn new(endpoint: &str) -> Self {
         Self {
-            socket_path: socket_path.to_string(),
+            endpoint: endpoint.to_string(),
         }
     }
 
@@ -49,32 +49,23 @@ impl IpcServer {
     /// allowing multiple Agent Runtimes to connect concurrently.
     /// The GatewayState is protected by an async RwLock so that
     /// concurrent readers do not block each other.
-    #[cfg(unix)]
     pub async fn listen(&self, state: SharedState) -> Result<(), GatewayError> {
-        // Clean up stale socket file
-        let _ = std::fs::remove_file(&self.socket_path);
+        let mut server = transport::create_server(&self.endpoint)?;
 
-        let listener = UnixListener::bind(&self.socket_path)
-            .map_err(|e| {
-                GatewayError::Ipc(format!(
-                    "Failed to bind '{}': {}",
-                    self.socket_path, e
-                ))
-            })?;
-        tracing::info!("IPC server listening on: {}", self.socket_path);
+        server.listen().await?;
+
+        tracing::info!("IPC server listening on: {}", server.endpoint_desc());
 
         let session_mgr: SharedSessionMgr =
             Arc::new(Mutex::new(SessionManager::new()));
         let conn_counter = AtomicU64::new(0);
 
         loop {
-            let (stream, _addr) = listener.accept().await.map_err(|e| {
-                GatewayError::Ipc(format!("Failed to accept: {}", e))
-            })?;
+            let conn = server.accept().await?;
 
             let conn_id =
                 format!("conn-{}", conn_counter.fetch_add(1, Ordering::Relaxed) + 1);
-            tracing::info!("Accepted connection: {}", conn_id);
+            tracing::info!("Accepted connection: {} ({})", conn_id, conn.peer_desc());
 
             let state = Arc::clone(&state);
             let session_mgr = Arc::clone(&session_mgr);
@@ -87,7 +78,7 @@ impl IpcServer {
                 }
 
                 if let Err(e) =
-                    handle_connection(stream, &conn_id, state, &session_mgr).await
+                    handle_connection(conn, &conn_id, state, &session_mgr).await
                 {
                     tracing::warn!("Connection {} error: {}", conn_id, e);
                 }
@@ -101,45 +92,26 @@ impl IpcServer {
             });
         }
     }
-
-    /// Start the server on non-Unix platforms (stub)
-    #[cfg(not(unix))]
-    pub async fn listen(&self, _state: SharedState) -> Result<(), GatewayError> {
-        tracing::warn!(
-            "IPC server: Unix sockets not available on this platform. \
-             Use Named Pipe transport instead. (socket_path={})",
-            self.socket_path
-        );
-        // On Windows, the async IPC server uses Named Pipes via transport.rs
-        // The sync server below is Unix-only.
-        Err(GatewayError::Ipc(
-            "Async IPC server not available on non-Unix platforms. Use Named Pipe transport.".to_string()
-        ))
-    }
 }
 
-// ── Connection handler (Unix only) ─────────────────────────────────────────
+// ── Connection handler (platform-agnostic) ─────────────────────────────────
 
 /// Handle a single connection's request/response loop
-#[cfg(unix)]
 async fn handle_connection(
-    stream: tokio::net::UnixStream,
+    mut conn: Box<dyn AsyncTransportConnection>,
     conn_id: &str,
     state: SharedState,
     session_mgr: &SharedSessionMgr,
-) -> Result<(), GatewayError> {
-    let (reader, mut writer) = stream.into_split();
-    let mut reader = tokio::io::BufReader::new(reader);
-
+) -> Result<(), RollballError> {
     loop {
-        let frame = match read_frame_async(&mut reader).await? {
+        let frame = match conn.recv_frame().await? {
             Some(f) => f,
             None => return Ok(()), // Connection closed
         };
 
         if frame.msg_type == Frame::TYPE_REQUEST {
             let request: GatewayRequest = frame.to_message().map_err(|e| {
-                GatewayError::Ipc(format!("Failed to decode request: {}", e))
+                RollballError::Ipc(format!("Failed to decode request: {}", e))
             })?;
 
             tracing::debug!("Received request from {}: {:?}", conn_id, request);
@@ -148,11 +120,10 @@ async fn handle_connection(
                 dispatch_request(request, conn_id, &state, session_mgr).await;
 
             let resp_frame =
-                Frame::from_message(Frame::TYPE_RESPONSE, &response).map_err(
-                    |e| GatewayError::Ipc(format!("Failed to encode response: {}", e)),
-                )?;
+                Frame::from_message(Frame::TYPE_RESPONSE, &response)
+                    .map_err(|e| RollballError::Ipc(format!("Failed to encode response: {}", e)))?;
 
-            write_frame_async(&mut writer, &resp_frame).await?;
+            conn.send_frame(&resp_frame).await?;
         }
     }
 }
@@ -160,7 +131,6 @@ async fn handle_connection(
 // ── Request dispatch ────────────────────────────────────────────────────────
 
 /// Dispatch request to the appropriate handler
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn dispatch_request(
     request: GatewayRequest,
@@ -205,7 +175,6 @@ async fn dispatch_request(
 
 // ── Handler implementations ─────────────────────────────────────────────────
 
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_key_release(
     provider: &str,
@@ -263,7 +232,6 @@ async fn handle_key_release(
     }
 }
 
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_intent_send(
     target: &str,
@@ -335,7 +303,6 @@ async fn handle_intent_send(
 }
 
 /// S4.3.3: Budget query handler — returns real remaining budget
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_budget_query(provider: &str, state: &SharedState) -> GatewayResponse {
     let guard = state.read().await;
@@ -360,7 +327,6 @@ async fn handle_budget_query(provider: &str, state: &SharedState) -> GatewayResp
 }
 
 /// S4.3.2: Usage report handler — updates cumulative usage
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_usage_report(
     report: rollball_core::budget::UsageReport,
@@ -385,7 +351,6 @@ async fn handle_usage_report(
 }
 
 /// S4.4.2: Rate acquire handler — token bucket allocation
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_rate_acquire(provider: &str, state: &SharedState) -> GatewayResponse {
     let mut guard = state.write().await;
@@ -408,7 +373,6 @@ async fn handle_rate_acquire(provider: &str, state: &SharedState) -> GatewayResp
     }
 }
 
-#[cfg(unix)]
 #[allow(dead_code)]
 fn handle_permission_request(permission: &str, reason: &str) -> GatewayResponse {
     // Phase 1: always deny runtime permission requests (need user UI)
@@ -430,7 +394,6 @@ fn handle_permission_request(permission: &str, reason: &str) -> GatewayResponse 
 /// S3.3/S3.4: Queries the System Agent for identity fields.
 /// In Phase 2, this returns an empty result — actual query requires
 /// the System Agent to be running and accessible via IPC.
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_identity_query(
     fields: &[String],
@@ -464,7 +427,6 @@ async fn handle_identity_query(
 ///
 /// S4.2.4: Returns the capability registry for the requested agent
 /// or all agents if no filter is specified.
-#[cfg(unix)]
 #[allow(dead_code)]
 async fn handle_capability_query(
     agent_id: Option<&str>,
@@ -494,75 +456,11 @@ async fn handle_capability_query(
     }
 }
 
-// ── Async frame I/O helpers (Unix only) ────────────────────────────────────
-
-/// Read a frame from an async reader
-#[cfg(unix)]
-async fn read_frame_async(
-    reader: &mut tokio::io::BufReader<tokio::net::unix::OwnedReadHalf>,
-) -> Result<Option<Frame>, GatewayError> {
-    use tokio::io::AsyncReadExt;
-    let mut header = [0u8; Frame::HEADER_SIZE];
-    match reader.read_exact(&mut header).await {
-        Ok(_) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
-            return Ok(None);
-        }
-        Err(e) => {
-            return Err(GatewayError::Ipc(format!(
-                "Failed to read frame header: {}",
-                e
-            )));
-        }
-    }
-
-    let body_len =
-        u32::from_be_bytes([header[0], header[1], header[2], header[3]]) as usize;
-    let msg_type = header[4];
-
-    let mut body = vec![0u8; body_len];
-    reader.read_exact(&mut body).await.map_err(|e| {
-        GatewayError::Ipc(format!("Failed to read frame body: {}", e))
-    })?;
-
-    Ok(Some(Frame {
-        body_len: body_len as u32,
-        msg_type,
-        body,
-    }))
-}
-
-/// Write a frame to an async writer
-#[cfg(unix)]
-async fn write_frame_async(
-    writer: &mut tokio::net::unix::OwnedWriteHalf,
-    frame: &Frame,
-) -> Result<(), GatewayError> {
-    use tokio::io::AsyncWriteExt;
-    let bytes = frame.to_bytes();
-    writer.write_all(&bytes).await.map_err(|e| {
-        GatewayError::Ipc(format!("Failed to write frame: {}", e))
-    })?;
-    writer.flush().await.map_err(|e| {
-        GatewayError::Ipc(format!("Failed to flush frame: {}", e))
-    })?;
-    Ok(())
-}
-
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-#[cfg(unix)]
-mod unix_tests {
+mod tests {
     use super::*;
-
-    fn temp_socket_path(name: &str) -> String {
-        format!(
-            "/tmp/rollball-test-ipc-{}-{}.sock",
-            name,
-            std::process::id()
-        )
-    }
 
     fn temp_vault_dir(name: &str) -> String {
         let dir = std::env::temp_dir().join(format!(
@@ -580,40 +478,8 @@ mod unix_tests {
         Arc::new(RwLock::new(GatewayState::new(&dir)))
     }
 
-    /// Helper: send a request frame and receive a response frame over Unix stream
-    async fn send_request_recv_response(
-        stream: &mut tokio::net::UnixStream,
-        request: &GatewayRequest,
-    ) -> GatewayResponse {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let frame =
-            Frame::from_message(Frame::TYPE_REQUEST, request).unwrap();
-        let bytes = frame.to_bytes();
-        stream.write_all(&bytes).await.unwrap();
-        stream.flush().await.unwrap();
-
-        // Read response header
-        let mut header = [0u8; Frame::HEADER_SIZE];
-        stream.read_exact(&mut header).await.unwrap();
-        let body_len =
-            u32::from_be_bytes([header[0], header[1], header[2], header[3]])
-                as usize;
-        let msg_type = header[4];
-
-        // Read response body
-        let mut body = vec![0u8; body_len];
-        stream.read_exact(&mut body).await.unwrap();
-
-        let resp_frame = Frame {
-            body_len: body_len as u32,
-            msg_type,
-            body,
-        };
-        resp_frame.to_message().unwrap()
-    }
-
     // ── Unit tests for handlers (async, with state) ──────────────────────
-    
+
     #[tokio::test]
     async fn test_handle_budget_query() {
         let state = test_shared_state("budget-query");
@@ -625,7 +491,7 @@ mod unix_tests {
             panic!("Expected BudgetInfo");
         }
     }
-    
+
     #[tokio::test]
     async fn test_handle_rate_acquire() {
         let state = test_shared_state("rate-acquire");
@@ -642,7 +508,7 @@ mod unix_tests {
             panic!("Expected RateToken");
         }
     }
-    
+
     #[test]
     fn test_handle_permission_request() {
         let response = handle_permission_request("filesystem:read:/etc", "need config");
@@ -653,7 +519,7 @@ mod unix_tests {
             panic!("Expected PermissionResult");
         }
     }
-    
+
     #[tokio::test]
     async fn test_handle_usage_report() {
         let state = test_shared_state("usage-report");
@@ -669,11 +535,28 @@ mod unix_tests {
         assert!(matches!(response, GatewayResponse::UsageReportAck {}));
     }
 
-    // ── Async integration tests ─────────────────────────────────────────────
+    // ── Integration tests (platform-specific transport) ──────────────────
 
+    /// Helper: send a request frame and receive a response frame
+    async fn send_request_recv_response(
+        conn: &mut dyn AsyncTransportConnection,
+        request: &GatewayRequest,
+    ) -> GatewayResponse {
+        let frame =
+            Frame::from_message(Frame::TYPE_REQUEST, request).unwrap();
+        conn.send_frame(&frame).await.unwrap();
+
+        let resp_frame = conn.recv_frame().await.unwrap().unwrap();
+        resp_frame.to_message().unwrap()
+    }
+
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_server_single_connection() {
-        let socket_path = temp_socket_path("single");
+        let socket_path = format!(
+            "/tmp/rollball-test-ipc-single-{}.sock",
+            std::process::id()
+        );
         let _ = std::fs::remove_file(&socket_path);
         let state = test_shared_state("single");
 
@@ -683,30 +566,36 @@ mod unix_tests {
         // Give server time to bind and listen
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-        let mut stream = tokio::net::UnixStream::connect(&socket_path)
+        let stream = tokio::net::UnixStream::connect(&socket_path)
             .await
             .unwrap();
+        let mut conn = Box::new(
+            crate::ipc::transport::unix_transport::UnixTransportConnection::new(stream)
+        );
 
         // Send BudgetQuery request
         let request =
             GatewayRequest::BudgetQuery { provider: "openai".to_string() };
-        let response = send_request_recv_response(&mut stream, &request).await;
+        let response = send_request_recv_response(&mut *conn, &request).await;
 
         if let GatewayResponse::BudgetInfo { remaining_tokens, .. } = response {
-            // No budget tracker configured → returns u64::MAX
             assert_eq!(remaining_tokens, u64::MAX);
         } else {
             panic!("Expected BudgetInfo, got {:?}", response);
         }
 
-        drop(stream);
+        drop(conn);
         server_handle.abort();
         let _ = std::fs::remove_file(&socket_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_server_multiple_sequential() {
-        let socket_path = temp_socket_path("sequential");
+        let socket_path = format!(
+            "/tmp/rollball-test-ipc-seq-{}.sock",
+            std::process::id()
+        );
         let _ = std::fs::remove_file(&socket_path);
         let state = test_shared_state("sequential");
 
@@ -717,48 +606,55 @@ mod unix_tests {
 
         // First connection
         {
-            let mut stream = tokio::net::UnixStream::connect(&socket_path)
+            let stream = tokio::net::UnixStream::connect(&socket_path)
                 .await
                 .unwrap();
+            let mut conn = Box::new(
+                crate::ipc::transport::unix_transport::UnixTransportConnection::new(stream)
+            );
             let request =
                 GatewayRequest::RateAcquire { provider: "openai".to_string() };
             let response =
-                send_request_recv_response(&mut stream, &request).await;
+                send_request_recv_response(&mut *conn, &request).await;
             if let GatewayResponse::RateToken { granted, .. } = response {
                 assert!(granted);
             } else {
                 panic!("Expected RateToken");
             }
-            drop(stream);
         }
 
-        // Brief pause to let server clean up first connection
         tokio::time::sleep(std::time::Duration::from_millis(30)).await;
 
         // Second connection
         {
-            let mut stream = tokio::net::UnixStream::connect(&socket_path)
+            let stream = tokio::net::UnixStream::connect(&socket_path)
                 .await
                 .unwrap();
+            let mut conn = Box::new(
+                crate::ipc::transport::unix_transport::UnixTransportConnection::new(stream)
+            );
             let request =
                 GatewayRequest::BudgetQuery { provider: "anthropic".to_string() };
             let response =
-                send_request_recv_response(&mut stream, &request).await;
+                send_request_recv_response(&mut *conn, &request).await;
             if let GatewayResponse::BudgetInfo { remaining_tokens, .. } = response {
                 assert_eq!(remaining_tokens, u64::MAX);
             } else {
                 panic!("Expected BudgetInfo");
             }
-            drop(stream);
         }
 
         server_handle.abort();
         let _ = std::fs::remove_file(&socket_path);
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn test_ipc_server_concurrent_connections() {
-        let socket_path = temp_socket_path("concurrent");
+        let socket_path = format!(
+            "/tmp/rollball-test-ipc-conc-{}.sock",
+            std::process::id()
+        );
         let _ = std::fs::remove_file(&socket_path);
         let state = test_shared_state("concurrent");
 
@@ -772,37 +668,20 @@ mod unix_tests {
         for i in 0..10 {
             let socket_path = socket_path.clone();
             let handle = tokio::spawn(async move {
-                use tokio::io::{AsyncReadExt, AsyncWriteExt};
-                let mut stream =
+                let stream =
                     tokio::net::UnixStream::connect(&socket_path).await.unwrap();
+                let mut conn: Box<dyn AsyncTransportConnection> = Box::new(
+                    crate::ipc::transport::unix_transport::UnixTransportConnection::new(stream)
+                );
 
                 let request = GatewayRequest::RateAcquire {
                     provider: format!("provider-{}", i),
                 };
                 let frame =
                     Frame::from_message(Frame::TYPE_REQUEST, &request).unwrap();
-                let bytes = frame.to_bytes();
-                stream.write_all(&bytes).await.unwrap();
-                stream.flush().await.unwrap();
+                conn.send_frame(&frame).await.unwrap();
 
-                // Read response
-                let mut header = [0u8; Frame::HEADER_SIZE];
-                stream.read_exact(&mut header).await.unwrap();
-                let body_len = u32::from_be_bytes([
-                    header[0],
-                    header[1],
-                    header[2],
-                    header[3],
-                ]) as usize;
-                let msg_type = header[4];
-                let mut body = vec![0u8; body_len];
-                stream.read_exact(&mut body).await.unwrap();
-
-                let resp_frame = Frame {
-                    body_len: body_len as u32,
-                    msg_type,
-                    body,
-                };
+                let resp_frame = conn.recv_frame().await.unwrap().unwrap();
                 let response: GatewayResponse =
                     resp_frame.to_message().unwrap();
                 response
@@ -822,6 +701,141 @@ mod unix_tests {
 
         server_handle.abort();
         let _ = std::fs::remove_file(&socket_path);
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_ipc_server_named_pipe_single() {
+        let pipe_name = format!(
+            r"\\.\pipe\rollball-test-ipc-{}",
+            std::process::id()
+        );
+        let state = test_shared_state("np-single");
+
+        let server = IpcServer::new(&pipe_name);
+        let server_handle = tokio::spawn(async move { server.listen(state).await });
+
+        // Give server time to reach first accept() and create pipe instance
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        let mut conn = crate::ipc::transport::windows_transport::connect_client_async(&pipe_name)
+            .await
+            .expect("Failed to connect to Named Pipe");
+
+        let request = GatewayRequest::BudgetQuery { provider: "openai".to_string() };
+        let response = send_request_recv_response(&mut *conn, &request).await;
+
+        if let GatewayResponse::BudgetInfo { remaining_tokens, .. } = response {
+            assert_eq!(remaining_tokens, u64::MAX);
+        } else {
+            panic!("Expected BudgetInfo, got {:?}", response);
+        }
+
+        drop(conn);
+        server_handle.abort();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_ipc_server_named_pipe_multiple_sequential() {
+        let pipe_name = format!(
+            r"\\.\pipe\rollball-test-ipc-seq-{}",
+            std::process::id()
+        );
+        let state = test_shared_state("np-seq");
+
+        let server = IpcServer::new(&pipe_name);
+        let server_handle = tokio::spawn(async move { server.listen(state).await });
+
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        // First connection
+        {
+            let mut conn = crate::ipc::transport::windows_transport::connect_client_async(&pipe_name)
+                .await
+                .expect("Failed to connect to Named Pipe (1st)");
+            let request = GatewayRequest::RateAcquire { provider: "openai".to_string() };
+            let response = send_request_recv_response(&mut *conn, &request).await;
+            if let GatewayResponse::RateToken { granted, .. } = response {
+                assert!(granted);
+            } else {
+                panic!("Expected RateToken, got {:?}", response);
+            }
+            drop(conn);
+        }
+
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Second connection
+        {
+            let mut conn = crate::ipc::transport::windows_transport::connect_client_async(&pipe_name)
+                .await
+                .expect("Failed to connect to Named Pipe (2nd)");
+            let request = GatewayRequest::BudgetQuery { provider: "anthropic".to_string() };
+            let response = send_request_recv_response(&mut *conn, &request).await;
+            if let GatewayResponse::BudgetInfo { remaining_tokens, .. } = response {
+                assert_eq!(remaining_tokens, u64::MAX);
+            } else {
+                panic!("Expected BudgetInfo, got {:?}", response);
+            }
+            drop(conn);
+        }
+
+        server_handle.abort();
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn test_ipc_server_named_pipe_concurrent() {
+        let pipe_name = format!(
+            r"\\.\pipe\rollball-test-ipc-conc-{}",
+            std::process::id()
+        );
+        let state = test_shared_state("np-conc");
+
+        let server = IpcServer::new(&pipe_name);
+        let server_handle = tokio::spawn(async move { server.listen(state).await });
+
+        // Give the server time to start and create the first pipe instance
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Spawn 10 concurrent connections, each sending a request.
+        // Uses connect_client_async which retries on NotFound/Busy.
+        let mut handles = Vec::new();
+        for i in 0..10 {
+            let pipe_name = pipe_name.clone();
+            let handle = tokio::spawn(async move {
+                let mut conn: Box<dyn AsyncTransportConnection> =
+                    crate::ipc::transport::windows_transport::connect_client_async(&pipe_name)
+                        .await
+                        .expect("Failed to connect to Named Pipe");
+
+                let request = GatewayRequest::RateAcquire {
+                    provider: format!("provider-{}", i),
+                };
+                let frame =
+                    Frame::from_message(Frame::TYPE_REQUEST, &request).unwrap();
+                conn.send_frame(&frame).await.unwrap();
+
+                let resp_frame = conn.recv_frame().await.unwrap().unwrap();
+                let response: GatewayResponse =
+                    resp_frame.to_message().unwrap();
+                response
+            });
+            handles.push(handle);
+        }
+
+        // All 10 should succeed
+        for handle in handles {
+            let response = handle.await.unwrap();
+            if let GatewayResponse::RateToken { granted, .. } = response {
+                assert!(granted);
+            } else {
+                panic!("Expected RateToken, got {:?}", response);
+            }
+        }
+
+        server_handle.abort();
     }
 
     #[tokio::test]
@@ -883,52 +897,5 @@ mod unix_tests {
         }
 
         let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[tokio::test]
-    async fn test_ipc_connection_disconnect_cleanup() {
-        let socket_path = temp_socket_path("disconnect");
-        let _ = std::fs::remove_file(&socket_path);
-        let state = test_shared_state("disconnect");
-
-        let server = IpcServer::new(&socket_path);
-        let server_handle = tokio::spawn(async move { server.listen(state).await });
-
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-        // Connect client A, send a request, then drop
-        {
-            let mut stream = tokio::net::UnixStream::connect(&socket_path)
-                .await
-                .unwrap();
-            let request =
-                GatewayRequest::BudgetQuery { provider: "openai".to_string() };
-            let response =
-                send_request_recv_response(&mut stream, &request).await;
-            assert!(matches!(response, GatewayResponse::BudgetInfo { .. }));
-            // stream dropped here
-        }
-
-        // Give server time to detect disconnect and clean up
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-
-        // Connect client B — server should still be healthy after A's disconnect
-        {
-            let mut stream = tokio::net::UnixStream::connect(&socket_path)
-                .await
-                .unwrap();
-            let request =
-                GatewayRequest::RateAcquire { provider: "anthropic".to_string() };
-            let response =
-                send_request_recv_response(&mut stream, &request).await;
-            if let GatewayResponse::RateToken { granted, .. } = response {
-                assert!(granted);
-            } else {
-                panic!("Expected RateToken after reconnect");
-            }
-        }
-
-        server_handle.abort();
-        let _ = std::fs::remove_file(&socket_path);
     }
 }

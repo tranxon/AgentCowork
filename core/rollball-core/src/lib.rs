@@ -9,6 +9,7 @@
 
 pub mod manifest;
 pub mod protocol;
+pub mod transport;
 pub mod intent;
 pub mod permission;
 pub mod identity;
@@ -21,6 +22,7 @@ pub mod error;
 // Re-exports for convenience
 pub use manifest::{AgentManifest, CapabilityDef, LlmConfig, ProviderConfig, RoutingConfig, LlmBudget};
 pub use protocol::{GatewayRequest, GatewayResponse, Frame};
+pub use transport::{AsyncTransportConnection, AsyncTransportServer, TransportKind, classify_endpoint, default_endpoint};
 pub use intent::Intent;
 pub use permission::Permission;
 pub use identity::{Identity, IdentityCategory, IdentityEntry, IdentityQueryResult, IdentityStore, IdentitySubscription, PrivacyLevel};

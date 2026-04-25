@@ -76,8 +76,12 @@ impl GatewayConfig {
 
         // Defaults
         let base_dir = Self::project_config_dir();
-        let default_socket = base_dir.join("gateway.sock")
-            .to_string_lossy().to_string();
+        let default_socket = if cfg!(windows) {
+            r"\\.\pipe\rollball-gateway".to_string()
+        } else {
+            base_dir.join("gateway.sock")
+                .to_string_lossy().to_string()
+        };
         let default_vault = base_dir.join("vault")
             .to_string_lossy().to_string();
         let default_packages = base_dir.join("packages")
@@ -145,8 +149,14 @@ impl Default for GatewayConfig {
         let base_dir = Self::project_config_dir();
         let data_dir = Self::project_data_dir();
 
+        let default_socket = if cfg!(windows) {
+            r"\\.\pipe\rollball-gateway".to_string()
+        } else {
+            base_dir.join("gateway.sock").to_string_lossy().to_string()
+        };
+
         Self {
-            socket_path: base_dir.join("gateway.sock").to_string_lossy().to_string(),
+            socket_path: default_socket,
             vault_dir: base_dir.join("vault").to_string_lossy().to_string(),
             packages_dir: base_dir.join("packages").to_string_lossy().to_string(),
             data_dir: data_dir.to_string_lossy().to_string(),
