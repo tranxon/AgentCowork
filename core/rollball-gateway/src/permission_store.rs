@@ -3,6 +3,10 @@
 //! Stores user authorization decisions per Agent: granted permissions,
 //! scope constraints, expiry, and revocation. Used by Gateway to
 //! persist authorization decisions and answer Runtime permission queries.
+//!
+//! Schema versioning:
+//! - v1: Initial schema (permission_grants table)
+//! - Future versions will add migrations via `run_migrations()`.
 
 use std::path::Path;
 use std::sync::Mutex;
@@ -10,7 +14,15 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection};
 use rollball_core::permission::{Permission, PermissionGrant};
 
+/// Current schema version
+const SCHEMA_VERSION: u32 = 1;
+
 /// Persistent store for permission grants.
+///
+/// Schema versioning:
+/// - `schema_version` table tracks the current DB version
+/// - `init_schema()` creates v1 tables if they don't exist
+/// - `run_migrations()` applies incremental upgrades from older versions
 ///
 /// Schema (v1):
 /// ```sql
@@ -52,19 +64,75 @@ impl PermissionStore {
     }
 
     fn init_schema(&self) -> Result<(), PermissionStoreError> {
-        self.conn.lock().unwrap().execute_batch(
-            "CREATE TABLE IF NOT EXISTS permission_grants (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                agent_id      TEXT NOT NULL,
-                perm_type     TEXT NOT NULL,
-                perm_value    TEXT,
-                authorized_by TEXT NOT NULL,
-                granted_at    INTEGER NOT NULL,
-                expires_at    INTEGER,
-                scope         TEXT
-            );
-            CREATE INDEX IF NOT EXISTS idx_grants_agent ON permission_grants(agent_id);",
+        let conn = self.conn.lock().unwrap();
+
+        // Create schema_version table if not exists
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS schema_version (
+                version INTEGER NOT NULL
+            );"
         )?;
+
+        // Check current version
+        let current_version: Option<u32> = conn
+            .query_row(
+                "SELECT version FROM schema_version LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .ok();
+
+        match current_version {
+            None => {
+                // Fresh database: create v1 schema and set version
+                conn.execute_batch(
+                    "CREATE TABLE IF NOT EXISTS permission_grants (
+                        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+                        agent_id      TEXT NOT NULL,
+                        perm_type     TEXT NOT NULL,
+                        perm_value    TEXT,
+                        authorized_by TEXT NOT NULL,
+                        granted_at    INTEGER NOT NULL,
+                        expires_at    INTEGER,
+                        scope         TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_grants_agent ON permission_grants(agent_id);
+                    INSERT INTO schema_version (version) VALUES (1);"
+                )?;
+            }
+            Some(v) if v < SCHEMA_VERSION => {
+                // Old version: run migrations
+                drop(conn); // release lock before re-acquiring in run_migrations
+                self.run_migrations(v)?;
+            }
+            Some(_) => {
+                // Already at current version, nothing to do
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Run database migrations from `from_version` to the current version.
+    /// Called automatically by `init_schema()` when an outdated DB is detected.
+    fn run_migrations(&self, from_version: u32) -> Result<(), PermissionStoreError> {
+        let conn = self.conn.lock().unwrap();
+
+        // Migration v1→v2 example (future):
+        // if from_version < 2 {
+        //     conn.execute_batch("ALTER TABLE permission_grants ADD COLUMN new_field TEXT;")?;
+        // }
+
+        // Update schema version
+        conn.execute(
+            "UPDATE schema_version SET version = ?1",
+            rusqlite::params![SCHEMA_VERSION],
+        )?;
+
+        tracing::info!(
+            "Permission store migrated from v{} to v{}",
+            from_version, SCHEMA_VERSION
+        );
         Ok(())
     }
 
@@ -166,20 +234,12 @@ impl PermissionStore {
 // ── Serialization helpers ─────────────────────────────────────────────
 
 /// Serialize a Permission into (type, value) for DB storage.
+/// Uses Permission::type_name() and type_value() for single-source-of-truth.
 fn serialize_permission(perm: &Permission) -> (String, Option<String>) {
-    match perm {
-        Permission::Network(v) => ("Network".into(), v.clone()),
-        Permission::FilesystemRead(v) => ("FilesystemRead".into(), v.clone()),
-        Permission::FilesystemWrite(v) => ("FilesystemWrite".into(), v.clone()),
-        Permission::MemoryRead => ("MemoryRead".into(), None),
-        Permission::MemoryWrite => ("MemoryWrite".into(), None),
-        Permission::IntentSend(v) => ("IntentSend".into(), v.clone()),
-        Permission::IntentReceive(v) => ("IntentReceive".into(), v.clone()),
-        Permission::IdentityRead => ("IdentityRead".into(), None),
-        Permission::IdentityWrite => ("IdentityWrite".into(), None),
-        Permission::Shell => ("Shell".into(), None),
-        Permission::Wasm => ("Wasm".into(), None),
-    }
+    (
+        perm.type_name().to_string(),
+        perm.type_value().map(|s| s.to_string()),
+    )
 }
 
 /// Deserialize a Permission from (type, value) stored in DB.

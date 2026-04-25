@@ -32,17 +32,30 @@ pub struct Gateway {
 
 impl Gateway {
     /// Create a new Gateway instance with the given configuration
-    pub fn new(config: GatewayConfig) -> Self {
+    pub fn new(config: GatewayConfig) -> Result<Self, GatewayError> {
         let idle_timeout = config.idle_timeout_secs;
         let vault_dir = config.vault_dir.clone();
-        let perm_store = PermissionStore::open_in_memory()
-            .expect("Failed to create permission store");
-        Self {
+        let data_dir = config.data_dir.clone();
+
+        // Ensure data directory exists before opening the database
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| GatewayError::Config(format!(
+                "Failed to create data directory '{}': {}", data_dir, e
+            )))?;
+
+        let perm_db_path = std::path::Path::new(&data_dir).join("permissions.db");
+        let perm_store = PermissionStore::open(&perm_db_path)
+            .map_err(|e| GatewayError::Config(format!(
+                "Failed to open permission store at '{}': {}",
+                perm_db_path.display(), e
+            )))?;
+
+        Ok(Self {
             config,
             state: GatewayState::new(&vault_dir),
             lifecycle: LifecycleManager::new(idle_timeout),
             perm_store,
-        }
+        })
     }
 
     /// Run the Gateway daemon (async, multi-connection)
@@ -85,8 +98,18 @@ impl Gateway {
 
         tracing::info!("Gateway entering IPC event loop (async multi-connection)");
 
+        // Open a separate connection to the same permission database for IPC server.
+        // SQLite supports multiple readers, and PermissionStore uses Mutex per connection.
+        let perm_db_path = std::path::Path::new(&self.config.data_dir).join("permissions.db");
+        let ipc_perm_store = crate::permission_store::PermissionStore::open(&perm_db_path)
+            .map_err(|e| GatewayError::Config(format!(
+                "Failed to open permission store for IPC: {}", e
+            )))?;
+        let shared_perm_store: crate::ipc::server::SharedPermissionStore =
+            Arc::new(ipc_perm_store);
+
         // Run the IPC server (async, multi-connection)
-        let ipc_server = IpcServer::new(&socket_path);
+        let ipc_server = IpcServer::with_permission_store(&socket_path, shared_perm_store);
         ipc_server.listen(shared_state).await?;
 
         Ok(())
@@ -245,21 +268,21 @@ mod tests {
     #[test]
     fn test_gateway_new() {
         let config = test_config();
-        let gateway = Gateway::new(config);
+        let gateway = Gateway::new(config).unwrap();
         assert!(gateway.list_agents().is_empty());
     }
 
     #[test]
     fn test_ensure_dirs() {
         let config = test_config();
-        let gateway = Gateway::new(config);
+        let gateway = Gateway::new(config).unwrap();
         assert!(gateway.ensure_dirs().is_ok());
     }
 
     #[test]
     fn test_list_agents_empty() {
         let config = test_config();
-        let gateway = Gateway::new(config);
+        let gateway = Gateway::new(config).unwrap();
         let list = gateway.list_agents();
         assert!(list.is_empty());
     }
