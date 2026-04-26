@@ -6,9 +6,10 @@ use axum::body::Body;
 use axum::http::{Request, Method, StatusCode};
 use tower::ServiceExt; // for oneshot()
 
-use rollball_gateway::http::routes::{AppState, build_router};
+use rollball_gateway::http::routes::{AppState, build_router, BridgeEvent, SharedSessionMgr};
 use rollball_gateway::http::auth::HttpAuth;
 use rollball_gateway::gateway::state::GatewayState;
+use rollball_gateway::ipc::session::SessionManager;
 
 fn create_test_app() -> axum::Router {
     let dir = std::env::temp_dir().join(format!(
@@ -26,6 +27,27 @@ fn create_test_app() -> axum::Router {
         bridge_tx: None,
     };
     build_router(state)
+}
+
+fn create_test_app_with_session() -> (axum::Router, SharedSessionMgr, tokio::sync::broadcast::Sender<BridgeEvent>) {
+    let dir = std::env::temp_dir().join(format!(
+        "rollball-test-http-api-session-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+
+    let gw_state = GatewayState::new(&dir.to_string_lossy());
+    let session_mgr: SharedSessionMgr = std::sync::Arc::new(tokio::sync::Mutex::new(SessionManager::new()));
+    let (bridge_tx, _) = tokio::sync::broadcast::channel::<BridgeEvent>(256);
+
+    let state = AppState {
+        gateway_state: std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
+        auth: std::sync::Arc::new(HttpAuth::new(false)),
+        session_mgr: Some(session_mgr.clone()),
+        bridge_tx: Some(bridge_tx.clone()),
+    };
+    (build_router(state), session_mgr, bridge_tx)
 }
 
 // ── Health check ──────────────────────────────────────────────────────
@@ -317,4 +339,141 @@ async fn test_unknown_route_404() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ── Bridge event forwarding ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_bridge_event_serialization() {
+    let event = BridgeEvent {
+        agent_id: "com.example.weather".to_string(),
+        message_id: "msg-abc".to_string(),
+        event_type: "chunk".to_string(),
+        payload: serde_json::json!({"delta": "Hello"}),
+    };
+    let json = serde_json::to_string(&event).unwrap();
+    assert!(json.contains("com.example.weather"));
+    assert!(json.contains("chunk"));
+    assert!(json.contains("msg-abc"));
+}
+
+#[tokio::test]
+async fn test_bridge_channel_broadcast() {
+    let (bridge_tx, mut bridge_rx) = tokio::sync::broadcast::channel::<BridgeEvent>(256);
+
+    let event = BridgeEvent {
+        agent_id: "com.example.weather".to_string(),
+        message_id: "msg-001".to_string(),
+        event_type: "done".to_string(),
+        payload: serde_json::json!({"usage": {"tokens": 150}}),
+    };
+
+    bridge_tx.send(event.clone()).unwrap();
+
+    let received = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        bridge_rx.recv(),
+    )
+    .await
+    .expect("Timeout")
+    .expect("Channel closed");
+
+    assert_eq!(received.agent_id, "com.example.weather");
+    assert_eq!(received.event_type, "done");
+    assert_eq!(received.message_id, "msg-001");
+}
+
+// ── Send message to agent with session (not running) ────────────────────
+
+#[tokio::test]
+async fn test_send_message_agent_installed_not_running() {
+    let (app, session_mgr, _bridge_tx) = create_test_app_with_session();
+
+    // Register agent in session manager but not in gateway state
+    // This simulates an agent that was installed but has no running process
+    {
+        let mut mgr = session_mgr.lock().await;
+        mgr.create_session_with_push(
+            "conn-1",
+            tokio::sync::mpsc::channel(32).0,
+        );
+        mgr.get_session_mut("conn-1")
+            .unwrap()
+            .authenticate("com.example.weather");
+    }
+
+    let body = serde_json::json!({
+        "content": "Hello"
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/api/agents/com.example.weather/message")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    // Agent not in gateway state → NOT_FOUND
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+}
+
+// ── Config update with both fields ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_update_config_both_fields() {
+    let app = create_test_app();
+
+    let body = serde_json::json!({
+        "log_level": "warn",
+        "idle_timeout_secs": 600
+    });
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/config")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body = axum::body::to_bytes(response.into_body(), 1024)
+        .await
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["message"].as_str().unwrap().contains("log_level=warn"));
+    assert!(json["message"].as_str().unwrap().contains("idle_timeout_secs=600"));
+}
+
+// ── Config update with empty body ──────────────────────────────────────
+
+#[tokio::test]
+async fn test_update_config_empty_body() {
+    let app = create_test_app();
+
+    let body = serde_json::json!({});
+
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method(Method::PUT)
+                .uri("/api/config")
+                .header("content-type", "application/json")
+                .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
