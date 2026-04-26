@@ -127,6 +127,15 @@ impl CapabilityRegistry {
         self.capabilities.is_empty()
     }
 
+    /// S2.4: Check if a specific agent declares a specific action
+    ///
+    /// Used by Intent permission validation to verify that the
+    /// target agent's capability matches the requested action.
+    pub fn has_action(&self, agent_id: &str, action: &str) -> bool {
+        let key = Self::make_key(agent_id, action);
+        self.capabilities.contains_key(&key)
+    }
+
     /// Get capability overview for handshake step ⑤
     ///
     /// S4.2.5: Returns a summary of all capabilities for the
