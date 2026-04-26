@@ -249,19 +249,51 @@ impl GatewayClient {
         }
     }
 
-    /// Request a runtime permission
+    /// Request a runtime permission (S2.3)
+    ///
+    /// Sends a PermissionRequest to the Gateway when the PermissionChecker
+    /// cache miss occurs and the permission policy requires user interaction.
+    /// The request includes a unique request_id for correlation.
+    ///
+    /// Returns (granted, reason) on success. If the request times out
+    /// or fails, returns (false, Some(error_message)).
     pub async fn request_permission(
         &mut self,
         permission: &str,
         reason: &str,
     ) -> Result<(bool, Option<String>), RollballError> {
+        self.request_permission_with_timeout(permission, reason, rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS)
+            .await
+    }
+
+    /// Request a runtime permission with a custom timeout (S2.3)
+    pub async fn request_permission_with_timeout(
+        &mut self,
+        permission: &str,
+        reason: &str,
+        timeout_ms: u64,
+    ) -> Result<(bool, Option<String>), RollballError> {
+        let request_id = format!("perm-{}-{}", self.next_id(), chrono::Utc::now().timestamp_millis());
+
         let request = GatewayRequest::PermissionRequest {
+            request_id: request_id.clone(),
             permission: permission.to_string(),
             reason: reason.to_string(),
+            timeout_ms,
         };
 
         match self.send_and_recv(request).await {
-            Ok(GatewayResponse::PermissionResult { granted, reason }) => {
+            Ok(GatewayResponse::PermissionResult {
+                request_id: resp_req_id,
+                granted,
+                reason,
+            }) => {
+                if resp_req_id != request_id {
+                    tracing::warn!(
+                        "PermissionResult request_id mismatch: expected={}, got={}",
+                        request_id, resp_req_id
+                    );
+                }
                 Ok((granted, reason))
             }
             Ok(other) => Err(RollballError::Ipc(format!("Unexpected response type: {:?}", other))),

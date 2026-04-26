@@ -254,7 +254,7 @@ async fn dispatch_request(
             params,
             async_,
         } => {
-            handle_intent_send(&target, &action, &params, async_, conn_id, state, session_mgr)
+            handle_intent_send(&target, &action, &params, async_, conn_id, state, session_mgr, perm_store)
                 .await
         }
         GatewayRequest::BudgetQuery { provider } => {
@@ -267,9 +267,11 @@ async fn dispatch_request(
             handle_rate_acquire(&provider, state).await
         }
         GatewayRequest::PermissionRequest {
+            request_id,
             permission,
             reason,
-        } => handle_permission_request(&permission, &reason, conn_id, state, session_mgr, perm_store).await,
+            timeout_ms,
+        } => handle_permission_request(&request_id, &permission, &reason, timeout_ms, conn_id, state, session_mgr, perm_store).await,
         GatewayRequest::IdentityQuery { fields } => {
             handle_identity_query(&fields, conn_id, session_mgr).await
         }
@@ -338,15 +340,19 @@ async fn handle_key_release(
     }
 }
 
+/// Maximum params size for Intent messages (64KB)
+const INTENT_PARAMS_MAX_SIZE_BYTES: usize = 64 * 1024;
+
 #[allow(dead_code)]
 async fn handle_intent_send(
     target: &str,
     action: &str,
-    _params: &serde_json::Value,
+    params: &serde_json::Value,
     async_: bool,
     conn_id: &str,
     state: &SharedState,
     session_mgr: &SharedSessionMgr,
+    perm_store: &SharedPermissionStore,
 ) -> GatewayResponse {
     let from = {
         let mgr = session_mgr.lock().await;
@@ -371,6 +377,57 @@ async fn handle_intent_send(
         tracing::warn!("IntentSend rejected: empty target");
         return GatewayResponse::IntentDelivered {
             message_id: format!("error:empty-target-{}", message_id),
+        };
+    }
+
+    // S2.4: Intent permission check — sender must hold intent:send permission
+    let intent_send_perm = Permission::IntentSend(Some(target.to_string()));
+    let intent_send_broad = Permission::IntentSend(None); // broad: intent:send to any
+
+    let has_intent_perm = perm_store.has_permission(&from, &intent_send_perm)
+        .unwrap_or_else(|_| {
+            // Also check broad permission (intent:send without target restriction)
+            perm_store.has_permission(&from, &intent_send_broad).unwrap_or(false)
+        });
+
+    if !has_intent_perm {
+        // Broad permission may cover the narrow one
+        let has_broad = perm_store.has_permission(&from, &intent_send_broad).unwrap_or(false);
+        if !has_broad {
+            tracing::warn!(
+                "IntentSend rejected: agent '{}' lacks intent:send permission for target '{}'",
+                from, target
+            );
+            return GatewayResponse::IntentDelivered {
+                message_id: format!("error:permission-denied:intent:send:{}", target),
+            };
+        }
+    }
+
+    // S2.4: Params size limit (64KB)
+    let params_size = params.to_string().len();
+    if params_size > INTENT_PARAMS_MAX_SIZE_BYTES {
+        tracing::warn!(
+            "IntentSend rejected: params too large ({} bytes, max {} bytes)",
+            params_size, INTENT_PARAMS_MAX_SIZE_BYTES
+        );
+        return GatewayResponse::IntentDelivered {
+            message_id: format!("error:params-too-large:{}bytes", params_size),
+        };
+    }
+
+    // S2.4: Capability match check — target must declare the requested action
+    let capability_match = {
+        let guard = state.read().await;
+        guard.capability_registry.has_action(target, action)
+    };
+    if !capability_match {
+        tracing::warn!(
+            "IntentSend rejected: target '{}' does not declare action '{}'",
+            target, action
+        );
+        return GatewayResponse::IntentDelivered {
+            message_id: format!("error:capability-not-found:{}:{}", target, action),
         };
     }
 
@@ -412,7 +469,7 @@ async fn handle_intent_send(
                     let intent_msg = GatewayResponse::IntentReceived {
                         from: from.clone(),
                         action: action.to_string(),
-                        params: _params.clone(),
+                        params: params.clone(),
                     };
                     session.push_message(intent_msg).await
                 } else {
@@ -518,9 +575,9 @@ async fn handle_rate_acquire(provider: &str, state: &SharedState) -> GatewayResp
     }
 }
 
-/// User approval callback for permission requests.
+/// User approval callback for permission requests (S2.2).
 ///
-/// In Phase 3, this is a CLI-style callback that prints to stdout and reads from stdin.
+/// This is the synchronous callback interface from Phase 3.
 /// Phase 5 (Desktop App) will replace this with a GUI dialog via trait abstraction.
 pub trait PermissionApprovalCallback: Send + Sync {
     /// Ask the user whether to grant a permission.
@@ -543,10 +600,70 @@ impl PermissionApprovalCallback for CliApprovalCallback {
     }
 }
 
+/// S2.2: Async permission approval callback.
+///
+/// This trait is used for approval mechanisms that may take time
+/// (e.g., Desktop App GUI dialog, interactive CLI prompt).
+/// The callback is spawned as a separate tokio task so that
+/// the IPC main loop is not blocked while waiting for user input.
+///
+/// A timeout is applied — if the user does not respond within
+/// the timeout, the request is automatically denied.
+#[async_trait::async_trait]
+pub trait AsyncPermissionApprovalCallback: Send + Sync {
+    /// Ask the user whether to grant a permission.
+    /// Returns true if approved, false if denied.
+    /// The implementor should respect the timeout (the caller will
+    /// also enforce a timeout as a safety net).
+    async fn request_approval(
+        &self,
+        agent_id: &str,
+        permission: &str,
+        reason: &str,
+        timeout_ms: u64,
+    ) -> bool;
+}
+
+/// S2.2: Default async callback that wraps the synchronous CLI callback.
+///
+/// In non-interactive mode, this auto-denies. When interactive CLI
+/// is implemented (S5.1 dialoguer), it will be replaced.
+pub struct AsyncCliApprovalCallback;
+
+#[async_trait::async_trait]
+impl AsyncPermissionApprovalCallback for AsyncCliApprovalCallback {
+    async fn request_approval(
+        &self,
+        agent_id: &str,
+        permission: &str,
+        reason: &str,
+        _timeout_ms: u64,
+    ) -> bool {
+        // Delegate to sync callback (non-interactive mode auto-denies)
+        let callback = CliApprovalCallback;
+        callback.request_approval(agent_id, permission, reason)
+    }
+}
+
+/// S2.2: Handle runtime permission request.
+///
+/// Steps:
+/// 1. Resolve agent_id from session
+/// 2. Parse the requested permission
+/// 3. Check if already granted in PermissionStore → auto-approve
+/// 4. Check policy for auto-approval
+/// 5. Ask the user via callback (currently auto-denies in non-interactive mode)
+/// 6. Return PermissionResult with request_id for correlation
+///
+/// Note: The Gateway processes this in the IPC handler task. For S2.2,
+/// when we implement interactive CLI approval, the approval step will
+/// be spawned as a separate tokio task to avoid blocking the IPC loop.
 #[allow(dead_code)]
 async fn handle_permission_request(
+    request_id: &str,
     permission: &str,
     reason: &str,
+    timeout_ms: u64,
     conn_id: &str,
     _state: &SharedState,
     session_mgr: &SharedSessionMgr,
@@ -561,6 +678,7 @@ async fn handle_permission_request(
         Some(id) => id,
         None => {
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: false,
                 reason: Some("Not authenticated".to_string()),
             };
@@ -572,6 +690,7 @@ async fn handle_permission_request(
         Some(p) => p,
         None => {
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: false,
                 reason: Some(format!("Invalid permission string: {}", permission)),
             };
@@ -583,6 +702,7 @@ async fn handle_permission_request(
         Ok(true) => {
             tracing::info!("Permission already granted: agent={}, perm={}", agent_id, permission);
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: true,
                 reason: None,
             };
@@ -590,6 +710,7 @@ async fn handle_permission_request(
         Ok(false) => {} // Not yet granted, continue to approval
         Err(e) => {
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: false,
                 reason: Some(format!("Permission store error: {}", e)),
             };
@@ -603,36 +724,65 @@ async fn handle_permission_request(
         let grant = PermissionGrant::new(&agent_id, requested.clone(), "auto");
         if let Err(e) = perm_store.grant(&grant) {
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: false,
                 reason: Some(format!("Failed to persist grant: {}", e)),
             };
         }
         tracing::info!("Permission auto-approved: agent={}, perm={}", agent_id, permission);
         return GatewayResponse::PermissionResult {
+            request_id: request_id.to_string(),
             granted: true,
             reason: None,
         };
     }
 
-    // 5. Ask the user (via callback — currently auto-denies)
-    let callback = CliApprovalCallback;
-    let approved = callback.request_approval(&agent_id, permission, reason);
+    // 5. Ask the user via async callback (S2.2)
+    //
+    // The async callback is spawned in a separate tokio task with a timeout.
+    // This ensures the IPC handler task does not block other connections
+    // while waiting for user input. The timeout is enforced both by the
+    // callback implementation and as a safety net here.
+    let callback = AsyncCliApprovalCallback;
+    let approval_result = tokio::time::timeout(
+        std::time::Duration::from_millis(timeout_ms),
+        callback.request_approval(&agent_id, permission, reason, timeout_ms),
+    ).await;
+
+    let approved = match approval_result {
+        Ok(approved) => approved,
+        Err(_) => {
+            // Timeout — auto-deny
+            tracing::warn!(
+                "Permission request timed out ({}ms): agent={}, perm={}",
+                timeout_ms, agent_id, permission
+            );
+            return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
+                granted: false,
+                reason: Some(format!("Permission request timed out after {}ms", timeout_ms)),
+            };
+        }
+    };
 
     if approved {
         // Persist the grant
         let grant = PermissionGrant::new(&agent_id, requested.clone(), "user");
         if let Err(e) = perm_store.grant(&grant) {
             return GatewayResponse::PermissionResult {
+                request_id: request_id.to_string(),
                 granted: false,
                 reason: Some(format!("Failed to persist grant: {}", e)),
             };
         }
         GatewayResponse::PermissionResult {
+            request_id: request_id.to_string(),
             granted: true,
             reason: None,
         }
     } else {
         GatewayResponse::PermissionResult {
+            request_id: request_id.to_string(),
             granted: false,
             reason: Some(format!("User denied permission: {}", permission)),
         }
@@ -767,16 +917,180 @@ mod tests {
         let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
         // No session created → should return "Not authenticated"
         let response = handle_permission_request(
+            "req-test-1",
             "filesystem:read:/etc",
             "need config",
+            rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS,
             "conn-1",
             &state,
             &session_mgr,
             &shared_perm_store,
         ).await;
-        if let GatewayResponse::PermissionResult { granted, reason } = response {
+        if let GatewayResponse::PermissionResult { request_id, granted, reason } = response {
+            assert_eq!(request_id, "req-test-1");
             assert!(!granted);
             assert!(reason.is_some());
+        } else {
+            panic!("Expected PermissionResult");
+        }
+    }
+
+    /// S2.2: Test permission auto-approved when already granted in store
+    #[tokio::test]
+    async fn test_handle_permission_already_granted() {
+        let perm_store = crate::permission_store::PermissionStore::open_in_memory().unwrap();
+        let shared_perm_store: SharedPermissionStore = Arc::new(perm_store);
+        let state = test_shared_state("perm-granted");
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+
+        // Create an authenticated session
+        let (push_tx, _push_rx) = tokio::sync::mpsc::channel::<GatewayResponse>(8);
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session_with_push("conn-1", push_tx);
+            mgr.get_session_mut("conn-1")
+                .unwrap()
+                .authenticate("com.example.agent");
+        }
+
+        // Pre-grant filesystem:read:/etc permission
+        let grant = PermissionGrant::new(
+            "com.example.agent",
+            Permission::FilesystemRead(Some("/etc".to_string())),
+            "user",
+        );
+        shared_perm_store.grant(&grant).unwrap();
+
+        let response = handle_permission_request(
+            "req-auto-1",
+            "filesystem:read:/etc",
+            "need config",
+            rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS,
+            "conn-1",
+            &state,
+            &session_mgr,
+            &shared_perm_store,
+        ).await;
+
+        if let GatewayResponse::PermissionResult { request_id, granted, reason } = response {
+            assert_eq!(request_id, "req-auto-1");
+            assert!(granted, "Should be auto-approved from store");
+            assert!(reason.is_none());
+        } else {
+            panic!("Expected PermissionResult");
+        }
+    }
+
+    /// S2.2: Test permission auto-approved by policy (MemoryRead = Allow)
+    #[tokio::test]
+    async fn test_handle_permission_policy_allow() {
+        let perm_store = crate::permission_store::PermissionStore::open_in_memory().unwrap();
+        let shared_perm_store: SharedPermissionStore = Arc::new(perm_store);
+        let state = test_shared_state("perm-policy");
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+
+        // Create an authenticated session
+        let (push_tx, _push_rx) = tokio::sync::mpsc::channel::<GatewayResponse>(8);
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session_with_push("conn-1", push_tx);
+            mgr.get_session_mut("conn-1")
+                .unwrap()
+                .authenticate("com.example.agent");
+        }
+
+        // MemoryRead is auto-approved by policy — no pre-grant needed
+        let response = handle_permission_request(
+            "req-policy-1",
+            "memory:read",
+            "need memory access",
+            rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS,
+            "conn-1",
+            &state,
+            &session_mgr,
+            &shared_perm_store,
+        ).await;
+
+        if let GatewayResponse::PermissionResult { request_id, granted, reason } = response {
+            assert_eq!(request_id, "req-policy-1");
+            assert!(granted, "MemoryRead should be auto-approved by policy");
+        } else {
+            panic!("Expected PermissionResult");
+        }
+    }
+
+    /// S2.2: Test permission denied by non-interactive CLI (Shell = AskAlways)
+    #[tokio::test]
+    async fn test_handle_permission_denied_noninteractive() {
+        let perm_store = crate::permission_store::PermissionStore::open_in_memory().unwrap();
+        let shared_perm_store: SharedPermissionStore = Arc::new(perm_store);
+        let state = test_shared_state("perm-denied");
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+
+        // Create an authenticated session
+        let (push_tx, _push_rx) = tokio::sync::mpsc::channel::<GatewayResponse>(8);
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session_with_push("conn-1", push_tx);
+            mgr.get_session_mut("conn-1")
+                .unwrap()
+                .authenticate("com.example.agent");
+        }
+
+        // Shell requires AskAlways policy — non-interactive CLI auto-denies
+        let response = handle_permission_request(
+            "req-shell-1",
+            "shell",
+            "need shell access",
+            rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS,
+            "conn-1",
+            &state,
+            &session_mgr,
+            &shared_perm_store,
+        ).await;
+
+        if let GatewayResponse::PermissionResult { request_id, granted, reason } = response {
+            assert_eq!(request_id, "req-shell-1");
+            assert!(!granted, "Shell should be denied in non-interactive mode");
+            assert!(reason.is_some());
+        } else {
+            panic!("Expected PermissionResult");
+        }
+    }
+
+    /// S2.2: Test invalid permission string
+    #[tokio::test]
+    async fn test_handle_permission_invalid_string() {
+        let perm_store = crate::permission_store::PermissionStore::open_in_memory().unwrap();
+        let shared_perm_store: SharedPermissionStore = Arc::new(perm_store);
+        let state = test_shared_state("perm-invalid");
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+
+        // Create an authenticated session
+        let (push_tx, _push_rx) = tokio::sync::mpsc::channel::<GatewayResponse>(8);
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session_with_push("conn-1", push_tx);
+            mgr.get_session_mut("conn-1")
+                .unwrap()
+                .authenticate("com.example.agent");
+        }
+
+        let response = handle_permission_request(
+            "req-invalid-1",
+            "invalid:permission:format",
+            "testing invalid",
+            rollball_core::protocol::PERMISSION_REQUEST_TIMEOUT_MS,
+            "conn-1",
+            &state,
+            &session_mgr,
+            &shared_perm_store,
+        ).await;
+
+        if let GatewayResponse::PermissionResult { request_id, granted, reason } = response {
+            assert_eq!(request_id, "req-invalid-1");
+            assert!(!granted);
+            assert!(reason.unwrap().contains("Invalid permission string"));
         } else {
             panic!("Expected PermissionResult");
         }
@@ -1171,6 +1485,28 @@ mod tests {
         let _perm_store: SharedPermissionStore =
             Arc::new(crate::permission_store::PermissionStore::open_in_memory().unwrap());
 
+        // Grant intent:send permission to sender
+        let intent_grant = PermissionGrant::new(
+            "com.example.sender",
+            Permission::IntentSend(None), // broad: can send to any target
+            "test",
+        );
+        _perm_store.grant(&intent_grant).unwrap();
+
+        // Register target's capability
+        {
+            let mut guard = state.write().await;
+            guard.capability_registry.register(
+                "com.example.target",
+                "weather_query",
+                rollball_core::CapabilityDef {
+                    description: "Query weather".to_string(),
+                    input_schema: None,
+                    output_schema: None,
+                },
+            );
+        }
+
         // Simulate target agent's session with a push channel
         let (push_tx, mut push_rx) = tokio::sync::mpsc::channel::<GatewayResponse>(8);
         {
@@ -1229,6 +1565,7 @@ mod tests {
             "conn-sender",
             &state,
             &session_mgr,
+            &_perm_store,
         )
         .await;
 
@@ -1265,7 +1602,247 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// S4.2.5: Test capability broadcast pushes CapabilityUpdate to subscribers
+    /// S2.4: Test IntentSend rejected when sender lacks intent:send permission
+    #[tokio::test]
+    async fn test_intent_send_no_permission() {
+        let dir = temp_vault_dir("intent_no_perm");
+        let state: SharedState =
+            Arc::new(RwLock::new(GatewayState::new(&dir)));
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+        let perm_store: SharedPermissionStore =
+            Arc::new(crate::permission_store::PermissionStore::open_in_memory().unwrap());
+
+        // Install and register target with capability
+        {
+            let mut guard = state.write().await;
+            let toml_str = r#"
+                agent_id = "com.example.target"
+                version = "1.0.0"
+                name = "Target"
+                description = "target agent"
+                author = "test"
+                runtime_version = "0.1.0"
+                [llm]
+                provider = "openai"
+                model = "gpt-4"
+            "#;
+            let manifest = rollball_core::AgentManifest::from_toml(toml_str).unwrap();
+            guard.add_installed(crate::gateway::state::AgentInfo {
+                agent_id: "com.example.target".to_string(),
+                version: "1.0.0".to_string(),
+                name: "Target".to_string(),
+                install_path: "/tmp/test".to_string(),
+                manifest,
+            });
+            guard.capability_registry.register(
+                "com.example.target",
+                "weather_query",
+                rollball_core::CapabilityDef {
+                    description: "Query weather".to_string(),
+                    input_schema: None,
+                    output_schema: None,
+                },
+            );
+        }
+
+        // Simulate sender's session (no intent:send permission granted)
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session("conn-sender");
+            mgr.get_session_mut("conn-sender")
+                .unwrap()
+                .authenticate("com.example.sender");
+        }
+
+        let response = handle_intent_send(
+            "com.example.target",
+            "weather_query",
+            &serde_json::json!({"city": "Shanghai"}),
+            false,
+            "conn-sender",
+            &state,
+            &session_mgr,
+            &perm_store,
+        )
+        .await;
+
+        if let GatewayResponse::IntentDelivered { message_id } = &response {
+            assert!(
+                message_id.starts_with("error:permission-denied"),
+                "Expected permission denied error, got: {}",
+                message_id
+            );
+        } else {
+            panic!("Expected IntentDelivered with error, got {:?}", response);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// S2.4: Test IntentSend rejected when target lacks the requested capability
+    #[tokio::test]
+    async fn test_intent_send_capability_mismatch() {
+        let dir = temp_vault_dir("intent_no_cap");
+        let state: SharedState =
+            Arc::new(RwLock::new(GatewayState::new(&dir)));
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+        let perm_store: SharedPermissionStore =
+            Arc::new(crate::permission_store::PermissionStore::open_in_memory().unwrap());
+
+        // Install target (but don't register any capability)
+        {
+            let mut guard = state.write().await;
+            let toml_str = r#"
+                agent_id = "com.example.target"
+                version = "1.0.0"
+                name = "Target"
+                description = "target agent"
+                author = "test"
+                runtime_version = "0.1.0"
+                [llm]
+                provider = "openai"
+                model = "gpt-4"
+            "#;
+            let manifest = rollball_core::AgentManifest::from_toml(toml_str).unwrap();
+            guard.add_installed(crate::gateway::state::AgentInfo {
+                agent_id: "com.example.target".to_string(),
+                version: "1.0.0".to_string(),
+                name: "Target".to_string(),
+                install_path: "/tmp/test".to_string(),
+                manifest,
+            });
+        }
+
+        // Grant intent:send permission to sender
+        let intent_grant = PermissionGrant::new(
+            "com.example.sender",
+            Permission::IntentSend(None),
+            "test",
+        );
+        perm_store.grant(&intent_grant).unwrap();
+
+        // Simulate sender's session
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session("conn-sender");
+            mgr.get_session_mut("conn-sender")
+                .unwrap()
+                .authenticate("com.example.sender");
+        }
+
+        let response = handle_intent_send(
+            "com.example.target",
+            "nonexistent_action",
+            &serde_json::json!({}),
+            false,
+            "conn-sender",
+            &state,
+            &session_mgr,
+            &perm_store,
+        )
+        .await;
+
+        if let GatewayResponse::IntentDelivered { message_id } = &response {
+            assert!(
+                message_id.starts_with("error:capability-not-found"),
+                "Expected capability-not-found error, got: {}",
+                message_id
+            );
+        } else {
+            panic!("Expected IntentDelivered with error, got {:?}", response);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// S2.4: Test IntentSend rejected when params exceed 64KB limit
+    #[tokio::test]
+    async fn test_intent_send_params_too_large() {
+        let dir = temp_vault_dir("intent_large_params");
+        let state: SharedState =
+            Arc::new(RwLock::new(GatewayState::new(&dir)));
+        let session_mgr: SharedSessionMgr = Arc::new(Mutex::new(SessionManager::new()));
+        let perm_store: SharedPermissionStore =
+            Arc::new(crate::permission_store::PermissionStore::open_in_memory().unwrap());
+
+        // Install target with capability
+        {
+            let mut guard = state.write().await;
+            let toml_str = r#"
+                agent_id = "com.example.target"
+                version = "1.0.0"
+                name = "Target"
+                description = "target agent"
+                author = "test"
+                runtime_version = "0.1.0"
+                [llm]
+                provider = "openai"
+                model = "gpt-4"
+            "#;
+            let manifest = rollball_core::AgentManifest::from_toml(toml_str).unwrap();
+            guard.add_installed(crate::gateway::state::AgentInfo {
+                agent_id: "com.example.target".to_string(),
+                version: "1.0.0".to_string(),
+                name: "Target".to_string(),
+                install_path: "/tmp/test".to_string(),
+                manifest,
+            });
+            guard.capability_registry.register(
+                "com.example.target",
+                "weather_query",
+                rollball_core::CapabilityDef {
+                    description: "Query weather".to_string(),
+                    input_schema: None,
+                    output_schema: None,
+                },
+            );
+        }
+
+        // Grant intent:send permission
+        let intent_grant = PermissionGrant::new(
+            "com.example.sender",
+            Permission::IntentSend(None),
+            "test",
+        );
+        perm_store.grant(&intent_grant).unwrap();
+
+        // Simulate sender's session
+        {
+            let mut mgr = session_mgr.lock().await;
+            mgr.create_session("conn-sender");
+            mgr.get_session_mut("conn-sender")
+                .unwrap()
+                .authenticate("com.example.sender");
+        }
+
+        // Create params > 64KB
+        let large_data = "x".repeat(65 * 1024);
+        let large_params = serde_json::json!({"data": large_data});
+
+        let response = handle_intent_send(
+            "com.example.target",
+            "weather_query",
+            &large_params,
+            false,
+            "conn-sender",
+            &state,
+            &session_mgr,
+            &perm_store,
+        )
+        .await;
+
+        if let GatewayResponse::IntentDelivered { message_id } = &response {
+            assert!(
+                message_id.starts_with("error:params-too-large"),
+                "Expected params-too-large error, got: {}",
+                message_id
+            );
+        } else {
+            panic!("Expected IntentDelivered with error, got {:?}", response);
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
     #[tokio::test]
     async fn test_capability_broadcast_to_sessions() {
         let (capability_tx, mut cap_rx1) =

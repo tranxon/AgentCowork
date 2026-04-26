@@ -4,12 +4,15 @@
 //! and caches them locally. Before each tool execution, the checker verifies
 //! the cached grants cover the required permission.
 //!
-//! The cache can be invalidated when the Gateway notifies the Runtime
-//! that permissions have been revoked (S1.7).
+//! S2.3: When the cache miss occurs and the policy requires user interaction
+//! (AskAlways/Default), the checker can send a PermissionRequest via IPC
+//! to the Gateway, wait for the response (with 60s timeout), and cache
+//! the result if granted.
 
 use std::collections::HashMap;
 use parking_lot::RwLock;
 use rollball_core::permission::{Permission, PermissionGrant, PermissionPolicy};
+use crate::ipc::client::GatewayClient;
 
 /// Result of a permission check.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -158,6 +161,80 @@ impl PermissionChecker {
             return grants.iter().any(|g| g.matches_request(requested));
         }
         false
+    }
+
+    /// S2.3: Check permission and request via IPC if needed.
+    ///
+    /// This is the main entry point for runtime permission checking:
+    /// 1. Check the local cache first
+    /// 2. If cache hit → Granted
+    /// 3. If cache miss → check policy:
+    ///    - Allow → auto-grant
+    ///    - Deny → denied
+    ///    - AskAlways/Default → send PermissionRequest via IPC Client
+    ///      - Wait up to 60s for response
+    ///      - If granted → cache the grant and return Granted
+    ///      - If denied or timeout → return Denied
+    ///
+    /// Returns (granted, reason) tuple. If IPC client is not available
+    /// (None), falls back to local-only check (NeedsRequest becomes Denied).
+    pub async fn check_and_request(
+        &self,
+        requested: &Permission,
+        ipc_client: Option<&mut GatewayClient>,
+    ) -> (bool, Option<String>) {
+        // 1. Check local cache first
+        if self.check_cache(requested) {
+            return (true, None);
+        }
+
+        // 2. Check policy
+        let policy = PermissionPolicy::for_permission(requested);
+        match policy {
+            PermissionPolicy::Allow => (true, None),
+            PermissionPolicy::Deny => {
+                (false, Some(format!(
+                    "Permission '{}' denied by policy",
+                    requested.to_permission_string()
+                )))
+            }
+            PermissionPolicy::AskAlways | PermissionPolicy::Default => {
+                // 3. Send IPC request if client is available
+                match ipc_client {
+                    Some(client) => {
+                        let perm_str = requested.to_permission_string();
+                        match client.request_permission(&perm_str, "Runtime tool execution").await {
+                            Ok((granted, reason)) => {
+                                if granted {
+                                    // Cache the grant for future checks
+                                    let grant = PermissionGrant::new(
+                                        &self.agent_id,
+                                        requested.clone(),
+                                        "ipc_approval",
+                                    );
+                                    self.add_grant(grant);
+                                }
+                                (granted, reason)
+                            }
+                            Err(e) => {
+                                // IPC error (timeout, disconnected, etc.) — deny
+                                (false, Some(format!(
+                                    "Permission request failed: {}",
+                                    e
+                                )))
+                            }
+                        }
+                    }
+                    None => {
+                        // No IPC client available — deny (can't ask user)
+                        (false, Some(format!(
+                            "Permission '{}' requires approval but IPC not available",
+                            requested.to_permission_string()
+                        )))
+                    }
+                }
+            }
+        }
     }
 }
 

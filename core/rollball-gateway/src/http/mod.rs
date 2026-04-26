@@ -10,3 +10,4 @@ pub mod agents;
 pub mod chat;
 pub mod vault_api;
 pub mod config_api;
+pub mod permission_api;
