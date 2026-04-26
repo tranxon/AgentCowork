@@ -114,12 +114,17 @@ If no triples can be extracted, return an empty array: []"#;
 // Deduplication
 // ---------------------------------------------------------------------------
 
-/// Check if a triple is semantically similar to any existing knowledge node.
+/// Check if a triple has a potential conflict with any existing knowledge node.
 ///
-/// Uses exact subject+predicate match as a simple deduplication strategy.
+/// Uses subject+predicate match (ignoring object) to detect that the same
+/// relationship already exists with a possibly different value. This is
+/// intentional: a differing object (e.g. "likes coffee" vs "likes tea")
+/// indicates a value update, which should be routed to the conflict
+/// resolution pipeline (S4.3) rather than creating a duplicate node.
+///
 /// Embedding-based semantic dedup would be more robust but is deferred
 /// to the quality evaluation framework (S4.5).
-fn is_duplicate(triple: &ExtractedTriple, existing: &[KnowledgeNode]) -> bool {
+fn has_potential_conflict(triple: &ExtractedTriple, existing: &[KnowledgeNode]) -> bool {
     existing.iter().any(|node| {
         node.subject.eq_ignore_ascii_case(&triple.subject)
             && node.predicate.eq_ignore_ascii_case(&triple.predicate)
@@ -186,7 +191,7 @@ impl GrafeoStore {
         let mut new_triples = Vec::new();
 
         for triple in triples {
-            if is_duplicate(&triple, &existing) {
+            if has_potential_conflict(&triple, &existing) {
                 deduplicated += 1;
             } else {
                 new_triples.push(triple);
@@ -440,7 +445,7 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        assert!(is_duplicate(&triple, &existing));
+        assert!(has_potential_conflict(&triple, &existing));
     }
 
     // =====================================================================
@@ -472,7 +477,7 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        assert!(!is_duplicate(&triple, &existing));
+        assert!(!has_potential_conflict(&triple, &existing));
     }
 
     // =====================================================================
@@ -504,7 +509,7 @@ mod tests {
             metadata: HashMap::new(),
         }];
 
-        assert!(is_duplicate(&triple, &existing));
+        assert!(has_potential_conflict(&triple, &existing));
     }
 
     // =====================================================================
