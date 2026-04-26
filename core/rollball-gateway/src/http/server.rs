@@ -14,7 +14,7 @@ use crate::config::HttpConfig;
 use crate::error::GatewayError;
 use crate::gateway::state::GatewayState;
 use crate::http::auth::HttpAuth;
-use crate::http::routes::{self, AppState};
+use crate::http::routes::{self, AppState, SharedSessionMgr};
 
 /// PID file content for Desktop App discovery
 #[derive(serde::Serialize)]
@@ -33,6 +33,7 @@ pub async fn start_http_server(
     gateway_state: Arc<RwLock<GatewayState>>,
     socket_path: &str,
     data_dir: &Path,
+    session_mgr: Option<SharedSessionMgr>,
 ) -> Result<(), GatewayError> {
     if !http_config.enabled {
         tracing::info!("HTTP API disabled by configuration");
@@ -47,6 +48,7 @@ pub async fn start_http_server(
     let app_state = AppState {
         gateway_state,
         auth,
+        session_mgr,
     };
 
     // Find available port

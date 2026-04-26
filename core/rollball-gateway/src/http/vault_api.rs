@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     Json,
-    routing::{delete, get, post, put},
+    routing::{delete, get},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -27,7 +27,7 @@ pub fn vault_routes() -> Router<AppState> {
 
 /// Masked key entry (first 3 + last 3 chars visible)
 #[derive(Serialize)]
-pub struct VaultKeyEntry {
+pub struct VaultKeyEntryResponse {
     pub provider: String,
     pub key_preview: String,
 }
@@ -56,24 +56,19 @@ pub struct MessageResponse {
 /// `GET /api/vault/keys` — list stored keys (masked)
 pub async fn list_keys(
     State(state): State<AppState>,
-) -> Result<Json<Vec<VaultKeyEntry>>, (StatusCode, Json<ApiError>)> {
+) -> Result<Json<Vec<VaultKeyEntryResponse>>, (StatusCode, Json<ApiError>)> {
     let gw = state.gateway_state.read().await;
-    let keys = gw.vault.list_keys()
+    let entries = gw.vault.list_keys()
         .map_err(|e| ApiError::internal(&format!("Failed to list keys: {}", e)))?;
 
-    let entries: Vec<VaultKeyEntry> = keys.iter().map(|k| {
-        let preview = if k.key.len() > 6 {
-            format!("{}...{}", &k.key[..3], &k.key[k.key.len()-3..])
-        } else {
-            "***".to_string()
-        };
-        VaultKeyEntry {
+    let response: Vec<VaultKeyEntryResponse> = entries.iter().map(|k| {
+        VaultKeyEntryResponse {
             provider: k.provider.clone(),
-            key_preview: preview,
+            key_preview: k.key_preview.clone(),
         }
     }).collect();
 
-    Ok(Json(entries))
+    Ok(Json(response))
 }
 
 /// `POST /api/vault/keys` — add a key
@@ -81,7 +76,7 @@ pub async fn add_key(
     State(state): State<AppState>,
     Json(body): Json<AddKeyRequest>,
 ) -> Result<(StatusCode, Json<MessageResponse>), (StatusCode, Json<ApiError>)> {
-    let gw = state.gateway_state.read().await;
+    let mut gw = state.gateway_state.write().await;
     gw.vault.store_key(&body.provider, &body.key)
         .map_err(|e| ApiError::internal(&format!("Failed to store key: {}", e)))?;
 
@@ -95,7 +90,7 @@ pub async fn remove_key(
     State(state): State<AppState>,
     Path(provider): Path<String>,
 ) -> Result<Json<MessageResponse>, (StatusCode, Json<ApiError>)> {
-    let gw = state.gateway_state.read().await;
+    let mut gw = state.gateway_state.write().await;
     gw.vault.remove_key(&provider)
         .map_err(|e| ApiError::not_found(&format!("Key not found for provider '{}': {}", provider, e)))?;
 
@@ -110,7 +105,7 @@ pub async fn update_key(
     Path(provider): Path<String>,
     Json(body): Json<UpdateKeyRequest>,
 ) -> Result<Json<MessageResponse>, (StatusCode, Json<ApiError>)> {
-    let gw = state.gateway_state.read().await;
+    let mut gw = state.gateway_state.write().await;
     // Remove old, store new
     let _ = gw.vault.remove_key(&provider);
     gw.vault.store_key(&provider, &body.key)

@@ -6,6 +6,15 @@
 use crate::error::GatewayError;
 use secrecy::ExposeSecret;
 
+/// Key entry for HTTP API listing (masked preview)
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct VaultKeyEntry {
+    /// Provider name
+    pub provider: String,
+    /// Masked key preview (first 3 + last 3 chars)
+    pub key_preview: String,
+}
+
 /// Vault facade for Gateway
 ///
 /// Delegates to rollball_vault::Vault for encrypted storage.
@@ -65,6 +74,43 @@ impl VaultFacade {
     /// List all providers with stored keys (no values returned)
     pub fn list_providers(&self) -> Vec<String> {
         self.provider_names.clone()
+    }
+
+    /// List all keys with masked previews (for HTTP API)
+    /// Returns (provider, key_preview) pairs where key_preview shows
+    /// first 3 and last 3 characters with *** in between.
+    pub fn list_keys(&self) -> Result<Vec<VaultKeyEntry>, GatewayError> {
+        let mut entries = Vec::new();
+        for provider in &self.provider_names {
+            let preview = if self.vault.is_unlocked() {
+                match self.vault.retrieve(provider) {
+                    Ok(secret) => {
+                        let key = secret.expose_secret();
+                        if key.len() > 6 {
+                            format!("{}...{}", &key[..3], &key[key.len()-3..])
+                        } else {
+                            "***".to_string()
+                        }
+                    }
+                    Err(_) => "***".to_string(),
+                }
+            } else {
+                "***".to_string()
+            };
+            entries.push(VaultKeyEntry {
+                provider: provider.clone(),
+                key_preview: preview,
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Remove a key for a provider
+    pub fn remove_key(&mut self, provider: &str) -> Result<(), GatewayError> {
+        self.vault.delete(provider)
+            .map_err(|e| GatewayError::Vault(format!("Failed to remove key for '{}': {}", provider, e)))?;
+        self.provider_names.retain(|p| p != provider);
+        Ok(())
     }
 }
 

@@ -112,6 +112,11 @@ impl Gateway {
         let http_config = self.config.http.clone();
         let data_dir_path = std::path::PathBuf::from(&self.config.data_dir);
 
+        // Create shared session manager for both IPC and HTTP
+        let session_mgr: crate::http::routes::SharedSessionMgr =
+            Arc::new(tokio::sync::Mutex::new(crate::ipc::session::SessionManager::new()));
+        let http_session_mgr = Some(session_mgr.clone());
+
         // Start HTTP server in a separate tokio task (parallel with IPC)
         let http_state = shared_state.clone();
         let http_socket_path = socket_path.clone();
@@ -121,12 +126,15 @@ impl Gateway {
                 http_state,
                 &http_socket_path,
                 &data_dir_path,
+                http_session_mgr,
             ).await {
                 tracing::error!("HTTP server failed: {}", e);
             }
         });
 
         // Run the IPC server (async, multi-connection)
+        // Note: session_mgr is shared between HTTP and IPC for message forwarding
+        let _session_mgr_for_ipc = session_mgr; // Available for S1.6 bridge
         let ipc_server = IpcServer::with_permission_store(&socket_path, shared_perm_store);
         ipc_server.listen(shared_state).await?;
 

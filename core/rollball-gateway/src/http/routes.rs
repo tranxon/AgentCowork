@@ -1,7 +1,7 @@
 //! HTTP route definitions
 //!
 //! All API routes are defined here. Handlers are split into sub-modules
-//! per domain (agents, vault, config, etc.) in later S1.x tasks.
+//! per domain (agents, vault, config, chat, etc.).
 
 use axum::{
     Json,
@@ -16,9 +16,13 @@ use tokio::sync::RwLock;
 
 use crate::gateway::state::GatewayState;
 use crate::http::auth::HttpAuth;
+use crate::ipc::session::SessionManager;
 
 /// Shared state for HTTP handlers
 pub type SharedHttpState = Arc<RwLock<GatewayState>>;
+
+/// Shared session manager type (same as IPC server)
+pub type SharedSessionMgr = Arc<tokio::sync::Mutex<SessionManager>>;
 
 /// Application state available to all HTTP handlers
 #[derive(Clone)]
@@ -27,26 +31,25 @@ pub struct AppState {
     pub gateway_state: SharedHttpState,
     /// HTTP authentication
     pub auth: Arc<HttpAuth>,
+    /// Shared session manager for pushing messages to agents
+    /// Set by Gateway::run() when the IPC server is initialized
+    pub session_mgr: Option<SharedSessionMgr>,
 }
 
 /// Build the HTTP router with all routes
 pub fn build_router(state: AppState) -> Router {
-    let cors = if true {
-        // Always add CORS layer; actual CORS policy is controlled by config
-        let origin = tower_http::cors::Any;
-        tower_http::cors::CorsLayer::new()
-            .allow_origin(origin)
-            .allow_methods(tower_http::cors::Any)
-            .allow_headers(tower_http::cors::Any)
-    } else {
-        tower_http::cors::CorsLayer::new()
-            .allow_origin(tower_http::cors::Any)
-    };
+    let cors = tower_http::cors::CorsLayer::new()
+        .allow_origin(tower_http::cors::Any)
+        .allow_methods(tower_http::cors::Any)
+        .allow_headers(tower_http::cors::Any);
 
     Router::new()
         .route("/health", get(health_check))
         .route("/api/status", get(system_status))
         .merge(crate::http::agents::agent_routes())
+        .merge(crate::http::chat::chat_routes())
+        .merge(crate::http::vault_api::vault_routes())
+        .merge(crate::http::config_api::config_routes())
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors)
@@ -144,6 +147,7 @@ mod tests {
         AppState {
             gateway_state: Arc::new(RwLock::new(gw_state)),
             auth: Arc::new(HttpAuth::new(false)),
+            session_mgr: None,
         }
     }
 
