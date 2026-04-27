@@ -1,0 +1,211 @@
+import { create } from "zustand";
+import type { ChatMessage, TokenUsage } from "../lib/types";
+
+interface ChatStore {
+  messages: ChatMessage[];
+  streamingMessageId: string | null;
+  sending: boolean;
+  ws: WebSocket | null;
+  tokenUsage: TokenUsage | null;
+
+  connectStream: (agentId: string, gatewayUrl: string) => void;
+  sendMessage: (content: string) => void;
+  disconnectStream: () => void;
+  clearMessages: () => void;
+}
+
+/** Derive WebSocket URL from Gateway HTTP base URL */
+function toWsUrl(httpUrl: string, agentId: string): string {
+  return `${httpUrl.replace("http://", "ws://").replace("https://", "wss://")}/api/agents/${agentId}/stream`;
+}
+
+const DEFAULT_GATEWAY_URL = "http://127.0.0.1:19876";
+
+export const useChatStore = create<ChatStore>((set, get) => ({
+  messages: [],
+  streamingMessageId: null,
+  sending: false,
+  ws: null,
+  tokenUsage: null,
+
+  connectStream: (agentId: string, gatewayUrl: string = DEFAULT_GATEWAY_URL) => {
+    // Close existing connection
+    const existing = get().ws;
+    if (existing) {
+      existing.close();
+    }
+
+    const wsUrl = toWsUrl(gatewayUrl, agentId);
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log("[ChatStore] WebSocket connected for agent:", agentId);
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        handleMessageEvent(data, set, get);
+      } catch (e) {
+        console.error("[ChatStore] Failed to parse WS message:", e);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("[ChatStore] WebSocket closed");
+      set({ ws: null, sending: false });
+    };
+
+    ws.onerror = (err) => {
+      console.error("[ChatStore] WebSocket error:", err);
+      set({ ws: null, sending: false });
+    };
+
+    set({ ws, messages: [], streamingMessageId: null, tokenUsage: null });
+  },
+
+  sendMessage: (content: string) => {
+    const ws = get().ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      console.error("[ChatStore] WebSocket not connected");
+      return;
+    }
+
+    // Add user message
+    const userMsg: ChatMessage = {
+      id: `msg-user-${Date.now()}`,
+      type: "user",
+      content,
+      timestamp: Date.now(),
+    };
+    set((state) => ({
+      messages: [...state.messages, userMsg],
+      sending: true,
+    }));
+
+    // Send via WebSocket
+    ws.send(JSON.stringify({ type: "message", content }));
+
+    // Create placeholder for assistant streaming message
+    const assistantMsgId = `msg-assistant-${Date.now()}`;
+    const assistantMsg: ChatMessage = {
+      id: assistantMsgId,
+      type: "assistant",
+      content: "",
+      timestamp: Date.now(),
+    };
+    set((state) => ({
+      messages: [...state.messages, assistantMsg],
+      streamingMessageId: assistantMsgId,
+    }));
+  },
+
+  disconnectStream: () => {
+    const ws = get().ws;
+    if (ws) {
+      ws.close();
+    }
+    set({ ws: null, sending: false, streamingMessageId: null });
+  },
+
+  clearMessages: () => {
+    set({ messages: [], tokenUsage: null });
+  },
+}));
+
+/** Handle incoming WebSocket events */
+function handleMessageEvent(
+  data: Record<string, unknown>,
+  set: (fn: Partial<ChatStore> | ((state: ChatStore) => Partial<ChatStore>)) => void,
+  _get: () => ChatStore,
+) {
+  const eventType = data.type as string;
+
+  switch (eventType) {
+    case "connected":
+      // Initial connection acknowledgment
+      break;
+
+    case "ack":
+      // Message received acknowledgment
+      break;
+
+    case "chunk": {
+      // Streaming text chunk — append to current assistant message
+      const delta = data.delta as string;
+      set((state) => ({
+        messages: state.messages.map((msg) =>
+          msg.id === state.streamingMessageId ? { ...msg, content: msg.content + delta } : msg,
+        ),
+      }));
+      break;
+    }
+
+    case "tool_call": {
+      const toolName = data.name as string;
+      const params = data.params as Record<string, unknown>;
+      const toolMsg: ChatMessage = {
+        id: `msg-tool-${Date.now()}`,
+        type: "tool_call",
+        content: JSON.stringify(params, null, 2),
+        timestamp: Date.now(),
+        toolName,
+        toolData: params,
+      };
+      set((state) => ({
+        messages: [...state.messages, toolMsg],
+      }));
+      break;
+    }
+
+    case "tool_result": {
+      const toolName = data.name as string;
+      const result = data.result as Record<string, unknown>;
+      const resultMsg: ChatMessage = {
+        id: `msg-result-${Date.now()}`,
+        type: "tool_result",
+        content: JSON.stringify(result, null, 2),
+        timestamp: Date.now(),
+        toolName,
+        toolData: result,
+        toolStatus: "success",
+      };
+      set((state) => ({
+        messages: [...state.messages, resultMsg],
+      }));
+      break;
+    }
+
+    case "done": {
+      // Streaming complete
+      const usage = data.usage as TokenUsage | undefined;
+      set((state) => ({
+        streamingMessageId: null,
+        sending: false,
+        tokenUsage: usage ?? state.tokenUsage,
+      }));
+      break;
+    }
+
+    case "error": {
+      const errorMsg = data.message as string;
+      console.error("[ChatStore] Server error:", errorMsg);
+      // Add system error message
+      const errMsg: ChatMessage = {
+        id: `msg-error-${Date.now()}`,
+        type: "system",
+        content: `Error: ${errorMsg}`,
+        timestamp: Date.now(),
+      };
+      set((state) => ({
+        messages: [...state.messages, errMsg],
+        sending: false,
+        streamingMessageId: null,
+      }));
+      break;
+    }
+
+    default:
+      console.log("[ChatStore] Unknown event type:", eventType, data);
+  }
+}

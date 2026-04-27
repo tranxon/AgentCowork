@@ -159,6 +159,11 @@ pub async fn start_http_server(
 
     // Convert std::net::TcpListener to tokio::net::TcpListener
     // This reuses the already-bound listener — no second bind() call.
+    // On Windows, we must set non-blocking mode before conversion.
+    std_listener.set_nonblocking(true)
+        .map_err(|e| GatewayError::Config(format!(
+            "Failed to set non-blocking mode: {}", e
+        )))?;
     let listener = tokio::net::TcpListener::from_std(std_listener)
         .map_err(|e| GatewayError::Config(format!(
             "Failed to convert TCP listener: {}", e

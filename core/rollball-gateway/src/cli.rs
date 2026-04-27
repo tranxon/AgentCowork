@@ -127,13 +127,17 @@ impl Cli {
             }
             Some(Commands::Start { agent_id }) => {
                 // Need async runtime for start/stop
-                let rt = tokio::runtime::Runtime::new()
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
                     .map_err(GatewayError::Io)?;
                 let msg = rt.block_on(gateway.start_agent(&agent_id))?;
                 println!("{}", msg);
             }
             Some(Commands::Stop { agent_id }) => {
-                let rt = tokio::runtime::Runtime::new()
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
                     .map_err(GatewayError::Io)?;
                 let msg = rt.block_on(gateway.stop_agent(&agent_id))?;
                 println!("{}", msg);
@@ -155,7 +159,10 @@ impl Cli {
             None => {
                 if self.daemon {
                     tracing::info!("Starting gateway in daemon mode");
-                    let rt = tokio::runtime::Runtime::new()
+                    let rt = tokio::runtime::Builder::new_multi_thread()
+                        .worker_threads(4)
+                        .enable_all()
+                        .build()
                         .map_err(GatewayError::Io)?;
                     rt.block_on(async_main(gateway))?;
                 } else {

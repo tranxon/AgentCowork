@@ -1,0 +1,279 @@
+import { useEffect, useState, useRef } from "react";
+import { useAgentStore } from "../../stores/agentStore";
+import { useToast } from "../common/ToastProvider";
+import { ConfirmDialog } from "../common/ConfirmDialog";
+import { AgentDetailDialog } from "./AgentDetailDialog";
+import { cn } from "../../lib/utils";
+import { Bot, Play, Square, Trash2, Info, Copy, Plus } from "lucide-react";
+import { open } from "@tauri-apps/plugin-dialog";
+
+export function AgentList() {
+  const { agents, selectedAgentId, loading, fetchAgents, selectAgent, startAgent, stopAgent, uninstallAgent } =
+    useAgentStore();
+  const { addToast } = useToast();
+  const [contextMenu, setContextMenu] = useState<{ agentId: string; x: number; y: number } | null>(null);
+  const [installing, setInstalling] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Confirm dialog state
+  const [confirmDialog, setConfirmDialog] = useState<{
+    open: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    destructive: boolean;
+    onConfirm: () => void;
+  }>({
+    open: false,
+    title: "",
+    message: "",
+    confirmLabel: "Confirm",
+    destructive: false,
+    onConfirm: () => {},
+  });
+
+  // Agent detail dialog state
+  const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchAgents();
+    const interval = setInterval(fetchAgents, 30_000);
+    return () => clearInterval(interval);
+  }, [fetchAgents]);
+
+  // Close context menu on click outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleInstall = async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [{ name: "Agent Package", extensions: ["agent"] }],
+      });
+      if (selected) {
+        setInstalling(true);
+        await useAgentStore.getState().installAgent(selected);
+        addToast({ type: "success", message: "Agent installed successfully" });
+        // Auto-select the newly installed agent
+        await fetchAgents();
+        const agents = useAgentStore.getState().agents;
+        if (agents.length > 0) {
+          selectAgent(agents[agents.length - 1].agent_id);
+        }
+      }
+    } catch (e) {
+      addToast({ type: "error", message: `Failed to install agent: ${String(e)}` });
+    } finally {
+      setInstalling(false);
+    }
+  };
+
+  const handleStart = async (agentId: string) => {
+    try {
+      await startAgent(agentId);
+      addToast({ type: "success", message: "Agent started" });
+    } catch (e) {
+      addToast({ type: "error", message: `Failed to start agent: ${String(e)}` });
+    }
+    setContextMenu(null);
+  };
+
+  const handleStop = async (agentId: string) => {
+    const agent = agents.find((a) => a.agent_id === agentId);
+    setConfirmDialog({
+      open: true,
+      title: "Stop Agent",
+      message: `确定要停止 ${agent?.name ?? agentId} 吗？当前对话状态将保留。`,
+      confirmLabel: "Stop",
+      destructive: true,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, open: false }));
+        try {
+          await stopAgent(agentId);
+          addToast({ type: "success", message: "Agent stopped" });
+        } catch (e) {
+          addToast({ type: "error", message: `Failed to stop agent: ${String(e)}` });
+        }
+      },
+    });
+    setContextMenu(null);
+  };
+
+  const handleUninstall = (agentId: string) => {
+    const agent = agents.find((a) => a.agent_id === agentId);
+    setConfirmDialog({
+      open: true,
+      title: "Uninstall Agent",
+      message: `确定要卸载 ${agent?.name ?? agentId} 吗？此操作不可撤销。`,
+      confirmLabel: "Uninstall",
+      destructive: true,
+      onConfirm: async () => {
+        setConfirmDialog((prev) => ({ ...prev, open: false }));
+        try {
+          await uninstallAgent(agentId);
+          addToast({ type: "success", message: "Agent uninstalled" });
+        } catch (e) {
+          addToast({ type: "error", message: `Failed to uninstall agent: ${String(e)}` });
+        }
+      },
+    });
+    setContextMenu(null);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent, agentId: string) => {
+    e.preventDefault();
+    setContextMenu({ agentId, x: e.clientX, y: e.clientY });
+  };
+
+  const contextAgent = agents.find((a) => a.agent_id === contextMenu?.agentId);
+
+  return (
+    <div className="flex w-[240px] flex-col border-r border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900">
+      {/* Header */}
+      <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
+        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+          Agents
+        </span>
+      </div>
+
+      {/* Agent list */}
+      <div className="flex-1 overflow-y-auto py-1" role="list" aria-label="Agent list">
+        {loading && agents.length === 0 && (
+          <div className="flex items-center justify-center py-8">
+            <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600 dark:border-zinc-600 dark:border-t-zinc-300" />
+          </div>
+        )}
+
+        {agents.map((agent) => (
+          <div
+            key={agent.agent_id}
+            className={cn(
+              "flex cursor-pointer items-center gap-2 px-3 py-2 transition-colors duration-150",
+              selectedAgentId === agent.agent_id
+                ? "bg-zinc-100 dark:bg-zinc-800"
+                : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50",
+            )}
+            onClick={() => selectAgent(agent.agent_id)}
+            onContextMenu={(e) => handleContextMenu(e, agent.agent_id)}
+            role="listitem"
+          >
+            <Bot className="h-4 w-4 shrink-0 text-zinc-400 dark:text-zinc-500" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium">{agent.name}</div>
+              <div className="truncate text-xs text-zinc-400 dark:text-zinc-500">{agent.agent_id}</div>
+            </div>
+            <div
+              className={cn(
+                "h-2 w-2 shrink-0 rounded-full transition-colors duration-300",
+                agent.running ? "bg-green-500" : "bg-zinc-300 dark:bg-zinc-600",
+              )}
+              title={agent.running ? "Running" : "Stopped"}
+            />
+          </div>
+        ))}
+
+        {agents.length === 0 && !loading && (
+          <div className="px-3 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
+            No agents installed
+          </div>
+        )}
+      </div>
+
+      {/* Bottom action area */}
+      <div className="border-t border-zinc-200 p-2 dark:border-zinc-800">
+        <button
+          onClick={handleInstall}
+          disabled={installing}
+          className="flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+        >
+          {installing ? (
+            <>
+              <div className="h-3 w-3 animate-spin rounded-full border border-zinc-400 border-t-zinc-700" />
+              Installing...
+            </>
+          ) : (
+            <>
+              <Plus className="h-3.5 w-3.5" />
+              Install Agent
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Context menu */}
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 min-w-[160px] rounded-md border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          {contextAgent && !contextAgent.running && (
+            <button
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700"
+              onClick={() => handleStart(contextMenu.agentId)}
+            >
+              <Play className="h-3.5 w-3.5" /> Start
+            </button>
+          )}
+          {contextAgent && contextAgent.running && (
+            <button
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+              onClick={() => handleStop(contextMenu.agentId)}
+            >
+              <Square className="h-3.5 w-3.5" /> Stop
+            </button>
+          )}
+          <button
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-zinc-100 dark:hover:bg-zinc-700"
+            onClick={() => {
+              setDetailAgentId(contextMenu.agentId);
+              setContextMenu(null);
+            }}
+          >
+            <Info className="h-3.5 w-3.5" /> Details
+          </button>
+          <button
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-zinc-400 hover:bg-zinc-100 dark:hover:bg-zinc-700"
+            disabled
+            title="Available in S4"
+          >
+            <Copy className="h-3.5 w-3.5" /> Clone
+          </button>
+          <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
+          <button
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+            onClick={() => handleUninstall(contextMenu.agentId)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Uninstall
+          </button>
+        </div>
+      )}
+
+      {/* Confirm dialog */}
+      <ConfirmDialog
+        open={confirmDialog.open}
+        title={confirmDialog.title}
+        message={confirmDialog.message}
+        confirmLabel={confirmDialog.confirmLabel}
+        destructive={confirmDialog.destructive}
+        onConfirm={confirmDialog.onConfirm}
+        onCancel={() => setConfirmDialog((prev) => ({ ...prev, open: false }))}
+      />
+
+      {/* Agent detail dialog */}
+      <AgentDetailDialog
+        open={!!detailAgentId}
+        agentId={detailAgentId}
+        onClose={() => setDetailAgentId(null)}
+      />
+    </div>
+  );
+}
