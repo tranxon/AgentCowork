@@ -6,6 +6,7 @@
 //! 3. RagClient timeout + graceful degradation
 //! 4. RagQueryTool end-to-end (mock client)
 //! 5. No RAG declaration → zero intrusion (no tools, no permissions)
+//! 6. Mock HTTP server end-to-end (S4.7)
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -472,4 +473,523 @@ fn test_permission_rag_query_does_not_cross_match_network() {
     let net = Permission::Network(Some("https://rag.corp.example.com".into()));
     assert!(!rag.matches(&net), "RagQuery should not match Network");
     assert!(!net.matches(&rag), "Network should not match RagQuery");
+}
+
+// ── Test 8: RagQueryTool whitespace trim (P1-2 fix) ───────────────────────
+
+#[tokio::test]
+async fn test_rag_query_tool_whitespace_query_rejected() {
+    let client = mock_rag_client();
+    let tool = RagQueryTool::new(client);
+    let result = tool.execute(serde_json::json!({ "query": "   " })).await.unwrap();
+    assert!(!result.ok, "Whitespace-only query should be rejected");
+    assert!(result.error.unwrap().contains("Missing 'query'"));
+}
+
+// ── Test 9: No RAG Agent zero-intrusion end-to-end ────────────────────────
+
+#[test]
+fn test_no_rag_agent_zero_intrusion_permissions() {
+    // Agent without RAG declaration should have no rag-related permissions
+    let manifest = no_rag_manifest();
+    assert!(!manifest.has_rag(), "Non-RAG agent should not have RAG");
+    assert!(manifest.rag_config().is_none(), "Non-RAG agent should have no RAG config");
+    assert!(validate_rag_network_whitelist(&manifest).is_ok(),
+        "Non-RAG agent: network whitelist check should be a no-op");
+}
+
+#[test]
+fn test_no_rag_agent_rag_tool_permission_denied() {
+    // Non-RAG agent trying to use rag_query should fail permission
+    let manifest = no_rag_manifest();
+    let result = validate_permission(&manifest, "rag_query");
+    assert!(result.is_err(), "Non-RAG agent should not have rag_query permission");
+}
+
+// ── Test 10: Mock HTTP server end-to-end ─────────────────────────────────
+//
+// These tests use mockito to spin up a real HTTP server that responds
+// with standard RAG protocol responses, validating the full
+// RagClient → RagQueryTool → permission pipeline.
+
+#[tokio::test]
+async fn test_rag_client_mock_server_success() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [
+            {
+                "content": "Q3 product roadmap includes AI assistant",
+                "source_url": "https://docs.corp.example.com/roadmap",
+                "chunk_id": "roadmap-3",
+                "score": 0.92
+            },
+            {
+                "content": "Engineering plan for Q3 delivery",
+                "source_url": "https://docs.corp.example.com/eng-plan",
+                "chunk_id": "eng-7",
+                "score": 0.85
+            }
+        ]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .match_header("content-type", "application/json")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: Some("product_docs".to_string()),
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("product roadmap").await;
+    mock.assert_async().await;
+
+    assert_eq!(results.len(), 2, "Should return 2 results from mock server");
+    assert_eq!(results[0].item.content, "Q3 product roadmap includes AI assistant");
+    assert_eq!(results[0].item.score, 0.92);
+    assert_eq!(results[0].source_label, "[RAG:enterprise_knowledge]");
+    assert_eq!(results[1].item.content, "Engineering plan for Q3 delivery");
+    assert_eq!(results[1].item.score, 0.85);
+}
+
+#[tokio::test]
+async fn test_rag_client_mock_server_bearer_auth() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [{
+            "content": "Confidential doc",
+            "score": 0.95
+        }]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .match_header("authorization", "Bearer my-secret-token")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::Bearer("my-secret-token".to_string()),
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("confidential").await;
+    mock.assert_async().await;
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].item.content, "Confidential doc");
+}
+
+#[tokio::test]
+async fn test_rag_client_mock_server_api_key_auth() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [{
+            "content": "API protected doc",
+            "score": 0.88
+        }]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .match_header("x-api-key", "my-api-key-123")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::ApiKey("my-api-key-123".to_string()),
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("api docs").await;
+    mock.assert_async().await;
+    assert_eq!(results.len(), 1);
+}
+
+#[tokio::test]
+async fn test_rag_client_mock_server_error_degrades() {
+    let mut server = mockito::Server::new_async().await;
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(500)
+        .with_header("content-type", "application/json")
+        .with_body("{\"error\": \"internal server error\"}")
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("test").await;
+    mock.assert_async().await;
+    // HTTP 500 should degrade to empty results
+    assert!(results.is_empty(), "Server error should gracefully degrade to empty");
+}
+
+#[tokio::test]
+async fn test_rag_client_mock_server_sends_protocol_version() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": []
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .match_body(mockito::Matcher::JsonString(
+            serde_json::to_string(&serde_json::json!({
+                "protocol_version": "1.0",
+                "query": "product roadmap",
+                "top_k": 5,
+                "collection": "product_docs",
+                "score_threshold": 0.7
+            })).unwrap()
+        ))
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: Some("product_docs".to_string()),
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("product roadmap").await;
+    mock.assert_async().await;
+    assert!(results.is_empty()); // Empty results is fine — we're validating the request body
+}
+
+#[tokio::test]
+async fn test_rag_query_tool_e2e_with_mock_server() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [
+            {
+                "content": "The deployment pipeline uses GitHub Actions",
+                "source_url": "https://wiki.corp.example.com/ci",
+                "chunk_id": "ci-12",
+                "score": 0.91
+            }
+        ]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = Arc::new(RagClient::new(config));
+    let tool = RagQueryTool::new(client);
+
+    let result = tool
+        .execute(serde_json::json!({ "query": "deployment pipeline" }))
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+    assert!(result.ok, "RAG tool should succeed with mock server");
+    assert!(result.content.contains("deployment pipeline"),
+        "Result should contain the query-matched content, got: {}", result.content);
+    assert!(result.content.contains("Enterprise knowledge results"),
+        "Result should have enterprise knowledge header, got: {}", result.content);
+    assert!(result.content.contains("source: https://wiki.corp.example.com/ci"),
+        "Result should contain source URL, got: {}", result.content);
+}
+
+#[tokio::test]
+async fn test_rag_query_tool_e2e_custom_params() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [
+            {
+                "content": "Matched doc with custom top_k",
+                "score": 0.78
+            }
+        ]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = Arc::new(RagClient::new(config));
+    let tool = RagQueryTool::new(client);
+
+    let result = tool
+        .execute(serde_json::json!({
+            "query": "custom search",
+            "top_k": 10,
+            "score_threshold": 0.5
+        }))
+        .await
+        .unwrap();
+
+    mock.assert_async().await;
+    assert!(result.ok);
+    assert!(result.content.contains("Matched doc"));
+}
+
+#[tokio::test]
+async fn test_rag_client_mock_server_empty_results() {
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": []
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 5,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let client = RagClient::new(config);
+
+    let results = client.query("obscure query").await;
+    mock.assert_async().await;
+    assert!(results.is_empty(), "Empty results array should return empty Vec");
+}
+
+// ── Test 11: MemoryManager dual-channel retrieval ────────────────────────
+//
+// These tests validate that MemoryManager.retrieve() correctly combines
+// Grafeo local results with RAG enterprise results when rag_client is
+// configured, and behaves identically to Phase 3 when rag_client is None.
+
+use rollball_grafeo::grafeo::GrafeoStore;
+use rollball_memory::{HintType, MemoryQuery};
+use rollball_runtime::memory::{MemoryManager, MemoryManagerConfig, ConversationRecord};
+use chrono::Utc;
+
+/// Helper: create in-memory GrafeoStore and store an episode via record()
+/// This ensures the node is properly indexed for retrieval.
+fn grafeo_store_with_record(user_msg: &str, assistant_msg: &str) -> GrafeoStore {
+    let store = GrafeoStore::new_in_memory().unwrap();
+    let manager = MemoryManager::new(MemoryManagerConfig::default());
+    let record = ConversationRecord {
+        session_id: "test-session".to_string(),
+        turn_index: 0,
+        user_message: user_msg.to_string(),
+        assistant_response: assistant_msg.to_string(),
+        retrieved_memory_ids: vec![],
+        timestamp: Utc::now(),
+    };
+    manager.record(&store, &record).unwrap();
+    store
+}
+
+fn memory_query(text: &str) -> MemoryQuery {
+    MemoryQuery {
+        query_text: text.to_string(),
+        embedding: None, // Use text search to ensure deterministic results
+        filters: Default::default(),
+        limit: 10,
+        expand_hops: 0,
+        min_score: None,
+        abstention_enabled: false,
+        hint_type: HintType::Semantic,
+    }
+}
+
+#[tokio::test]
+async fn test_memory_manager_no_rag_single_channel() {
+    // Without RAG, only Grafeo channel should return results
+    let store = grafeo_store_with_record("I live in Beijing", "Got it, Beijing!");
+    let manager = MemoryManager::new(MemoryManagerConfig::default());
+    assert!(!manager.has_rag(), "Manager without rag_client should report has_rag=false");
+
+    let result = manager.retrieve(&store, &memory_query("Beijing")).await.unwrap();
+    assert!(!result.memories.is_empty(), "Grafeo channel should return results");
+    // All results should come from Grafeo (no RAG source)
+    assert!(result.memories.iter().all(|m| m.source != "rag"),
+        "No RAG results expected without rag_client");
+}
+
+#[tokio::test]
+async fn test_memory_manager_with_rag_dual_channel() {
+    // With RAG, both channels should contribute results
+    let mut server = mockito::Server::new_async().await;
+
+    let response_body = serde_json::json!({
+        "protocol_version": "1.0",
+        "results": [{
+            "content": "Company policy requires VPN for remote access",
+            "source_url": "https://wiki.corp.example.com/vpn-policy",
+            "chunk_id": "vpn-5",
+            "score": 0.88
+        }]
+    });
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(200)
+        .with_header("content-type", "application/json")
+        .with_body(serde_json::to_string(&response_body).unwrap())
+        .create_async()
+        .await;
+
+    let store = grafeo_store_with_record("I work from home on Fridays", "Remote work noted");
+
+    let rag_config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 3,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let rag_client = Arc::new(RagClient::new(rag_config));
+    let manager = MemoryManager::with_rag(MemoryManagerConfig::default(), rag_client);
+    assert!(manager.has_rag(), "Manager with rag_client should report has_rag=true");
+
+    let result = manager.retrieve(&store, &memory_query("home")).await.unwrap();
+    mock.assert_async().await;
+
+    // Should have results from both channels
+    let grafeo_results: Vec<_> = result.memories.iter().filter(|m| m.source != "rag").collect();
+    let rag_results: Vec<_> = result.memories.iter().filter(|m| m.source == "rag").collect();
+
+    assert!(!grafeo_results.is_empty(), "Grafeo channel should return results");
+    assert!(!rag_results.is_empty(), "RAG channel should return results");
+
+    // RAG results should have source annotations
+    let rag_mem = rag_results[0];
+    assert!(rag_mem.source_url.is_some(), "RAG result should have source_url");
+    assert!(rag_mem.chunk_id.is_some(), "RAG result should have chunk_id");
+    assert_eq!(rag_mem.source_url.as_deref(), Some("https://wiki.corp.example.com/vpn-policy"));
+}
+
+#[tokio::test]
+async fn test_memory_manager_rag_degradation_graceful() {
+    // RAG server returns 500 → should degrade to empty RAG results,
+    // but Grafeo results should still be returned
+    let mut server = mockito::Server::new_async().await;
+
+    let mock = server.mock("POST", "/v1/query")
+        .with_status(500)
+        .with_body("{\"error\": \"internal\"}")
+        .create_async()
+        .await;
+
+    let store = grafeo_store_with_record("I prefer light theme", "Light theme noted");
+
+    let rag_config = RagClientConfig {
+        endpoint: format!("{}/v1/query", server.url()),
+        collection: None,
+        auth: RagAuthCredential::None,
+        default_max_results: 3,
+        default_score_threshold: 0.7,
+        timeout: Duration::from_secs(5),
+        tool_name: "enterprise_knowledge".to_string(),
+    };
+    let rag_client = Arc::new(RagClient::new(rag_config));
+    let manager = MemoryManager::with_rag(MemoryManagerConfig::default(), rag_client);
+
+    let result = manager.retrieve(&store, &memory_query("light")).await.unwrap();
+    mock.assert_async().await;
+
+    // Grafeo results should still be present
+    let grafeo_results: Vec<_> = result.memories.iter().filter(|m| m.source != "rag").collect();
+    assert!(!grafeo_results.is_empty(), "Grafeo results should survive RAG degradation");
+
+    // RAG results should be empty (graceful degradation)
+    let rag_results: Vec<_> = result.memories.iter().filter(|m| m.source == "rag").collect();
+    assert!(rag_results.is_empty(), "Failed RAG should produce no results");
+}
+
+#[tokio::test]
+async fn test_memory_manager_no_rag_identical_to_phase3() {
+    // Without RAG, MemoryManager behavior is identical to Phase 3
+    let store = grafeo_store_with_record("I like Rust programming", "Rust noted");
+    let manager = MemoryManager::new(MemoryManagerConfig::default());
+
+    let result = manager.retrieve(&store, &memory_query("Rust")).await.unwrap();
+    // Same as Phase 3: only Grafeo results, no RAG overhead
+    assert!(!result.memories.is_empty());
+    assert!(result.memories.iter().all(|m| m.source != "rag"));
 }
