@@ -133,6 +133,9 @@ impl Permission {
     /// assert!(matches!(p, Permission::Network(Some(_))));
     ///
     /// let err = Permission::parse("invalid").unwrap_err();
+    /// assert!(err.reason.contains("missing category delimiter"));
+    ///
+    /// let err = Permission::parse("foo:bar").unwrap_err();
     /// assert!(err.reason.contains("unknown category"));
     /// ```
     pub fn parse(s: &str) -> Result<Self, PermissionParseError> {
