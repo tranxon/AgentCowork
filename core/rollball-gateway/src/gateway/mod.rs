@@ -203,14 +203,37 @@ impl Gateway {
             }
         });
 
-        // Run the IPC server (async, multi-connection)
-        // Share session_mgr between HTTP and IPC for message forwarding
+        // Run the IPC server in a spawned task so we can select on signals
         let ipc_server = IpcServer::with_permission_store(&socket_path, shared_perm_store)
             .with_session_mgr(session_mgr);
-        ipc_server.listen(shared_state).await?;
+        let ipc_state = shared_state.clone();
+        let ipc_handle = tokio::spawn(async move {
+            if let Err(e) = ipc_server.listen(ipc_state).await {
+                tracing::error!("IPC server error: {}", e);
+            }
+        });
 
-        // Abort HTTP server when IPC exits
+        // S5.9: Wait for either SIGTERM/SIGINT or IPC server exit.
+        // On signal, both IPC and HTTP tasks are aborted, triggering
+        // PidFileGuard::Drop which cleans up the pidfile.
+        let shutdown_result = tokio::select! {
+            ipc_result = ipc_handle => {
+                tracing::info!("IPC server exited");
+                ipc_result.map_err(|e| GatewayError::Config(format!("IPC server task error: {}", e)))
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Received shutdown signal, cleaning up...");
+                Ok(())
+            }
+        };
+
+        // Clean up HTTP server on any exit path (triggers PidFileGuard::Drop for pidfile cleanup)
         http_handle.abort();
+        // Note: ipc_handle is consumed by tokio::select! and cannot be aborted here.
+        // When signal is received, the IPC task continues but will be cleaned up
+        // when the tokio runtime shuts down after run() returns.
+
+        shutdown_result?;
 
         Ok(())
     }
@@ -285,7 +308,7 @@ impl Gateway {
         match action {
             PermissionAction::Revoke { agent_id, permission } => {
                 let perm = Permission::parse(&permission)
-                    .ok_or_else(|| GatewayError::Package(format!("Invalid permission: {}", permission)))?;
+                    .map_err(|e| GatewayError::Package(format!("Invalid permission: {}", e)))?;
                 let count = self.perm_store.revoke(&agent_id, Some(&perm))
                     .map_err(|e| GatewayError::Package(format!("Failed to revoke: {}", e)))?;
                 if count > 0 {

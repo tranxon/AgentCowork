@@ -7,6 +7,11 @@ rust-version.workspace = true
 
 description = "Gateway - Agent lifecycle manager and IPC coordinator"
 
+[features]
+default = []
+# Interactive CLI approval (dialoguer-based confirmation prompts)
+interactive-cli = ["dialoguer"]
+
 [[bin]]
 name = "rollball-gateway"
 path = "src/main.rs"
@@ -37,6 +42,11 @@ tower-http.workspace = true
 uuid.workspace = true
 futures-util.workspace = true
 rand.workspace = true
+fs2 = "0.4"
+libc.workspace = true
+
+# Interactive CLI (feature-gated)
+dialoguer = { workspace = true, optional = true }
 
 [dev-dependencies]
 rollball-sign = { workspace = true }
