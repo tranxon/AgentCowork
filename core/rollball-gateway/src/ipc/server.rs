@@ -207,6 +207,21 @@ async fn handle_connection(
                             .map_err(|e| RollballError::Ipc(format!("Failed to encode response: {}", e)))?;
 
                     conn.send_frame(&resp_frame).await?;
+                } else if frame.msg_type == Frame::TYPE_STREAM_CHUNK {
+                    // IPC streaming protocol upgrade (Option B):
+                    // Runtime sends TYPE_STREAM_CHUNK frames for high-frequency
+                    // streaming deltas. Gateway processes them (broadcast to bridge
+                    // channel) but does NOT send a response frame back, eliminating
+                    // per-chunk request-response overhead.
+                    let request: GatewayRequest = frame.to_message().map_err(|e| {
+                        RollballError::Ipc(format!("Failed to decode stream chunk: {}", e))
+                    })?;
+
+                    tracing::trace!("Received stream chunk from {}", conn_id);
+
+                    // Dispatch without awaiting a response — just broadcast and continue
+                    let _ = dispatch_stream_chunk(request, conn_id, &state, session_mgr, &bridge_tx).await;
+                    // No conn.send_frame() — no response for stream chunks
                 }
             }
             // Branch 2: Server-push message (IntentReceived)
@@ -309,6 +324,96 @@ async fn dispatch_request(
         }
         GatewayRequest::AgentHello { agent_id, version } => {
             handle_agent_hello(&agent_id, &version, conn_id, state, session_mgr).await
+        }
+    }
+}
+
+/// Dispatch a TYPE_STREAM_CHUNK request.
+///
+/// Lightweight handler for streaming chunk frames — extracts the IntentSend body,
+/// resolves the sender's agent_id, and broadcasts to the bridge channel.
+/// No response is sent back to the Runtime (that's the whole point of TYPE_STREAM_CHUNK).
+/// No permission or capability checks — those were already validated by the
+/// initial IntentSend that started the conversation.
+async fn dispatch_stream_chunk(
+    request: GatewayRequest,
+    conn_id: &str,
+    _state: &SharedState,
+    session_mgr: &SharedSessionMgr,
+    bridge_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
+) {
+    // Only IntentSend makes sense as a stream chunk
+    let (target, action, params) = match request {
+        GatewayRequest::IntentSend {
+            target,
+            action,
+            params,
+            async_,
+        } => {
+            let _ = async_; // streaming chunks are always async
+            (target, action, params)
+        }
+        _ => {
+            tracing::warn!("Ignoring non-IntentSend stream chunk from {}", conn_id);
+            return;
+        }
+    };
+
+    // Resolve agent_id from session
+    let from = {
+        let mgr = session_mgr.lock().await;
+        mgr.get_session(conn_id)
+            .and_then(|s| s.agent_id.clone())
+            .unwrap_or_else(|| "unknown".to_string())
+    };
+
+    // Only handle HTTP bridge targets (http-api / http-ws) for streaming chunks
+    if target != "http-api" && target != "http-ws" {
+        tracing::debug!(
+            "Ignoring stream chunk with non-HTTP target: from={} to={}",
+            from, target
+        );
+        return;
+    }
+
+    let message_id = format!("msg-{}", chrono::Utc::now().timestamp_millis());
+
+    // Broadcast to bridge channel — same logic as handle_intent_send's HTTP path
+    if let Some(tx) = bridge_tx {
+        let event_type = crate::http::routes::BridgeEventType::from_action(&action)
+            .unwrap_or_else(crate::http::routes::BridgeEventType::default_for_unknown);
+
+        let payload = match event_type {
+            crate::http::routes::BridgeEventType::Chunk => {
+                let delta = params.get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                serde_json::json!({ "delta": delta })
+            }
+            crate::http::routes::BridgeEventType::Done => {
+                let content = params.get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                serde_json::json!({ "content": content })
+            }
+            crate::http::routes::BridgeEventType::Error => {
+                let msg = params.get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown error");
+                serde_json::json!({ "message": msg })
+            }
+            _ => params.clone(),
+        };
+
+        let event = crate::http::routes::BridgeEvent {
+            agent_id: from.clone(),
+            message_id: message_id.clone(),
+            event_type,
+            payload,
+        };
+
+        if let Err(e) = tx.send(event) {
+            tracing::debug!("Failed to broadcast stream chunk: {}", e);
         }
     }
 }

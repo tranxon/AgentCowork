@@ -277,6 +277,41 @@ impl GatewayClient {
         }
     }
 
+    /// Send a streaming chunk via TYPE_STREAM_CHUNK frame (no response expected).
+    ///
+    /// This is the core of the IPC streaming protocol upgrade (Option B).
+    /// Unlike `send_intent`, this uses Frame::TYPE_STREAM_CHUNK which tells
+    /// the Gateway to process the chunk without sending a response frame back.
+    /// This eliminates the per-chunk request-response round-trip overhead.
+    ///
+    /// The Gateway handles TYPE_STREAM_CHUNK by decoding the IntentSend body,
+    /// broadcasting to the bridge channel, and NOT replying.
+    pub async fn send_stream_chunk(
+        &mut self,
+        target: &str,
+        action: &str,
+        params: serde_json::Value,
+        async_: bool,
+    ) -> Result<(), RollballError> {
+        let request = GatewayRequest::IntentSend {
+            target: target.to_string(),
+            action: action.to_string(),
+            params,
+            async_,
+        };
+
+        let conn = self.conn.as_mut().ok_or_else(|| {
+            RollballError::Ipc("Not connected to Gateway".to_string())
+        })?;
+
+        let frame = Frame::from_message(Frame::TYPE_STREAM_CHUNK, &request)
+            .map_err(|e| RollballError::Ipc(format!("Failed to encode stream chunk: {e}")))?;
+
+        conn.send_frame(&frame).await?;
+        // No recv_frame() — Gateway does not reply to TYPE_STREAM_CHUNK
+        Ok(())
+    }
+
     /// Query remaining budget for a provider
     pub async fn query_budget(
         &mut self,

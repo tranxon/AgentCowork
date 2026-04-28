@@ -254,20 +254,78 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
         exceeded_action: "warn".to_string(),
     };
 
-    // Step 8: Create AgentLoop (without IPC client - handled separately)
+    // Step 8: Create AgentLoop with optional streaming chunk channel
+    // In Gateway mode, each StreamEvent::Content delta is forwarded through
+    // the on_chunk mpsc channel, then relayed to Gateway via TYPE_STREAM_CHUNK.
+    let (chunk_tx, chunk_rx) = if ipc_client.is_some() {
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::ChunkEvent>(256);
+        (Some(tx), Some(rx))
+    } else {
+        (None, None)
+    };
+
     let (mut agent_loop, inbound_tx) = AgentLoop::new(
         config.clone(),
         loaded.manifest.clone(),
         provider,
         active_tools,
         budget,
+        chunk_tx,
     );
 
     // Step 9: Run the appropriate loop based on connection mode
     if let Some(mut client) = ipc_client {
         // Gateway mode: run message loop to receive messages from Gateway
         tracing::info!("Running in Gateway mode");
-        run_gateway_loop(agent_loop, inbound_tx, &mut client, context_builder).await
+
+        // Spawn chunk relay task: consumes ChunkEvent from mpsc channel and
+        // forwards each delta to Gateway via TYPE_STREAM_CHUNK (no response wait).
+        // This uses a second IPC connection dedicated to outbound streaming chunks,
+        // so it doesn't interfere with the main connection's recv/send cycle.
+        let chunk_relay = if let Some(mut chunk_rx) = chunk_rx {
+            let agent_id = config.agent_id.clone();
+            let version = loaded.manifest.version.clone();
+            let socket_path = config.get_gateway_address()
+                .expect("gateway address must be set in Gateway mode")
+                .to_string();
+            Some(tokio::spawn(async move {
+                // Connect a second IPC client for chunk relay
+                let mut chunk_client = crate::ipc::client::GatewayClient::new(&socket_path);
+                if let Err(e) = chunk_client.connect_and_register(&agent_id, &version).await {
+                    tracing::error!("Chunk relay IPC connection failed: {}", e);
+                    return;
+                }
+                tracing::info!("Chunk relay connected to Gateway");
+
+                while let Some(event) = chunk_rx.recv().await {
+                    match event {
+                        crate::agent::loop_::ChunkEvent::Delta(delta) => {
+                            let params = serde_json::json!({
+                                "content": delta,
+                            });
+                            if let Err(e) = chunk_client
+                                .send_stream_chunk("http-ws", "agent_chunk", params, true)
+                                .await
+                            {
+                                tracing::debug!("Chunk relay send failed: {}", e);
+                            }
+                        }
+                    }
+                }
+                tracing::debug!("Chunk relay task ended");
+            }))
+        } else {
+            None
+        };
+
+        let result = run_gateway_loop(agent_loop, inbound_tx, &mut client, context_builder).await;
+
+        // Chunk relay task will end when chunk_rx is dropped (agent_loop dropped)
+        if let Some(handle) = chunk_relay {
+            let _ = handle.await;
+        }
+
+        result
     } else {
         // Standalone mode: run interactive stdin chat loop
         tracing::info!("Running in standalone mode");
