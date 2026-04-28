@@ -132,12 +132,12 @@ pub async fn start_http_server(
     auth.write_token_file(data_dir)?;
 
     // Build app state
-    let app_state = AppState {
+    let app_state = AppState::new(
         gateway_state,
         auth,
         session_mgr,
         bridge_tx,
-    };
+    );
 
     // S5.9: Clean up stale pidfile from a previous Gateway run before writing a new one.
     // If the previous process is still alive, this returns an error (prevents dual Gateway).

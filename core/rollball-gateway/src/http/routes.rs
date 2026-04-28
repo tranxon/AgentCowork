@@ -105,6 +105,26 @@ pub struct AppState {
     /// Bridge channel for forwarding Agent responses to HTTP clients
     /// The IPC server publishes events; HTTP WebSocket subscribes
     pub bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    /// Cache for models.dev API responses
+    pub(crate) models_cache: crate::http::models_api::ModelsCache,
+}
+
+impl AppState {
+    /// Create a new AppState with default models cache
+    pub fn new(
+        gateway_state: SharedHttpState,
+        auth: Arc<HttpAuth>,
+        session_mgr: Option<SharedSessionMgr>,
+        bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    ) -> Self {
+        Self {
+            gateway_state,
+            auth,
+            session_mgr,
+            bridge_tx,
+            models_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
+        }
+    }
 }
 
 /// Build the HTTP router with all routes
@@ -137,6 +157,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::http::config_api::config_routes())
         .merge(crate::http::permission_api::permission_routes())
         .merge(crate::http::cron_api::cron_routes())
+.merge(crate::http::models_api::models_routes())
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors)
@@ -393,12 +414,12 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let gw_state = GatewayState::new(&dir.to_string_lossy());
-        AppState {
-            gateway_state: Arc::new(RwLock::new(gw_state)),
-            auth: Arc::new(HttpAuth::new(false)),
-            session_mgr: None,
-            bridge_tx: None,
-        }
+        AppState::new(
+            Arc::new(RwLock::new(gw_state)),
+            Arc::new(HttpAuth::new(false)),
+            None,
+            None,
+        )
     }
 
     #[tokio::test]

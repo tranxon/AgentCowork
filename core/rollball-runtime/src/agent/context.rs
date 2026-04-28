@@ -16,6 +16,8 @@ pub struct ContextBuilder {
     identity_context: Option<String>,
     /// Tool definitions as JSON
     tool_definitions: Option<Vec<serde_json::Value>>,
+    /// Model override from Gateway LLMConfigDelivery (takes precedence over manifest suggested_model)
+    override_model: Option<String>,
 }
 
 impl ContextBuilder {
@@ -25,6 +27,7 @@ impl ContextBuilder {
             system_prompt,
             identity_context: None,
             tool_definitions: None,
+            override_model: None,
         }
     }
 
@@ -37,6 +40,12 @@ impl ContextBuilder {
     /// Set tool definitions
     pub fn with_tools(mut self, tools: Vec<serde_json::Value>) -> Self {
         self.tool_definitions = Some(tools);
+        self
+    }
+
+    /// Set model override (from Gateway LLMConfigDelivery)
+    pub fn with_override_model(mut self, model: String) -> Self {
+        self.override_model = Some(model);
         self
     }
 
@@ -71,7 +80,7 @@ impl ContextBuilder {
         messages.extend(history.messages().iter().cloned());
 
         ChatRequest {
-            model: manifest.llm.suggested_model.clone(),
+            model: self.override_model.clone().unwrap_or_else(|| manifest.llm.suggested_model.clone()),
             messages,
             temperature: manifest.llm.temperature,
             max_tokens: manifest.llm.max_tokens,

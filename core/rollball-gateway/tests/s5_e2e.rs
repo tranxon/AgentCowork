@@ -36,12 +36,12 @@ fn create_test_app() -> axum::Router {
     );
     let (bridge_tx, _) = tokio::sync::broadcast::channel::<BridgeEvent>(256);
 
-    let state = AppState {
-        gateway_state: std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
-        auth: std::sync::Arc::new(HttpAuth::new(false)),
-        session_mgr: Some(session_mgr),
-        bridge_tx: Some(bridge_tx),
-    };
+        let state = AppState::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
+        std::sync::Arc::new(HttpAuth::new(false)),
+        Some(session_mgr),
+        Some(bridge_tx),
+    );
     build_router(state)
 }
 

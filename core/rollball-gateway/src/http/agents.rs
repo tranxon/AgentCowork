@@ -135,13 +135,20 @@ pub async fn install_agent(
 
     // Wrap the synchronous install in spawn_blocking
     let package_path_display = body.package_path.clone();
+    // Inherit dev_mode from Gateway config if not explicitly set by the client.
+    // This ensures that unsigned packages can be installed when the Gateway
+    // is running in dev_mode without the client having to know about it.
+    let dev_mode = body.dev_mode || {
+        let gw = state.gateway_state.read().await;
+        gw.config.as_ref().map(|c| c.dev_mode).unwrap_or(false)
+    };
     let install_result = tokio::task::spawn_blocking(move || {
         let mut gw = state.gateway_state.blocking_write();
         crate::package_manager::install::install_package(
             std::path::Path::new(&body.package_path),
             &packages_dir,
             &mut gw,
-            body.dev_mode, // allow dev_mode override from API
+            dev_mode,
         )
     }).await;
 

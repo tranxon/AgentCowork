@@ -12,3 +12,4 @@ pub mod vault_api;
 pub mod config_api;
 pub mod permission_api;
 pub mod cron_api;
+pub mod models_api;

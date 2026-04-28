@@ -111,3 +111,28 @@ export type NavView = "chat" | "models" | "skills" | "settings";
 
 /** Theme type */
 export type Theme = "light" | "dark" | "system";
+
+/** Model info from models.dev via Gateway API */
+export interface ModelInfo {
+  id: string;
+  name: string;
+  family?: string;
+  reasoning?: boolean;
+  tool_call?: boolean;
+  attachment?: boolean;
+  release_date?: string;
+}
+
+/** Provider models response from Gateway API */
+export interface ProviderModelsResponse {
+  id: string;
+  name: string;
+  models: ModelInfo[];
+}
+
+/** Provider list entry from Gateway API */
+export interface ProviderListEntry {
+  id: string;
+  name: string;
+  model_count: number;
+}

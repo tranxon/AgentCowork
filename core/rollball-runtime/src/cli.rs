@@ -157,10 +157,8 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
     //   This satisfies PRD GTW-05 and SEC-07 (no env-var key distribution).
     //
     // In Standalone mode: fall back to manifest suggested_provider + env vars.
-    let (provider, _resolved_model) = if let Some(ref mut client) = ipc_client {
+    let (provider, resolved_model) = if let Some(ref mut client) = ipc_client {
         // Gateway mode: receive LLM config from Gateway
-        // TODO: Pass resolved_model to AgentLoop or ContextBuilder so the Gateway-delivered
-        // model overrides the manifest's suggested_model at runtime.
         match client.recv_llm_config().await {
             Ok(llm_config) => {
                 tracing::info!(
@@ -231,9 +229,21 @@ async fn async_main(config: RuntimeConfig) -> Result<()> {
 
     // Step 6: Build context builder (with identity injection from Gateway)
     let identity_context = load_identity_delivery(&config.work_dir);
-    let context_builder = ContextBuilder::new(system_prompt)
+    let mut context_builder = ContextBuilder::new(system_prompt)
         .with_identity(identity_context)
         .with_tools(tool_definitions);
+
+    // If Gateway delivered a model override, apply it so that Gateway's default_model
+    // takes precedence over the manifest's suggested_model.
+    // In standalone mode, resolved_model equals manifest.llm.suggested_model (no override needed).
+    if resolved_model != loaded.manifest.llm.suggested_model {
+        tracing::info!(
+            model = %resolved_model,
+            manifest_model = %loaded.manifest.llm.suggested_model,
+            "Applying Gateway model override"
+        );
+        context_builder = context_builder.with_override_model(resolved_model);
+    }
 
     // Step 7: Create budget (unlimited for standalone mode)
     let budget = rollball_core::Budget {

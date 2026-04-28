@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import type { VaultKeyEntry, GatewayConfig } from "../../lib/types";
-import { Key, Home, Plus, Trash2, Star } from "lucide-react";
+import type { VaultKeyEntry, GatewayConfig, ModelInfo } from "../../lib/types";
+import { Key, Home, Plus, Trash2, Star, ChevronDown, Pencil, Loader2 } from "lucide-react";
 import { ALL_PROVIDERS, PROVIDER_CATEGORIES, getProviderDef } from "../../lib/providers";
+import { fetchProviderModels } from "../../lib/gateway-api";
 
 type ProviderWithStatus = {
   id: string;
@@ -23,6 +24,9 @@ export function ModelsPage() {
   const [newKey, setNewKey] = useState("");
   const [newBaseUrl, setNewBaseUrl] = useState("");
   const [newDefaultModel, setNewDefaultModel] = useState("");
+  const [customModelInput, setCustomModelInput] = useState(false);
+  const [dynamicModels, setDynamicModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
 
   const newProviderDef = getProviderDef(newProvider);
 
@@ -48,11 +52,42 @@ export function ModelsPage() {
 
   useEffect(() => { fetchKeys(); fetchConfig(); }, [fetchKeys, fetchConfig]);
 
+  // Load dynamic models for the default provider on mount
+  useEffect(() => {
+    setModelsLoading(true);
+    fetchProviderModels(newProvider)
+      .then((resp) => {
+        setDynamicModels(resp.models);
+        if (resp.models.length > 0) {
+          setNewDefaultModel(resp.models[0].id);
+        }
+      })
+      .catch(() => setDynamicModels([]))
+      .finally(() => setModelsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleAddProviderChange = (id: string) => {
     setNewProvider(id);
     const def = getProviderDef(id);
     setNewBaseUrl(def?.baseUrl ?? "");
     setNewDefaultModel(def?.exampleModels[0] ?? "");
+    setCustomModelInput(false);
+    // Fetch dynamic model list from Gateway (models.dev)
+    setDynamicModels([]);
+    setModelsLoading(true);
+    fetchProviderModels(id)
+      .then((resp) => {
+        setDynamicModels(resp.models);
+        if (resp.models.length > 0) {
+          setNewDefaultModel(resp.models[0].id);
+        }
+      })
+      .catch(() => {
+        // Fallback: use hardcoded exampleModels from provider def
+        setDynamicModels([]);
+      })
+      .finally(() => setModelsLoading(false));
   };
 
   const handleAdd = async () => {
@@ -247,13 +282,73 @@ export function ModelsPage() {
               )}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">Default Model</label>
-                <input
-                  type="text"
-                  value={newDefaultModel}
-                  onChange={(e) => setNewDefaultModel(e.target.value)}
-                  placeholder={newProviderDef?.exampleModels[0] ?? "model name..."}
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                />
+                {modelsLoading ? (
+                  <div className="flex items-center gap-2 text-xs text-zinc-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading models...
+                  </div>
+                ) : dynamicModels.length > 0 && !customModelInput ? (
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={newDefaultModel}
+                      onChange={(e) => setNewDefaultModel(e.target.value)}
+                      className="flex-1 rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    >
+                      {dynamicModels.map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.id}{m.reasoning ? " \u2b50" : ""}{m.tool_call ? " \ud83d\udd27" : ""}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setCustomModelInput(true)}
+                      className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                      title="Enter custom model name"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : newProviderDef && newProviderDef.exampleModels.length > 0 && !customModelInput ? (
+                  <div className="flex items-center gap-1">
+                    <select
+                      value={newDefaultModel}
+                      onChange={(e) => setNewDefaultModel(e.target.value)}
+                      className="flex-1 rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    >
+                      {newProviderDef.exampleModels.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={() => setCustomModelInput(true)}
+                      className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                      title="Enter custom model name"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1">
+                    <input
+                      type="text"
+                      value={newDefaultModel}
+                      onChange={(e) => setNewDefaultModel(e.target.value)}
+                      placeholder={newProviderDef?.exampleModels[0] ?? "model name..."}
+                      className="flex-1 rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    />
+                    {newProviderDef && newProviderDef.exampleModels.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => { setCustomModelInput(false); setNewDefaultModel(newProviderDef.exampleModels[0]); }}
+                        className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                        title="Back to model selector"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
               {newProviderDef?.description && (
                 <p className="text-xs text-zinc-400">{newProviderDef.description}</p>

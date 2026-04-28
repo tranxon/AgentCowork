@@ -281,6 +281,17 @@ impl Gateway {
         // Ensure directories exist
         self.ensure_dirs()?;
 
+        // In dev_mode, auto-unlock vault with a default password
+        // so that API keys can be stored/retrieved without manual unlock.
+        // This is intentionally insecure — dev_mode is for local development only.
+        if self.config.dev_mode {
+            if let Err(e) = self.state.vault.unlock("dev-mode-unlock") {
+                tracing::warn!("Failed to auto-unlock vault in dev_mode: {}", e);
+            } else {
+                tracing::info!("Vault auto-unlocked (dev_mode)");
+            }
+        }
+
         // Scan packages directory and restore installed agents from disk
         self.restore_installed_agents();
 

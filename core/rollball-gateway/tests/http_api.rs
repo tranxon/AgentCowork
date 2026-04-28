@@ -22,12 +22,12 @@ fn create_test_app() -> axum::Router {
     let mut gw_state = GatewayState::new(&dir.to_string_lossy());
     // P0-2 fix: Inject config so get_config() returns real data
     gw_state.config = Some(rollball_gateway::config::GatewayConfig::default());
-    let state = AppState {
-        gateway_state: std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
-        auth: std::sync::Arc::new(HttpAuth::new(false)),
-        session_mgr: None,
-        bridge_tx: None,
-    };
+    let state = AppState::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
+        std::sync::Arc::new(HttpAuth::new(false)),
+        None,
+        None,
+    );
     build_router(state)
 }
 
@@ -44,12 +44,12 @@ fn create_test_app_with_session() -> (axum::Router, SharedSessionMgr, tokio::syn
     let session_mgr: SharedSessionMgr = std::sync::Arc::new(tokio::sync::Mutex::new(SessionManager::new()));
     let (bridge_tx, _) = tokio::sync::broadcast::channel::<BridgeEvent>(256);
 
-    let state = AppState {
-        gateway_state: std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
-        auth: std::sync::Arc::new(HttpAuth::new(false)),
-        session_mgr: Some(session_mgr.clone()),
-        bridge_tx: Some(bridge_tx.clone()),
-    };
+    let state = AppState::new(
+        std::sync::Arc::new(tokio::sync::RwLock::new(gw_state)),
+        std::sync::Arc::new(HttpAuth::new(false)),
+        Some(session_mgr.clone()),
+        Some(bridge_tx.clone()),
+    );
     (build_router(state), session_mgr, bridge_tx)
 }
 

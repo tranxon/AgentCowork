@@ -44,6 +44,7 @@ futures-util.workspace = true
 rand.workspace = true
 fs2 = "0.4"
 libc.workspace = true
+reqwest = { workspace = true, features = ["blocking", "json", "rustls-tls"] }
 
 # Interactive CLI (feature-gated)
 dialoguer = { workspace = true, optional = true }
@@ -56,6 +57,5 @@ grafeo-common = { workspace = true }
 zip = { workspace = true }
 tempfile = { workspace = true }
 tower = { workspace = true, features = ["util"] }
-reqwest = { workspace = true, features = ["blocking"] }
 tokio-tungstenite = { workspace = true }
 futures-util = { workspace = true, features = ["tokio-io"] }
