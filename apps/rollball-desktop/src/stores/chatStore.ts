@@ -217,13 +217,26 @@ function handleMessageEvent(
     }
 
     case "done": {
-      // Streaming complete
+      // Streaming complete — or non-streaming response with full content
       const usage = data.usage as TokenUsage | undefined;
-      set((state) => ({
-        streamingMessageId: null,
-        sending: false,
-        tokenUsage: usage ?? state.tokenUsage,
-      }));
+      const content = data.content as string | undefined;
+      set((state) => {
+        const messages = [...state.messages];
+        // If there's a streaming message with empty content (non-streaming mode),
+        // fill in the content from the done event.
+        if (state.streamingMessageId && content) {
+          const idx = messages.findIndex((m) => m.id === state.streamingMessageId);
+          if (idx >= 0 && !messages[idx].content) {
+            messages[idx] = { ...messages[idx], content };
+          }
+        }
+        return {
+          messages,
+          streamingMessageId: null,
+          sending: false,
+          tokenUsage: usage ?? state.tokenUsage,
+        };
+      });
       break;
     }
 
