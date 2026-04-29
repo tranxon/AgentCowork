@@ -46,14 +46,8 @@ export function ChatPanel() {
   useEffect(() => {
     if (selectedAgentId && selectedAgent?.running) {
       connectStream(selectedAgentId, "http://127.0.0.1:19876");
-      // Restore per-agent model: check local cache first, then fetch from Gateway
-      if (agentModels[selectedAgentId]) {
-        // Restore from local cache — also fetch provider info
-        useChatStore.setState({ currentModel: agentModels[selectedAgentId] });
-        loadAgentModel(selectedAgentId); // fetch to get provider info
-      } else {
-        loadAgentModel(selectedAgentId);
-      }
+      // Always load model from Gateway API (reads per-agent .agent_model.json)
+      loadAgentModel(selectedAgentId);
     }
     return () => {
       useChatStore.getState().disconnectStream();
