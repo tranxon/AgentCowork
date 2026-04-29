@@ -11,6 +11,10 @@
   --color-muted: hsl(210 40% 96.1%);
   --color-muted-foreground: hsl(215.4 16.3% 46.9%);
 
+  /* Background & text tokens for body */
+  --color-bg: white;
+  --color-text: hsl(240 10% 3.9%);
+
   /* Semantic colors */
   --color-agent-running: hsl(142 76% 36%);
   --color-agent-stopped: hsl(215.4 16.3% 46.9%);
@@ -52,6 +56,9 @@
   --color-accent-foreground: hsl(210 40% 96.1%);
   --color-muted: hsl(222.2 47.4% 15%);
   --color-muted-foreground: hsl(215.4 16.3% 65%);
+
+  --color-bg: hsl(240 10% 3.9%);
+  --color-text: hsl(0 0% 98%);
 }
 
 /* Base styles */
@@ -59,15 +66,10 @@ body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   font-size: var(--text-base);
-  color: var(--color-primary);
-  background: white;
+  color: var(--color-text);
+  background: var(--color-bg);
   overflow: hidden;
   user-select: none;
-}
-
-.dark body {
-  background: hsl(240 10% 3.9%);
-  color: hsl(0 0% 98%);
 }
 
 #root {
