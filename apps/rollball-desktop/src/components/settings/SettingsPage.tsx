@@ -227,6 +227,7 @@ function ProvidersTab() {
 
   const handleEditSave = async () => {
     if (!showEditDialog) return;
+    console.log("[handleEditSave] provider:", showEditDialog, "models:", editModels, "key:", editKey ? "(present)" : "(empty)");
     try {
       // NOTE: editKey is initialized from key_preview (masked), NOT the real API key.
       // Do NOT send the key field unless the user explicitly entered a new key.
@@ -242,10 +243,13 @@ function ProvidersTab() {
       if (editKey && editKey !== keyEntry?.key_preview) {
         updatePayload.key = editKey;
       }
+      console.log("[handleEditSave] payload:", JSON.stringify(updatePayload));
       await invoke("update_key", updatePayload);
+      console.log("[handleEditSave] success");
       setShowEditDialog(null);
       await fetchKeys();
     } catch (e) {
+      console.error("[handleEditSave] error:", e);
       alert(`Failed to update key: ${e}`);
     }
   };
