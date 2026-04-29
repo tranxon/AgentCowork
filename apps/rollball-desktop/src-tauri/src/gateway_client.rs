@@ -254,10 +254,10 @@ impl GatewayClient {
         let status = resp.status();
         if !status.is_success() {
             let error_text = resp.text().await.unwrap_or_default();
-            return Err(format!("Gateway returned {}: {}", status, error_text));
+            return Err(anyhow::anyhow!("Gateway returned {}: {}", status, error_text));
         }
         let result: GenericMessageResponse = resp.json().await.map_err(|e| {
-            format!("Failed to parse Gateway response: {}", e)
+            anyhow::anyhow!("Failed to parse Gateway response: {}", e)
         })?;
         Ok(result)
     }
