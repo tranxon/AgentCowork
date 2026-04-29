@@ -29,9 +29,7 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
         .icon(icon)
         .menu(&menu)
         .tooltip("Rollball")
-        .menu_on_left_click(false)  // Right-click shows menu, left-click triggers event
         .on_menu_event(events::on_menu_event)
-        .on_tray_icon_event(events::on_tray_icon_event)
         .build(app)?;
 
     Ok(())

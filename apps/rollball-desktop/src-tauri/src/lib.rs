@@ -64,18 +64,26 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             // Hide to tray instead of closing
-            // Only intercept close when window is visible (not minimized)
+            // Only intercept close when window is visible and focused
             // This prevents interference with system tray menu on Windows
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Check if window is currently visible and not iconified
-                let should_hide = window.is_visible().unwrap_or(false) 
-                    && !window.is_minimized().unwrap_or(false);
-                
-                if should_hide {
-                    window.hide().unwrap();
-                    api.prevent_close();
+                // Only hide if window is currently visible
+                // When tray menu is showing, window won't be visible/focused
+                match window.is_visible() {
+                    Ok(true) => {
+                        tracing::debug!("Intercepting close request, hiding to tray");
+                        window.hide().unwrap();
+                        api.prevent_close();
+                    }
+                    Ok(false) => {
+                        tracing::debug!("Window not visible, allowing close to proceed");
+                        // Don't intercept - let it close (for Quit menu)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to check window visibility: {}", e);
+                        // Safe default: allow close
+                    }
                 }
-                // If window is already hidden or minimized, allow close to proceed
             }
         })
         .run(tauri::generate_context!())
