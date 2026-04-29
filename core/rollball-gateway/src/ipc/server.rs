@@ -1298,7 +1298,7 @@ async fn handle_agent_hello(
 /// 2. Vault entry's `default_model` (set when adding the provider key)
 /// 3. None — Agent Runtime falls back to its manifest's suggested_model
 pub async fn resolve_llm_config_for_agent(
-    _agent_id: &str,
+    agent_id: &str,
     state: &SharedState,
 ) -> Option<(String, Option<String>, String, Option<String>, Vec<String>)> {
     let state_guard = state.read().await;
@@ -1330,9 +1330,28 @@ pub async fn resolve_llm_config_for_agent(
     // Retrieve the provider entry from Vault
     match state_guard.vault.get_provider(&provider_name) {
         Ok(entry) => {
-            // Model resolution: config default > Vault default > None (Agent decides)
-            let model = config_default_model
-                .map(|m| m.to_string())
+            // Model resolution: per-agent preference > config default > Vault default > None
+            // 1. Check per-agent model preference from workspace .agent_model.json
+            let per_agent_model = state_guard.installed_agents.get(agent_id)
+                .and_then(|info| {
+                    let workspace = std::path::Path::new(&info.install_path).join("workspace");
+                    let model_path = workspace.join(".agent_model.json");
+                    if model_path.exists() {
+                        std::fs::read_to_string(&model_path).ok()
+                            .and_then(|content| {
+                                serde_json::from_str::<serde_json::Value>(&content).ok()
+                                    .and_then(|obj| obj.get("model").and_then(|v| v.as_str()).map(|m| m.to_string()))
+                            })
+                    } else {
+                        None
+                    }
+                });
+
+            // Only use per-agent preference if the model is in the available list
+            let per_agent_model = per_agent_model.filter(|m| entry.models.contains(m));
+
+            let model = per_agent_model
+                .or(config_default_model.map(|m| m.to_string()))
                 .or(entry.default_model.clone());
             // model is None when neither config nor Vault has a preference —
             // Agent Runtime will fall back to its manifest's suggested_model

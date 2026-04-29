@@ -10,6 +10,8 @@ interface ChatStore {
   tokenUsage: TokenUsage | null;
   /** Current active model for the selected agent */
   currentModel: string | null;
+  /** Current active provider for the selected agent */
+  currentProvider: string | null;
   /** Per-agent model memory: agent_id → model name */
   agentModels: Record<string, string>;
   availableModels: string[];
@@ -38,6 +40,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   ws: null,
   tokenUsage: null,
   currentModel: null,
+  currentProvider: null,
   agentModels: {},
   availableModels: [],
 
@@ -185,6 +188,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (data.model) {
         set((state) => ({
           currentModel: data.model,
+          currentProvider: data.provider,
           agentModels: { ...state.agentModels, [agentId]: data.model },
           availableModels: data.available_models?.length ? data.available_models : state.availableModels,
         }));
