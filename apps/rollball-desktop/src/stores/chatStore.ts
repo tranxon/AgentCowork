@@ -82,9 +82,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Cancel any pending reconnect
     resetReconnect();
 
-    // Close existing connection
+    // Close existing connection and clear its handlers to prevent stale callbacks
     const existing = get().ws;
     if (existing) {
+      existing.onopen = null;
+      existing.onmessage = null;
+      existing.onclose = null;
+      existing.onerror = null;
       existing.close();
     }
 
@@ -102,6 +106,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     ws.onopen = () => {
       console.log("[ChatStore] WebSocket connected for agent:", agentId);
       resetReconnect(); // successful connection resets retry counter
+      // Re-set ws to trigger React re-render with OPEN readyState
+      set({ ws });
     };
 
     ws.onmessage = (event) => {
@@ -114,12 +120,22 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     };
 
     ws.onclose = () => {
+      // Defensive check: ignore stale callbacks from a replaced WebSocket
+      if (get().ws !== ws) {
+        console.log("[ChatStore] Stale WebSocket closed, ignoring");
+        return;
+      }
       console.log("[ChatStore] WebSocket closed, scheduling reconnect");
       set({ ws: null, sending: false, streamingMessageId: null });
       scheduleReconnect(agentId, gatewayUrl);
     };
 
     ws.onerror = (err) => {
+      // Defensive check: ignore stale callbacks from a replaced WebSocket
+      if (get().ws !== ws) {
+        console.log("[ChatStore] Stale WebSocket error, ignoring");
+        return;
+      }
       console.warn("[ChatStore] WebSocket error:", err);
       // Don't set ws: null here — onclose will fire after onerror
     };
@@ -233,6 +249,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     resetReconnect(); // stop any pending reconnect
     const ws = get().ws;
     if (ws) {
+      ws.onopen = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onerror = null;
       ws.close();
     }
     set({ ws: null, sending: false, streamingMessageId: null });
