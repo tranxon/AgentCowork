@@ -4,7 +4,7 @@ import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import type { GatewayConfig, VaultKeyEntry, ModelInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
-import { ALL_PROVIDERS, PROVIDER_CATEGORIES, getProviderDef } from "../../lib/providers";
+import { ALL_PROVIDERS, getProviderDef } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
 import { Star } from "lucide-react";
 
@@ -178,51 +178,124 @@ function ProvidersTab() {
   }, []);
 
   // Fetch dynamic provider list from Gateway API
-  const fetchDynamicProviders = useCallback(async () => {
-    setDynamicProvidersLoading(true);
+  const fetchDynamicProviders = useCallback(async (useCache = true) => {
+    // Check localStorage cache first
+    const CACHE_KEY = "rollball_models_cache";
+    const CACHE_TIMESTAMP_KEY = "rollball_models_cache_timestamp";
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    
+    if (useCache) {
+      try {
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+        
+        if (cachedData && cachedTimestamp) {
+          const timestamp = parseInt(cachedTimestamp, 10);
+          const now = Date.now();
+          
+          // Use cache if it's still fresh
+          if (now - timestamp < CACHE_TTL) {
+            const parsed = JSON.parse(cachedData);
+            setDynamicProviders(parsed.providers ?? []);
+            // Still refresh in background
+          } else {
+            // Cache expired, clear it
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+          }
+        }
+      } catch {
+        // Ignore cache errors
+      }
+    }
+    
+    // Fetch from Gateway API (background refresh)
     try {
       const response = await fetch("http://127.0.0.1:19876/api/models");
       if (response.ok) {
         const data = await response.json();
         setDynamicProviders(data.providers ?? []);
+        
+        // Update cache
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+        } catch {
+          // Ignore cache write errors
+        }
+      } else if (!useCache) {
+        // First load failed, show error state
+        setDynamicProvidersLoading(false);
       }
     } catch {
-      // Fallback to static providers if Gateway API fails
+      // Gateway API failed, keep using cache if available
+      if (!useCache) {
+        setDynamicProvidersLoading(false);
+      }
     } finally {
-      setDynamicProvidersLoading(false);
+      if (useCache) {
+        // Only hide loading after background refresh completes
+        setDynamicProvidersLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => { 
     fetchKeys(); 
     fetchConfig(); 
-    fetchDynamicProviders(); 
+    // First load: use cache for instant display, refresh in background
+    fetchDynamicProviders(true); 
   }, [fetchKeys, fetchConfig, fetchDynamicProviders]);
 
   // Fetch available models for a provider from Gateway API
   const fetchModels = useCallback(async (providerId: string): Promise<ModelInfo[]> => {
+    // Check localStorage cache for this provider
+    const CACHE_KEY = `rollball_models_${providerId}`;
+    const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
+    const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+    
+    try {
+      const cachedData = localStorage.getItem(CACHE_KEY);
+      const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+      
+      if (cachedData && cachedTimestamp) {
+        const timestamp = parseInt(cachedTimestamp, 10);
+        const now = Date.now();
+        
+        // Use cache if it's still fresh
+        if (now - timestamp < CACHE_TTL) {
+          const parsed = JSON.parse(cachedData);
+          return parsed.models ?? [];
+        } else {
+          // Cache expired
+          localStorage.removeItem(CACHE_KEY);
+          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+        }
+      }
+    } catch {
+      // Ignore cache errors
+    }
+    
+    // Fetch from Gateway API
     try {
       const data = await fetchProviderModels(providerId);
-      return data.models ?? [];
+      const models = data.models ?? [];
+      
+      // Update cache
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+      } catch {
+        // Ignore cache write errors
+      }
+      
+      return models;
     } catch {
       // Fallback to exampleModels from provider definition
       const def = getProviderDef(providerId);
       return (def?.exampleModels ?? []).map((id) => ({ id, name: id }));
     }
   }, []);
-
-  const handleAddProviderChange = async (id: string) => {
-    setNewProvider(id);
-    const def = getProviderDef(id);
-    setNewBaseUrl(def?.baseUrl ?? "");
-    setNewModels([]);
-    setModelSearchTerm("");
-    // Fetch available models for the selected provider
-    setModelsLoading(true);
-    const models = await fetchModels(id);
-    setAvailableModels(models);
-    setModelsLoading(false);
-  };
 
   const handleAdd = async () => {
     try {
@@ -397,9 +470,19 @@ function ProvidersTab() {
 
           {/* Available Providers (bottom section) */}
           <div>
-            <h3 className="mb-2 text-xs font-medium text-zinc-500">
-              Available Providers {dynamicProvidersLoading && "(loading...)"}
-            </h3>
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-xs font-medium text-zinc-500">
+                Available Providers {dynamicProvidersLoading && <span className="text-zinc-400">(refreshing...)</span>}
+              </h3>
+              <button
+                onClick={() => fetchDynamicProviders(false)}
+                disabled={dynamicProvidersLoading}
+                className="rounded px-2 py-0.5 text-[10px] text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
+                title="Refresh provider list"
+              >
+                {dynamicProvidersLoading ? "Refreshing..." : "↻ Refresh"}
+              </button>
+            </div>
             <div className="space-y-2">
               {/* Use dynamic providers if available, otherwise fallback to static */}
               {(dynamicProviders.length > 0 ? dynamicProviders : ALL_PROVIDERS).map((item) => {
