@@ -184,6 +184,8 @@ function ProvidersTab() {
     const CACHE_TIMESTAMP_KEY = "rollball_models_cache_timestamp";
     const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
     
+    let hasValidCache = false;
+    
     if (useCache) {
       try {
         const cachedData = localStorage.getItem(CACHE_KEY);
@@ -197,6 +199,7 @@ function ProvidersTab() {
           if (now - timestamp < CACHE_TTL) {
             const parsed = JSON.parse(cachedData);
             setDynamicProviders(parsed.providers ?? []);
+            hasValidCache = true;
             // Still refresh in background
           } else {
             // Cache expired, clear it
@@ -208,6 +211,15 @@ function ProvidersTab() {
         // Ignore cache errors
       }
     }
+    
+    // If no valid cache, show loading
+    if (!hasValidCache) {
+      setDynamicProvidersLoading(true);
+    }
+    
+    // Track start time for minimum loading duration
+    const startTime = Date.now();
+    const MIN_LOADING_DURATION = 300; // 300ms minimum loading time
     
     // Fetch from Gateway API (background refresh)
     try {
@@ -223,20 +235,23 @@ function ProvidersTab() {
         } catch {
           // Ignore cache write errors
         }
-      } else if (!useCache) {
-        // First load failed, show error state
-        setDynamicProvidersLoading(false);
       }
     } catch {
       // Gateway API failed, keep using cache if available
-      if (!useCache) {
-        setDynamicProvidersLoading(false);
+      if (!hasValidCache) {
+        // No cache and API failed, show empty state
+        setDynamicProviders([]);
       }
     } finally {
-      if (useCache) {
-        // Only hide loading after background refresh completes
-        setDynamicProvidersLoading(false);
+      // Ensure minimum loading duration for better UX
+      const elapsed = Date.now() - startTime;
+      const remaining = Math.max(0, MIN_LOADING_DURATION - elapsed);
+      
+      if (remaining > 0) {
+        await new Promise(resolve => setTimeout(resolve, remaining));
       }
+      
+      setDynamicProvidersLoading(false);
     }
   }, []);
 
@@ -474,14 +489,33 @@ function ProvidersTab() {
               <h3 className="text-xs font-medium text-zinc-500">
                 Available Providers {dynamicProvidersLoading && <span className="text-zinc-400">(refreshing...)</span>}
               </h3>
-              <button
-                onClick={() => fetchDynamicProviders(false)}
-                disabled={dynamicProvidersLoading}
-                className="rounded px-2 py-0.5 text-[10px] text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
-                title="Refresh provider list"
-              >
-                {dynamicProvidersLoading ? "Refreshing..." : "↻ Refresh"}
-              </button>
+              <div className="flex gap-1">
+                <button
+                  onClick={() => {
+                    // Clear all models cache
+                    Object.keys(localStorage)
+                      .filter(k => k.startsWith('rollball_models_'))
+                      .forEach(k => localStorage.removeItem(k));
+                    // Clear current display and show loading
+                    setDynamicProviders([]);
+                    setDynamicProvidersLoading(true);
+                    // Re-fetch from API
+                    fetchDynamicProviders(false);
+                  }}
+                  className="rounded px-2 py-0.5 text-[10px] text-zinc-500 hover:text-red-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-red-400 dark:hover:bg-zinc-800"
+                  title="Clear cache and refresh"
+                >
+                  🗑 Clear Cache
+                </button>
+                <button
+                  onClick={() => fetchDynamicProviders(false)}
+                  disabled={dynamicProvidersLoading}
+                  className="rounded px-2 py-0.5 text-[10px] text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
+                  title="Refresh provider list"
+                >
+                  {dynamicProvidersLoading ? "Refreshing..." : "↻ Refresh"}
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {/* Use dynamic providers if available, otherwise fallback to static */}
