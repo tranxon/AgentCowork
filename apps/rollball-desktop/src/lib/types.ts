@@ -34,6 +34,48 @@ export interface AgentDetail {
   started_at: string | null;
 }
 
+/** Cost information for a model (per million tokens) */
+export interface ModelCostInfo {
+  /** Input cost per million tokens (USD) */
+  input_per_million?: number;
+  /** Output cost per million tokens (USD) */
+  output_per_million?: number;
+}
+
+/** Modality information for a model */
+export interface ModelModalities {
+  /** Input modalities (e.g. "text", "image", "audio", "video") */
+  input?: string[];
+  /** Output modalities (e.g. "text", "image") */
+  output?: string[];
+}
+
+/** Model capabilities info (from models.dev or user input) */
+export interface ModelCapabilitiesInfo {
+  /** Context window size (total tokens: input + output) */
+  context_window: number;
+  /** Maximum output tokens the model can generate */
+  max_output_tokens: number;
+  /** Whether the model supports tool/function calling */
+  supports_tool_calling?: boolean;
+  /** Whether the model supports reasoning/thinking */
+  supports_reasoning?: boolean;
+  /** Whether the model supports file attachments */
+  supports_attachment?: boolean;
+  /** Whether the model supports temperature parameter */
+  supports_temperature?: boolean;
+  /** Pricing information (USD per 1M tokens) */
+  cost?: ModelCostInfo;
+  /** Supported modalities */
+  modalities?: ModelModalities;
+  /** Model display name */
+  name?: string;
+  /** Model family */
+  family?: string;
+  /** Knowledge cutoff date */
+  knowledge_cutoff?: string;
+}
+
 /** Vault key entry (masked) */
 export interface VaultKeyEntry {
   provider: string;
@@ -44,6 +86,8 @@ export interface VaultKeyEntry {
   default_model?: string;
   /** Selected models list (may be empty) */
   models?: string[];
+  /** Model capabilities (from models.dev or user input) */
+  model_capabilities?: ModelCapabilitiesInfo;
 }
 
 /** Gateway config response */
@@ -122,11 +166,22 @@ export interface ModelInfo {
   reasoning?: boolean;
   tool_call?: boolean;
   attachment?: boolean;
+  temperature?: boolean;
   release_date?: string;
   /** Context window size (total tokens: input + output) */
   context_window?: number;
   /** Maximum output tokens */
   max_tokens?: number;
+  /** Knowledge cutoff date */
+  knowledge?: string;
+  /** Input cost per million tokens (USD) */
+  input_cost?: number;
+  /** Output cost per million tokens (USD) */
+  output_cost?: number;
+  /** Input modalities */
+  input_modalities?: string[];
+  /** Output modalities */
+  output_modalities?: string[];
 }
 
 /** Provider models response from Gateway API */

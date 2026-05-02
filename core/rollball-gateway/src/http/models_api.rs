@@ -52,6 +52,8 @@ pub struct ModelInfo {
     #[serde(default)]
     pub attachment: Option<bool>,
     #[serde(default)]
+    pub temperature: Option<bool>,
+    #[serde(default)]
     pub release_date: Option<String>,
     /// Context window size (total tokens: input + output)
     #[serde(default)]
@@ -59,6 +61,21 @@ pub struct ModelInfo {
     /// Maximum output tokens
     #[serde(default)]
     pub max_tokens: Option<u64>,
+    /// Knowledge cutoff date (e.g. "2025-04")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge: Option<String>,
+    /// Input cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_cost: Option<f64>,
+    /// Output cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_cost: Option<f64>,
+    /// Input modalities (e.g. ["text", "image"])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_modalities: Option<Vec<String>>,
+    /// Output modalities (e.g. ["text"])
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_modalities: Option<Vec<String>>,
 }
 
 /// Provider info with its models
@@ -193,12 +210,35 @@ fn extract_models(provider_data: &serde_json::Value) -> Vec<ModelInfo> {
             reasoning: model_data.get("reasoning").and_then(|v| v.as_bool()),
             tool_call: model_data.get("tool_call").and_then(|v| v.as_bool()),
             attachment: model_data.get("attachment").and_then(|v| v.as_bool()),
+            temperature: model_data.get("temperature").and_then(|v| v.as_bool()),
             release_date: model_data
                 .get("release_date")
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             context_window,
             max_tokens,
+            knowledge: model_data
+                .get("knowledge")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            input_cost: model_data
+                .get("cost")
+                .and_then(|v| v.get("input"))
+                .and_then(|v| v.as_f64()),
+            output_cost: model_data
+                .get("cost")
+                .and_then(|v| v.get("output"))
+                .and_then(|v| v.as_f64()),
+            input_modalities: model_data
+                .get("modalities")
+                .and_then(|v| v.get("input"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
+            output_modalities: model_data
+                .get("modalities")
+                .and_then(|v| v.get("output"))
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()),
         };
         models.push(model);
     }
@@ -348,6 +388,81 @@ async fn get_provider_models(
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────
+
+// ── Model capabilities lookup (used by IPC and vault hot-push) ──────────
+
+/// Look up model capabilities for a specific provider + model_id.
+/// Uses built-in offline provider data (always available, no network required).
+/// Returns None if the model is not found in the offline data.
+pub fn lookup_model_capabilities(
+    provider: &str,
+    model_id: &str,
+) -> Option<rollball_core::protocol::ModelCapabilitiesInfo> {
+    let data = offline_providers();
+    lookup_model_capabilities_from_data(data, provider, model_id)
+}
+
+/// Look up model capabilities for a specific provider + model_id.
+/// Tries the in-memory cache first (if data has been fetched from models.dev),
+/// then falls back to built-in offline provider data.
+/// Returns None if the model is not found in either source.
+pub(crate) async fn lookup_model_capabilities_with_cache(
+    cache: &ModelsCache,
+    provider: &str,
+    model_id: &str,
+) -> Option<rollball_core::protocol::ModelCapabilitiesInfo> {
+    // 1. Try in-memory cache (may have fresher data from models.dev)
+    if let Ok(data) = fetch_models(cache).await {
+        if let Some(caps) = lookup_model_capabilities_from_data(&data, provider, model_id) {
+            return Some(caps);
+        }
+    }
+    // 2. Fall back to offline data
+    lookup_model_capabilities(provider, model_id)
+}
+
+/// Internal helper: look up model capabilities from a JSON data source.
+fn lookup_model_capabilities_from_data(
+    data: &serde_json::Value,
+    provider: &str,
+    model_id: &str,
+) -> Option<rollball_core::protocol::ModelCapabilitiesInfo> {
+    let (_, models) = resolve_provider(data, provider)?;
+    let model = models.iter().find(|m| m.id == model_id)?;
+    Some(rollball_core::protocol::ModelCapabilitiesInfo {
+        context_window: model.context_window.unwrap_or(0),
+        max_output_tokens: model.max_tokens.unwrap_or(0),
+        supports_tool_calling: model.tool_call.unwrap_or(true),
+        supports_reasoning: model.reasoning,
+        supports_attachment: model.attachment,
+        supports_temperature: model.temperature,
+        cost: match (model.input_cost, model.output_cost) {
+            (Some(inp), Some(out)) => Some(rollball_core::protocol::ModelCostInfo {
+                input_per_million: Some(inp),
+                output_per_million: Some(out),
+            }),
+            (Some(inp), None) => Some(rollball_core::protocol::ModelCostInfo {
+                input_per_million: Some(inp),
+                output_per_million: None,
+            }),
+            (None, Some(out)) => Some(rollball_core::protocol::ModelCostInfo {
+                input_per_million: None,
+                output_per_million: Some(out),
+            }),
+            (None, None) => None,
+        },
+        modalities: match (&model.input_modalities, &model.output_modalities) {
+            (Some(inp), Some(out)) => Some(rollball_core::protocol::ModelModalities {
+                input: inp.clone(),
+                output: out.clone(),
+            }),
+            _ => None,
+        },
+        name: Some(model.name.clone()),
+        family: model.family.clone(),
+        knowledge_cutoff: model.knowledge.clone(),
+    })
+}
 
 #[cfg(test)]
 mod tests {

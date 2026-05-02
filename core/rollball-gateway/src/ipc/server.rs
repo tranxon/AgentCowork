@@ -1249,18 +1249,40 @@ async fn handle_agent_hello(
         // chunk-relay connections don't need LLM config — they only send TYPE_STREAM_CHUNK.
         if connection_role == "main" {
             let llm_config = resolve_llm_config_for_agent(agent_id, state).await;
-        if let Some((provider, model, api_key, base_url, models)) = llm_config {
+        if let Some(cfg) = llm_config {
             tracing::info!(
                 "Pushing LLMConfigDelivery to agent={}: provider={} model={:?} models={:?}",
-                agent_id, provider, model, models
+                agent_id, cfg.provider, cfg.model, cfg.models
             );
+            // Resolve model capabilities with priority:
+            // 1. User-overridden capabilities from Vault entry
+            // 2. models.dev cache / offline data
+            let model_capabilities = if cfg.stored_capabilities.is_some() {
+                cfg.stored_capabilities
+            } else if let Some(m) = &cfg.model {
+                // Try cache-first lookup (may fetch fresher data from models.dev)
+                let cache = {
+                    let gw = state.read().await;
+                    gw.models_cache.clone()
+                };
+                if let Some(cache) = cache {
+                    crate::http::models_api::lookup_model_capabilities_with_cache(
+                        &cache, &cfg.provider, m,
+                    ).await
+                } else {
+                    crate::http::models_api::lookup_model_capabilities(&cfg.provider, m)
+                }
+            } else {
+                None
+            };
             // Use push_message (async) to deliver LLM config via the session's push channel
             let push_result = session.push_message(GatewayResponse::LLMConfigDelivery {
-                provider,
-                model,
-                api_key,
-                base_url,
-                models,
+                provider: cfg.provider,
+                model: cfg.model,
+                api_key: cfg.api_key,
+                base_url: cfg.base_url,
+                models: cfg.models,
+                model_capabilities,
             }).await;
             if !push_result {
                 tracing::warn!("Failed to push LLMConfigDelivery to {} (channel closed)", conn_id);
@@ -1318,6 +1340,19 @@ async fn handle_agent_hello(
     }
 }
 
+/// Resolved LLM configuration for an Agent.
+///
+/// Returned by `resolve_llm_config_for_agent`, replaces the previous
+/// 6-tuple with named fields for readability and maintainability.
+pub struct ResolvedLlmConfig {
+    pub provider: String,
+    pub model: Option<String>,
+    pub api_key: String,
+    pub base_url: Option<String>,
+    pub models: Vec<String>,
+    pub stored_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo>,
+}
+
 /// Resolve the LLM configuration to deliver to an Agent.
 ///
 /// Priority:
@@ -1332,7 +1367,7 @@ async fn handle_agent_hello(
 pub async fn resolve_llm_config_for_agent(
     agent_id: &str,
     state: &SharedState,
-) -> Option<(String, Option<String>, String, Option<String>, Vec<String>)> {
+) -> Option<ResolvedLlmConfig> {
     let state_guard = state.read().await;
 
     // Try default_provider from Gateway config first
@@ -1388,13 +1423,14 @@ pub async fn resolve_llm_config_for_agent(
             // model is None when neither config nor Vault has a preference —
             // Agent Runtime will fall back to its manifest's suggested_model
 
-            Some((
-                provider_name.clone(),
+            Some(ResolvedLlmConfig {
+                provider: provider_name.clone(),
                 model,
-                entry.api_key,
-                entry.base_url,
-                entry.models,
-            ))
+                api_key: entry.api_key,
+                base_url: entry.base_url,
+                models: entry.models,
+                stored_capabilities: entry.model_capabilities.map(rollball_core::protocol::ModelCapabilitiesInfo::from),
+            })
         }
         Err(e) => {
             tracing::warn!("Failed to get provider '{}' from Vault: {}", provider_name, e);

@@ -219,6 +219,48 @@ impl HistoryManager {
         removed
     }
 
+    /// Truncate individual messages whose content exceeds max_tokens_per_message.
+    /// This prevents a single oversized tool result (e.g. shell output) from
+    /// consuming the entire context window.
+    /// Returns the number of messages truncated.
+    pub fn truncate_large_messages(&mut self, max_tokens_per_message: u64) -> usize {
+        let max_chars = (max_tokens_per_message * 4) as usize;
+        let mut truncated = 0;
+
+        for msg in &mut self.messages {
+            // Skip system messages — they should never be truncated
+            if matches!(msg.role, MessageRole::System) {
+                continue;
+            }
+
+            if msg.content.len() > max_chars {
+                let old_tokens = estimate_tokens(&msg.content);
+                let truncation_notice = format!(
+                    "\n\n[...truncated: original {} chars, showing first {} chars]",
+                    msg.content.len(),
+                    max_chars
+                );
+                msg.content.truncate(max_chars);
+                msg.content.push_str(&truncation_notice);
+                let new_tokens = estimate_tokens(&msg.content);
+                self.current_tokens = self
+                    .current_tokens
+                    .saturating_sub(old_tokens)
+                    .saturating_add(new_tokens);
+                truncated += 1;
+            }
+        }
+
+        if truncated > 0 {
+            tracing::warn!(
+                truncated,
+                max_tokens_per_message,
+                "Truncated oversized messages to per-message limit"
+            );
+        }
+        truncated
+    }
+
     /// Sanitize message history to remove or fix corrupted entries.
     ///
     /// This prevents LLM 400 errors caused by invalid tool_call data when
@@ -345,9 +387,28 @@ impl HistoryManager {
     }
 }
 
-/// Estimate tokens from text content (rough: 4 chars per token)
+/// Estimate token count for a text string.
+/// Uses a heuristic that accounts for CJK characters (which tokenize ~2 tokens each)
+/// versus ASCII text (which tokenizes ~4 chars per token on average).
 fn estimate_tokens(text: &str) -> u64 {
-    (text.len() as f64 / 4.0).ceil() as u64
+    if text.is_empty() {
+        return 0;
+    }
+    let ascii_count = text.chars().filter(|c| c.is_ascii()).count() as u64;
+    let cjk_count = text.chars().filter(|c| {
+        ('\u{4E00}'..='\u{9FFF}').contains(c)   // CJK Unified Ideographs
+            || ('\u{3040}'..='\u{309F}').contains(c) // Hiragana
+            || ('\u{30A0}'..='\u{30FF}').contains(c) // Katakana
+            || ('\u{AC00}'..='\u{D7AF}').contains(c) // Hangul Syllables
+            || ('\u{3400}'..='\u{4DBF}').contains(c) // CJK Extension A
+            || ('\u{F900}'..='\u{FAFF}').contains(c) // CJK Compatibility Ideographs
+    }).count() as u64;
+    let other_count = (text.chars().count() as u64).saturating_sub(ascii_count).saturating_sub(cjk_count);
+    // ASCII: ~4 chars/token; CJK: ~1 char/2 tokens; other non-ASCII: ~2 chars/token
+    let ascii_tokens = ascii_count.div_ceil(4);
+    let cjk_tokens = (cjk_count * 2).div_ceil(1); // ~2 tokens per CJK char
+    let other_tokens = other_count.div_ceil(2);
+    ascii_tokens + cjk_tokens + other_tokens
 }
 
 #[cfg(test)]
@@ -413,9 +474,40 @@ mod tests {
     }
 
     #[test]
+    fn test_truncate_large_messages() {
+        let mut hm = HistoryManager::new(100000, 4);
+        hm.append(make_message(MessageRole::System, "System prompt"));
+        // Add a message with very long content (simulating shell output)
+        let long_content: String = "x".repeat(100_000); // 100K chars = ~25K tokens
+        hm.append(make_message(MessageRole::Tool, &long_content));
+        hm.append(make_message(MessageRole::User, "Short message"));
+
+        // Truncate with max 1000 tokens per message (= 4000 chars)
+        let truncated = hm.truncate_large_messages(1000);
+        assert_eq!(truncated, 1); // Only the tool message was truncated
+        assert_eq!(hm.len(), 3); // No messages removed
+
+        // The tool message should now be truncated
+        let tool_msg = hm.messages().iter().find(|m| matches!(m.role, MessageRole::Tool)).unwrap();
+        assert!(tool_msg.content.len() < long_content.len());
+        assert!(tool_msg.content.contains("[...truncated"));
+
+        // System message should NOT be truncated
+        let sys_msg = hm.messages().iter().find(|m| matches!(m.role, MessageRole::System)).unwrap();
+        assert_eq!(sys_msg.content, "System prompt");
+    }
+
+    #[test]
     fn test_estimate_tokens() {
-        assert_eq!(estimate_tokens("hello"), 2); // 5/4 = 1.25, ceil = 2
+        // ASCII: 5 chars / 4 = 1.25 → ceil = 2
+        assert_eq!(estimate_tokens("hello"), 2);
         assert_eq!(estimate_tokens(""), 0);
+        // Pure CJK: 4 chars × 2 tokens/char = 4 tokens (rounded: (4*2+1)/2 = 4)
+        assert!(estimate_tokens("你好世界") >= 4); // "hello world" in Chinese
+        // Mixed: CJK chars get ~2 tokens each, ASCII ~1/4
+        let mixed = "你好world"; // 2 CJK + 5 ASCII
+        let est = estimate_tokens(mixed);
+        assert!(est > 2, "CJK should add more tokens than pure ASCII of same len");
     }
 
     // ── sanitize_messages tests ─────────────────────────────────────────

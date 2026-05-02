@@ -22,7 +22,7 @@ pub mod error;
 
 // Re-exports for convenience
 pub use manifest::{AgentManifest, CapabilityDef, LlmConfig, ProviderConfig, RoutingConfig, LlmBudget, RagToolConfig, ToolDeclaration};
-pub use protocol::{GatewayRequest, GatewayResponse, Frame};
+pub use protocol::{GatewayRequest, GatewayResponse, Frame, ModelCapabilitiesInfo, ModelCostInfo, ModelModalities};
 pub use transport::{AsyncTransportConnection, AsyncTransportServer, TransportKind, classify_endpoint, default_endpoint};
 pub use intent::Intent;
 pub use permission::Permission;

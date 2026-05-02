@@ -2,7 +2,7 @@
 
 use tauri::State;
 
-use crate::gateway_client::{GenericMessageResponse, VaultKeyEntry};
+use crate::gateway_client::{GenericMessageResponse, ModelCapabilities, VaultKeyEntry};
 use crate::state::AppState;
 
 /// List all stored API keys (masked)
@@ -12,7 +12,7 @@ pub async fn list_keys(state: State<'_, AppState>) -> Result<Vec<VaultKeyEntry>,
     client.list_keys().await.map_err(|e| e.to_string())
 }
 
-/// Add a new API key (with optional base_url and models list)
+/// Add a new API key (with optional base_url, models list, and model_capabilities)
 #[tauri::command]
 pub async fn add_key(
     state: State<'_, AppState>,
@@ -21,6 +21,7 @@ pub async fn add_key(
     base_url: Option<String>,
     default_model: Option<String>,
     models: Option<Vec<String>>,
+    model_capabilities: Option<ModelCapabilities>,
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
     client
@@ -30,6 +31,7 @@ pub async fn add_key(
             base_url.as_deref(),
             default_model.as_deref(),
             models.as_deref(),
+            model_capabilities.as_ref(),
         )
         .await
         .map_err(|e| e.to_string())
@@ -54,6 +56,7 @@ pub async fn update_key(
     base_url: Option<String>,
     default_model: Option<String>,
     models: Option<Vec<String>>,
+    model_capabilities: Option<ModelCapabilities>,
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
     client
@@ -63,6 +66,7 @@ pub async fn update_key(
             base_url.as_deref(),
             default_model.as_deref(),
             models.as_deref(),
+            model_capabilities.as_ref(),
         )
         .await
         .map_err(|e| e.to_string())

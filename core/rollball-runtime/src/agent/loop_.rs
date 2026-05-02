@@ -14,6 +14,7 @@ use futures::StreamExt;
 use rollball_core::providers::traits::{
     ChatMessage, ChatResponse, MessageRole, Provider, StreamEvent, ToolCall,
 };
+use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::tools::traits::Tool;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, Instant};
@@ -98,6 +99,10 @@ pub struct AgentLoop {
     /// to the Gateway via IPC. When set, ToolCall events are emitted before
     /// tool execution and ToolResult events after completion.
     on_tool_event: Option<mpsc::Sender<ToolEvent>>,
+    /// Model capabilities from Gateway, keyed by model name.
+    /// When Gateway delivers capabilities for a model, they are stored here
+    /// so that ContextBuilder can look them up at build() time.
+    gateway_model_capabilities: HashMap<String, ModelCapabilitiesInfo>,
 }
 
 impl AgentLoop {
@@ -135,6 +140,7 @@ impl AgentLoop {
             inbound_rx,
             on_chunk,
             on_tool_event,
+            gateway_model_capabilities: HashMap::new(),
         };
         (loop_, inbound_tx)
     }
@@ -150,6 +156,61 @@ impl AgentLoop {
             model = %model,
             "LLM provider updated at runtime via LLMConfigDelivery"
         );
+    }
+
+    /// Update gateway model capabilities at runtime (e.g., after receiving a
+    /// hot-pushed LLMConfigDelivery from Gateway).
+    /// The capabilities are stored keyed by model name for multi-model support.
+    pub fn update_gateway_model_capabilities(&mut self, caps: ModelCapabilitiesInfo) {
+        let model_name = caps.name.clone().unwrap_or_else(|| "default".to_string());
+        tracing::info!(
+            model = %model_name,
+            context_window = caps.context_window,
+            max_output_tokens = caps.max_output_tokens,
+            supports_tool_calling = caps.supports_tool_calling,
+            supports_reasoning = ?caps.supports_reasoning,
+            cost = ?caps.cost.as_ref().map(|c| (c.input_per_million, c.output_per_million)),
+            source = "gateway",
+            "AgentLoop received model capabilities from Gateway"
+        );
+        self.gateway_model_capabilities.insert(model_name, caps);
+    }
+
+    /// Look up model capabilities by model name.
+    /// Falls back to the first entry if the model name is not found.
+    fn get_model_capabilities(&self, model_name: Option<&str>) -> Option<&ModelCapabilitiesInfo> {
+        if let Some(name) = model_name {
+            if let Some(caps) = self.gateway_model_capabilities.get(name) {
+                return Some(caps);
+            }
+        }
+        // Fallback: return any available capabilities
+        self.gateway_model_capabilities.values().next()
+    }
+
+    /// Get the context window budget for history trimming.
+    /// Uses Gateway model capabilities (context_window) if available,
+    /// otherwise falls back to config.history_max_tokens.
+    fn context_trim_budget(&self) -> u64 {
+        self.get_model_capabilities(None)
+            .map(|caps| caps.context_window)
+            .unwrap_or_else(|| {
+                tracing::debug!(
+                    "No model capabilities received from Gateway, using config.history_max_tokens as fallback."
+                );
+                self.config.history_max_tokens
+            })
+    }
+
+    /// Trim history to fit within the context window budget.
+    /// Reserves 20% of the budget for new response + overhead.
+    fn trim_history_to_budget(&mut self) {
+        let budget = self.context_trim_budget();
+        // Reserve 20% of context window for new response + overhead
+        let trim_budget = (budget as f64 * 0.8) as u64;
+        self.history.preemptive_trim(trim_budget);
+        // Also truncate any single message that exceeds per-message limit
+        self.history.truncate_large_messages(trim_budget / 4);
     }
 
     /// Run the agent loop for a single user message
@@ -202,7 +263,7 @@ impl AgentLoop {
                             iteration = 0; // Reset counter
                             
                             // Trim history before resuming to avoid context window overflow
-                            self.history.preemptive_trim(self.config.history_max_tokens);
+                            self.trim_history_to_budget();
                             
                             break; // Resume main loop
                         }
@@ -284,19 +345,21 @@ impl AgentLoop {
                 }
             }
 
-            // ② Build context
-            let chat_request = context_builder.build(&self.manifest, &self.history);
+            // ② Preemptive trim — MUST happen BEFORE build() so the request
+            // is constructed with already-trimmed history.
+            self.trim_history_to_budget();
+
+            // ②.5 Build context (now with trimmed history)
+            let chat_request = context_builder.build(&self.manifest, &self.history, self.get_model_capabilities(None));
 
             tracing::info!(
                 request_messages_count = chat_request.messages.len(),
                 request_model = %chat_request.model,
                 request_max_tokens = ?chat_request.max_tokens,
                 request_tools_count = chat_request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
-                "Built chat request for LLM"
+                history_tokens = self.history.token_count(),
+                "Built chat request for LLM (after preemptive trim)"
             );
-
-            // ②.5 Preemptive trim
-            self.history.preemptive_trim(self.config.history_max_tokens);
 
             // ③ Call LLM with streaming (S1.5)
             let response = self.call_llm_streaming(&chat_request, context_builder).await?;
@@ -628,8 +691,11 @@ impl AgentLoop {
                 }
                 StreamEvent::Error(e) => {
                     // Check for context overflow and attempt recovery
+                    // MiniMax returns "context window exceeds limit (20xx)"
                     if retry_on_overflow
                         && (e.contains("context_length_exceeded")
+                            || e.contains("context window exceeds limit")
+                            || e.contains("context window") && e.contains("exceeds")
                             || e.contains("max_tokens")
                             || e.contains("token limit"))
                     {
@@ -639,7 +705,7 @@ impl AgentLoop {
                             tracing::info!("Emergency trim removed {} messages, retrying", removed);
                             let chat_request = context_builder
                                 .unwrap()
-                                .build(&self.manifest, &self.history);
+                                .build(&self.manifest, &self.history, self.get_model_capabilities(None));
                             return self.call_llm_streaming_no_retry(&chat_request).await;
                         } else {
                             return Err(RuntimeError::Provider(e));

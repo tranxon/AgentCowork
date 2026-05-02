@@ -64,6 +64,9 @@ pub struct GatewayState {
     pub config: Option<crate::config::GatewayConfig>,
     /// Shared IPC session manager (set during Gateway::run before IPC/HTTP start)
     pub ipc_sessions: Option<crate::http::routes::SharedSessionMgr>,
+    /// Shared models.dev cache (set during Gateway::run before IPC/HTTP start).
+    /// Allows IPC server to look up model capabilities with cache freshness.
+    pub(crate) models_cache: Option<crate::http::models_api::ModelsCache>,
 }
 
 impl GatewayState {
@@ -82,6 +85,7 @@ impl GatewayState {
             memory_store: None,
             config: None,
             ipc_sessions: None,
+            models_cache: None,
         }
     }
 

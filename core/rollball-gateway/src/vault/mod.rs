@@ -13,6 +13,69 @@ use rollball_core::providers::vault_key_candidates;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 
+/// Model capabilities stored alongside a provider entry
+///
+/// Mirrors `rollball_core::protocol::ModelCapabilitiesInfo` for Vault storage.
+/// Implements `From<StoredModelCapabilities> for ModelCapabilitiesInfo` to avoid
+/// manual field-by-field conversion.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredModelCapabilities {
+    /// Context window size (total tokens: input + output)
+    pub context_window: u64,
+    /// Maximum output tokens the model can generate
+    pub max_output_tokens: u64,
+    /// Whether the model supports tool/function calling
+    #[serde(default = "default_true")]
+    pub supports_tool_calling: bool,
+    /// Whether the model supports reasoning/thinking
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+    /// Whether the model supports file attachments
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_attachment: Option<bool>,
+    /// Whether the model supports temperature parameter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_temperature: Option<bool>,
+    /// Pricing information
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<rollball_core::protocol::ModelCostInfo>,
+    /// Supported modalities
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<rollball_core::protocol::ModelModalities>,
+    /// Model display name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Model family
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Knowledge cutoff date
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_cutoff: Option<String>,
+}
+
+/// Default value for serde boolean fields
+fn default_true() -> bool {
+    true
+}
+
+impl From<StoredModelCapabilities> for rollball_core::protocol::ModelCapabilitiesInfo {
+    fn from(c: StoredModelCapabilities) -> Self {
+        Self {
+            context_window: c.context_window,
+            max_output_tokens: c.max_output_tokens,
+            supports_tool_calling: c.supports_tool_calling,
+            supports_reasoning: c.supports_reasoning,
+            supports_attachment: c.supports_attachment,
+            supports_temperature: c.supports_temperature,
+            cost: c.cost,
+            modalities: c.modalities,
+            name: c.name,
+            family: c.family,
+            knowledge_cutoff: c.knowledge_cutoff,
+        }
+    }
+}
+
 /// Full provider configuration stored in Vault
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderEntry {
@@ -29,6 +92,10 @@ pub struct ProviderEntry {
     /// `models[0]` is the default/active model, consistent with `default_model`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// User-overridden model capabilities (optional).
+    /// When present, takes precedence over models.dev / offline data.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_capabilities: Option<StoredModelCapabilities>,
 }
 
 /// Key entry for HTTP API listing (masked preview)
@@ -92,16 +159,17 @@ impl VaultFacade {
     /// Stores the full provider configuration as JSON:
     /// `{ "api_key": "...", "base_url": "...", "models": ["..."] }`
     pub fn store_key(&mut self, provider: &str, api_key: &str) -> Result<(), GatewayError> {
-        self.store_provider(provider, None, &[], api_key)
+        self.store_provider(provider, None, &[], api_key, None)
     }
 
-    /// Store a full provider entry with optional base_url and models list
+    /// Store a full provider entry with optional base_url, models list, and capabilities
     pub fn store_provider(
         &mut self,
         provider: &str,
         base_url: Option<&str>,
         models: &[String],
         api_key: &str,
+        capabilities: Option<&StoredModelCapabilities>,
     ) -> Result<(), GatewayError> {
         let default_model = models.first().cloned();
         let entry = ProviderEntry {
@@ -109,6 +177,7 @@ impl VaultFacade {
             base_url: base_url.map(|s| s.to_string()),
             default_model,
             models: models.to_vec(),
+            model_capabilities: capabilities.cloned(),
         };
         let json = serde_json::to_string(&entry)
             .map_err(|e| GatewayError::Vault(format!("Failed to serialize provider entry: {}", e)))?;
@@ -143,6 +212,7 @@ impl VaultFacade {
                         base_url: None,
                         default_model: None,
                         models: Vec::new(),
+                        model_capabilities: None,
                     });
                 }
                 Err(_) => continue, // Try next candidate
@@ -307,7 +377,7 @@ mod tests {
         let dir = temp_vault_dir("store_provider");
         let mut vault = VaultFacade::new(&dir);
         vault.unlock("password123").unwrap();
-        vault.store_provider("deepseek", Some("https://api.deepseek.com/v1"), &["deepseek-chat".to_string()], "sk-abc").unwrap();
+        vault.store_provider("deepseek", Some("https://api.deepseek.com/v1"), &["deepseek-chat".to_string()], "sk-abc", None).unwrap();
         let entry = vault.get_provider("deepseek").unwrap();
         assert_eq!(entry.api_key, "sk-abc");
         assert_eq!(entry.base_url, Some("https://api.deepseek.com/v1".to_string()));
@@ -321,7 +391,7 @@ mod tests {
         let dir = temp_vault_dir("store_provider_min");
         let mut vault = VaultFacade::new(&dir);
         vault.unlock("password123").unwrap();
-        vault.store_provider("openai", None, &[], "sk-test").unwrap();
+        vault.store_provider("openai", None, &[], "sk-test", None).unwrap();
         let entry = vault.get_provider("openai").unwrap();
         assert_eq!(entry.api_key, "sk-test");
         assert_eq!(entry.base_url, None);

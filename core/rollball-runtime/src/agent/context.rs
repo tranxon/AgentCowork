@@ -4,10 +4,10 @@
 //! defined in docs/03-agent-runtime.md §3.1.
 
 use rollball_core::manifest::AgentManifest;
+use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::providers::traits::{ChatMessage, ChatRequest, MessageRole};
 
 use crate::agent::history::HistoryManager;
-use crate::token::ModelRegistry;
 
 /// Context builder for LLM requests
 pub struct ContextBuilder {
@@ -59,6 +59,11 @@ impl ContextBuilder {
         self
     }
 
+    /// Get the override model name, if set
+    pub fn override_model(&self) -> Option<&str> {
+        self.override_model.as_deref()
+    }
+
     /// Update model override in-place (from model_switch message at runtime)
     pub fn set_override_model(&mut self, model: String) {
         let old = self.override_model.clone();
@@ -68,6 +73,17 @@ impl ContextBuilder {
             "ContextBuilder model override updated via model_switch"
         );
         self.override_model = Some(model);
+    }
+
+    /// Set gateway model capabilities (from Gateway LLMConfigDelivery)
+    /// DEPRECATED: Use the `gateway_capabilities` parameter in `build()` instead.
+    /// This setter is kept for backward compat but is a no-op; capabilities
+    /// are now passed at build time to avoid dual-holder sync issues.
+    pub fn set_gateway_model_capabilities(&mut self, _caps: ModelCapabilitiesInfo) {
+        // No-op: capabilities are passed via build() parameter instead
+        tracing::debug!(
+            "set_gateway_model_capabilities called on ContextBuilder (no-op, use build() parameter)"
+        );
     }
 
     /// Update workspace context in-place (from Gateway WorkspaceContextUpdate push)
@@ -84,6 +100,7 @@ impl ContextBuilder {
         &self,
         manifest: &AgentManifest,
         history: &HistoryManager,
+        gateway_capabilities: Option<&ModelCapabilitiesInfo>,
     ) -> ChatRequest {
         let mut messages = Vec::new();
 
@@ -131,24 +148,76 @@ impl ContextBuilder {
         // Determine the model to use
         let model = self.override_model.clone().unwrap_or_else(|| manifest.llm.suggested_model.clone());
 
-        // Auto-set max_tokens based on model capabilities if not explicitly configured
-        let max_tokens = manifest.llm.max_tokens.or_else(|| {
-            let registry = ModelRegistry::new();
-            if let Some(recommended) = registry.get_recommended_max_tokens(&model) {
-                tracing::info!(
-                    model = %model,
-                    recommended_max_tokens = recommended,
-                    "Auto-setting max_tokens based on model capabilities"
-                );
-                Some(recommended)
+        // Auto-set max_tokens based on model capabilities with the following priority:
+        // 1. manifest.llm.max_tokens (user explicit config, backward compatible)
+        // 2. Gateway model_capabilities.max_output_tokens
+        // 3. Warn + conservative default 4096
+        let max_tokens = if let Some(explicit) = manifest.llm.max_tokens {
+            tracing::info!(
+                max_tokens = explicit,
+                source = "manifest",
+                "Using explicitly configured max_tokens"
+            );
+            Some(explicit)
+        } else if let Some(caps) = gateway_capabilities {
+            let recommended = caps.max_output_tokens.min(u32::MAX as u64) as u32;
+            tracing::info!(
+                model = %model,
+                recommended_max_tokens = recommended,
+                source = "gateway",
+                "Auto-setting max_tokens from Gateway model capabilities"
+            );
+            Some(recommended)
+        } else {
+            tracing::warn!(
+                model = %model,
+                "No model capabilities received from Gateway, using conservative default max_tokens=4096. Configure model capabilities in Desktop App settings."
+            );
+            Some(4096)
+        };
+
+        // Safety check: ensure max_tokens does not exceed context window capacity
+        let max_tokens = max_tokens.map(|mt| {
+            if let Some(caps) = gateway_capabilities {
+                let context_window = caps.context_window;
+                // Count both message content and tool_call arguments for token estimation
+                let total_chars: usize = messages.iter().map(|m| {
+                    let content_len = m.content.len();
+                    let tool_calls_len = m.tool_calls.as_ref().map(|tcs| {
+                        tcs.iter().map(|tc| {
+                            tc.function.name.len() + tc.function.arguments.len()
+                        }).sum::<usize>()
+                    }).unwrap_or(0);
+                    content_len + tool_calls_len
+                }).sum();
+                // Add 10% overhead for role labels, formatting, and special tokens
+                let approx_msg_tokens = ((total_chars as f64 / 4.0) * 1.1).ceil() as u64;
+                if (approx_msg_tokens + mt as u64) > context_window {
+                    let safe_max = (context_window.saturating_sub(approx_msg_tokens)).max(256) as u32;
+                    tracing::warn!(
+                        model = %model,
+                        requested_max_tokens = mt,
+                        safe_max_tokens = safe_max,
+                        approx_msg_tokens = approx_msg_tokens,
+                        context_window = context_window,
+                        "max_tokens would exceed context window, reducing to safe value"
+                    );
+                    safe_max
+                } else {
+                    mt
+                }
             } else {
-                tracing::warn!(
-                    model = %model,
-                    "Unknown model, using conservative default max_tokens=2048"
-                );
-                Some(2048) // Conservative default for unknown models
+                // No gateway capabilities available — Runtime does not speculate.
+                // Trust the max_tokens value already determined above.
+                mt
             }
         });
+
+        tracing::info!(
+            model = %model,
+            max_tokens = ?max_tokens,
+            "Final max_tokens for ChatRequest"
+        );
 
         ChatRequest {
             model,
@@ -210,7 +279,7 @@ mod tests {
         });
 
         let builder = ContextBuilder::new("You are a helpful assistant.".to_string());
-        let request = builder.build(&manifest, &history);
+        let request = builder.build(&manifest, &history, None);
 
         assert_eq!(request.model, "gpt-4");
         assert_eq!(request.messages.len(), 2); // system + user
@@ -226,7 +295,7 @@ mod tests {
         let builder = ContextBuilder::new("You are a helper.".to_string())
             .with_identity(Some("Name: Alice, City: Shanghai".to_string()));
 
-        let request = builder.build(&manifest, &history);
+        let request = builder.build(&manifest, &history, None);
         assert!(request.messages[0].content.contains("Alice"));
     }
 }

@@ -178,7 +178,7 @@ struct StreamFunctionDelta {
     arguments: Option<String>,
 }
 
-// ── Conversion helpers ──────────────────────────────────────────────────
+// ── Conversion helpers ──
 
 fn convert_messages(messages: &[ChatMessage]) -> Vec<NativeMessage> {
     messages

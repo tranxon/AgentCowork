@@ -15,6 +15,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 
 use crate::http::routes::{ApiError, AppState};
+use crate::vault::StoredModelCapabilities;
 
 /// Build the vault router
 pub fn vault_routes() -> Router<AppState> {
@@ -39,6 +40,9 @@ pub struct VaultKeyEntryResponse {
     /// Selected models list (may be empty)
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// User-overridden model capabilities (if any)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model_capabilities: Option<StoredModelCapabilities>,
 }
 
 /// Add key request (supports full provider configuration)
@@ -57,6 +61,10 @@ pub struct AddKeyRequest {
     /// models[0] is the default/active model. Takes precedence over default_model.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Optional user-overridden model capabilities.
+    /// When present, takes precedence over models.dev / offline data.
+    #[serde(default)]
+    pub model_capabilities: Option<StoredModelCapabilities>,
 }
 
 /// Update key request (supports partial updates — key is optional)
@@ -77,6 +85,10 @@ pub struct UpdateKeyRequest {
     /// models[0] is the default/active model. Takes precedence over default_model.
     #[serde(default)]
     pub models: Vec<String>,
+    /// Optional user-overridden model capabilities.
+    /// When present, takes precedence over models.dev / offline data.
+    #[serde(default)]
+    pub model_capabilities: Option<StoredModelCapabilities>,
 }
 
 /// Generic message response
@@ -96,10 +108,15 @@ pub async fn list_keys(
         .map_err(|e| ApiError::internal(&format!("Failed to list keys: {}", e)))?;
 
     let response: Vec<VaultKeyEntryResponse> = entries.iter().map(|k| {
-        // Try to get the full provider entry for base_url/default_model/models
-        let (base_url, default_model, models) = match gw.vault.get_provider(&k.provider) {
-            Ok(entry) => (entry.base_url.clone(), entry.default_model.clone(), entry.models.clone()),
-            Err(_) => (None, None, Vec::new()),
+        // Try to get the full provider entry for base_url/default_model/models/capabilities
+        let (base_url, default_model, models, model_capabilities) = match gw.vault.get_provider(&k.provider) {
+            Ok(entry) => (
+                entry.base_url.clone(),
+                entry.default_model.clone(),
+                entry.models.clone(),
+                entry.model_capabilities.clone(),
+            ),
+            Err(_) => (None, None, Vec::new(), None),
         };
         VaultKeyEntryResponse {
             provider: k.provider.clone(),
@@ -107,6 +124,7 @@ pub async fn list_keys(
             base_url,
             default_model,
             models,
+            model_capabilities,
         }
     }).collect();
 
@@ -134,6 +152,14 @@ pub async fn add_key(
     if body.key.is_empty() {
         return Err(ApiError::bad_request("key must not be empty"));
     }
+    // Validate model capabilities if provided
+    if let Some(ref caps) = body.model_capabilities {
+        if caps.context_window == 0 && caps.max_output_tokens == 0 {
+            return Err(ApiError::bad_request(
+                "model_capabilities must have at least one of context_window or max_output_tokens > 0"
+            ));
+        }
+    }
 
     let mut gw = state.gateway_state.write().await;
     // Resolve models: prefer `models` field; fallback to `default_model` for backward compat
@@ -149,6 +175,7 @@ pub async fn add_key(
         body.base_url.as_deref(),
         &resolved_models,
         &body.key,
+        body.model_capabilities.as_ref(),
     ).map_err(|e| ApiError::internal(&format!("Failed to store key: {}", e)))?;
     drop(gw); // Release write lock before hot-push (which acquires read lock)
 
@@ -194,6 +221,15 @@ pub async fn update_key(
         ));
     }
 
+    // Validate model capabilities if provided
+    if let Some(ref caps) = body.model_capabilities {
+        if caps.context_window == 0 && caps.max_output_tokens == 0 {
+            return Err(ApiError::bad_request(
+                "model_capabilities must have at least one of context_window or max_output_tokens > 0"
+            ));
+        }
+    }
+
     let mut gw = state.gateway_state.write().await;
 
     // Resolve the API key: use provided key, or preserve existing key if not specified
@@ -212,21 +248,49 @@ pub async fn update_key(
         }
     };
 
-    // Remove old entry, store new with full config
-    let _ = gw.vault.remove_key(&provider);
-    // Resolve models: prefer `models` field; fallback to `default_model` for backward compat
+    // Resolve models: prefer `models` field; fallback to `default_model` for backward compat;
+    // if neither is provided, preserve existing models from Vault
     let resolved_models = if !body.models.is_empty() {
         body.models.clone()
     } else if let Some(ref m) = body.default_model {
         vec![m.clone()]
     } else {
-        vec![]
+        // Preserve existing models from Vault if not specified in update request
+        match gw.vault.get_provider(&provider) {
+            Ok(entry) if !entry.models.is_empty() => entry.models.clone(),
+            _ => vec![],
+        }
     };
+
+    // Resolve base_url: use provided value, or preserve existing if not specified
+    let resolved_base_url = if body.base_url.is_some() {
+        body.base_url.clone()
+    } else {
+        match gw.vault.get_provider(&provider) {
+            Ok(entry) => entry.base_url.clone(),
+            Err(_) => None,
+        }
+    };
+
+    // Resolve capabilities: use provided value, or preserve existing if not specified
+    let resolved_capabilities = if body.model_capabilities.is_some() {
+        body.model_capabilities.clone()
+    } else {
+        // Preserve existing capabilities from Vault if not specified in update request
+        match gw.vault.get_provider(&provider) {
+            Ok(entry) => entry.model_capabilities.clone(),
+            Err(_) => None,
+        }
+    };
+
+    // Remove old entry, store new with full config
+    let _ = gw.vault.remove_key(&provider);
     gw.vault.store_provider(
         &provider,
-        body.base_url.as_deref(),
+        resolved_base_url.as_deref(),
         &resolved_models,
         &api_key,
+        resolved_capabilities.as_ref(),
     ).map_err(|e| ApiError::internal(&format!("Failed to update key: {}", e)))?;
     drop(gw); // Release write lock before hot-push (which acquires read lock)
 
@@ -260,22 +324,35 @@ async fn hot_push_llm_config(state: &AppState) {
     };
 
     for agent_id in agent_ids {
-        if let Some((provider, model, api_key, base_url, models)) =
+        if let Some(cfg) =
             resolve_llm_config_for_agent(&agent_id, &state.gateway_state).await
         {
+            // Resolve model capabilities with priority:
+            // 1. User-overridden capabilities from Vault entry
+            // 2. models.dev / offline data
+            let model_capabilities = if cfg.stored_capabilities.is_some() {
+                cfg.stored_capabilities
+            } else if let Some(ref m) = cfg.model {
+                crate::http::models_api::lookup_model_capabilities_with_cache(
+                    &state.models_cache, &cfg.provider, m,
+                ).await
+            } else {
+                None
+            };
             let mgr = session_mgr.lock().await;
             if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
                 let push_result = session.push_message(GatewayResponse::LLMConfigDelivery {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                    api_key: api_key.clone(),
-                    base_url: base_url.clone(),
-                    models: models.clone(),
+                    provider: cfg.provider.clone(),
+                    model: cfg.model.clone(),
+                    api_key: cfg.api_key.clone(),
+                    base_url: cfg.base_url.clone(),
+                    models: cfg.models.clone(),
+                    model_capabilities,
                 }).await;
                 if push_result {
                     tracing::info!(
                         agent = %agent_id,
-                        provider = %provider,
+                        provider = %cfg.provider,
                         "Hot-pushed LLMConfigDelivery after vault update"
                     );
                 } else {

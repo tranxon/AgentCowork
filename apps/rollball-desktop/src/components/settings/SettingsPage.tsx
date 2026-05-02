@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSettingsStore } from "../../stores/settingsStore";
-import type { GatewayConfig, VaultKeyEntry, ModelInfo } from "../../lib/types";
+import type { GatewayConfig, VaultKeyEntry, ModelInfo, ModelCapabilitiesInfo } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { ALL_PROVIDERS, getProviderDef } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
@@ -136,6 +136,11 @@ function ProvidersTab() {
   const [modelSearchTerm, setModelSearchTerm] = useState("");
   const [modelCapabilityFilter, setModelCapabilityFilter] = useState<string[]>([]);
 
+  // Add dialog — model capabilities state
+  const [newContextWindow, setNewContextWindow] = useState("");
+  const [newMaxOutputTokens, setNewMaxOutputTokens] = useState("");
+  const [newSupportsToolCalling, setNewSupportsToolCalling] = useState(true);
+
   // Edit dialog state
   const [editKey, setEditKey] = useState("");
   const [editBaseUrl, setEditBaseUrl] = useState("");
@@ -143,6 +148,11 @@ function ProvidersTab() {
   const [editAvailableModels, setEditAvailableModels] = useState<ModelInfo[]>([]);
   const [editModelsLoading, setEditModelsLoading] = useState(false);
   const [editModelSearchTerm, setEditModelSearchTerm] = useState("");
+
+  // Edit dialog — model capabilities state
+  const [editContextWindow, setEditContextWindow] = useState("");
+  const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
+  const [editSupportsToolCalling, setEditSupportsToolCalling] = useState(true);
 
   // Gateway config for default provider indication
   const [config, setConfig] = useState<GatewayConfig | null>(null);
@@ -315,6 +325,22 @@ function ProvidersTab() {
   }, []);
 
   const handleAdd = async () => {
+    // Build model_capabilities if user provided values
+    let modelCapabilities: ModelCapabilitiesInfo | undefined;
+    if (newContextWindow || newMaxOutputTokens) {
+      const cw = Number(newContextWindow);
+      const mot = Number(newMaxOutputTokens);
+      if ((newContextWindow && (!Number.isFinite(cw) || cw <= 0)) ||
+          (newMaxOutputTokens && (!Number.isFinite(mot) || mot <= 0))) {
+        alert('Context Window and Max Output Tokens must be positive numbers');
+        return;
+      }
+      modelCapabilities = {
+        context_window: cw || 0,
+        max_output_tokens: mot || 0,
+        supports_tool_calling: newSupportsToolCalling,
+      };
+    }
     try {
       await invoke("add_key", {
         provider: newProvider,
@@ -322,10 +348,14 @@ function ProvidersTab() {
         baseUrl: newBaseUrl || undefined,
         defaultModel: undefined,
         models: newModels.length > 0 ? newModels : undefined,
+        modelCapabilities,
       });
       setShowAddDialog(false);
       setNewKey("");
       setNewModels([]);
+      setNewContextWindow("");
+      setNewMaxOutputTokens("");
+      setNewSupportsToolCalling(true);
       await fetchKeys();
       await fetchConfig();
     } catch (e) {
@@ -365,6 +395,10 @@ function ProvidersTab() {
     setEditBaseUrl(keyEntry?.base_url ?? def?.baseUrl ?? dynamicProvider?.api ?? "");
     setEditModels(keyEntry?.models?.length ? keyEntry.models : keyEntry?.default_model ? [keyEntry.default_model] : []);
     setEditModelSearchTerm("");
+    // Load existing capabilities from VaultKeyEntry
+    setEditContextWindow(keyEntry?.model_capabilities?.context_window?.toString() ?? "");
+    setEditMaxOutputTokens(keyEntry?.model_capabilities?.max_output_tokens?.toString() ?? "");
+    setEditSupportsToolCalling(keyEntry?.model_capabilities?.supports_tool_calling ?? true);
     setShowEditDialog(provider);
     // Fetch models
     setEditModelsLoading(true);
@@ -390,6 +424,21 @@ function ProvidersTab() {
       const keyEntry = keys.find((k) => k.provider === showEditDialog);
       if (editKey && editKey !== keyEntry?.key_preview) {
         updatePayload.key = editKey;
+      }
+      // Build model_capabilities if user provided values
+      if (editContextWindow || editMaxOutputTokens) {
+        const cw = Number(editContextWindow);
+        const mot = Number(editMaxOutputTokens);
+        if ((editContextWindow && (!Number.isFinite(cw) || cw <= 0)) ||
+            (editMaxOutputTokens && (!Number.isFinite(mot) || mot <= 0))) {
+          alert('Context Window and Max Output Tokens must be positive numbers');
+          return;
+        }
+        updatePayload.modelCapabilities = {
+          context_window: cw || 0,
+          max_output_tokens: mot || 0,
+          supports_tool_calling: editSupportsToolCalling,
+        };
       }
       console.log("[handleEditSave] payload:", JSON.stringify(updatePayload));
       await invoke("update_key", updatePayload);
@@ -554,6 +603,10 @@ function ProvidersTab() {
                           const dynamicProvider = dynamicProviders.find((p) => p.id === providerId);
                           setNewBaseUrl(def?.baseUrl ?? dynamicProvider?.api ?? "");
                           fetchModels(providerId).then((models) => setAvailableModels(models));
+                          // Reset capabilities state
+                          setNewContextWindow("");
+                          setNewMaxOutputTokens("");
+                          setNewSupportsToolCalling(true);
                           setShowAddDialog(true);
                         }}
                         className="rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
@@ -744,6 +797,77 @@ function ProvidersTab() {
                 </div>
               </div>
 
+              {/* Model Capabilities */}
+              {newModels.length > 0 && (() => {
+                // Find the first selected model in availableModels to check if it has capabilities
+                const primaryModel = newModels[0];
+                const modelInfo = availableModels.find(m => m.id === primaryModel);
+                const hasModelsDevData = !!(modelInfo && (modelInfo.context_window || modelInfo.max_tokens));
+                // Auto-fill from models.dev data when available
+                const autoContextWindow = modelInfo?.context_window?.toString() ?? "";
+                const autoMaxOutputTokens = modelInfo?.max_tokens?.toString() ?? "";
+                const autoSupportsToolCalling = modelInfo?.tool_call ?? true;
+                // Use auto-filled values if available, otherwise use user input state
+                const displayContextWindow = hasModelsDevData ? autoContextWindow : newContextWindow;
+                const displayMaxOutputTokens = hasModelsDevData ? autoMaxOutputTokens : newMaxOutputTokens;
+                const displaySupportsToolCalling = hasModelsDevData ? autoSupportsToolCalling : newSupportsToolCalling;
+                return (
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Model Capabilities
+                      {hasModelsDevData && <span className="ml-1 text-[10px] text-zinc-400">(from models.dev)</span>}
+                      {!hasModelsDevData && <span className="ml-1 text-[10px] text-amber-500">(manual input required)</span>}
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="mb-0.5 block text-[10px] text-zinc-400">Context Window</label>
+                        <input
+                          type="number"
+                          value={displayContextWindow}
+                          onChange={(e) => setNewContextWindow(e.target.value)}
+                          readOnly={hasModelsDevData}
+                          placeholder="e.g. 128000"
+                          className={cn(
+                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            hasModelsDevData
+                              ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
+                              : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                          )}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="mb-0.5 block text-[10px] text-zinc-400">Max Output Tokens</label>
+                        <input
+                          type="number"
+                          value={displayMaxOutputTokens}
+                          onChange={(e) => setNewMaxOutputTokens(e.target.value)}
+                          readOnly={hasModelsDevData}
+                          placeholder="e.g. 4096"
+                          className={cn(
+                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            hasModelsDevData
+                              ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
+                              : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                          )}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+                        <input
+                          type="checkbox"
+                          checked={displaySupportsToolCalling}
+                          onChange={(e) => setNewSupportsToolCalling(e.target.checked)}
+                          disabled={hasModelsDevData}
+                          className="accent-blue-600"
+                        />
+                        Supports Tool Calling
+                      </label>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {newProviderDef?.description && (
                 <p className="text-xs text-zinc-400">{newProviderDef.description}</p>
               )}
@@ -876,6 +1000,74 @@ function ProvidersTab() {
                   />
                 </div>
               </div>
+
+              {/* Model Capabilities */}
+              {editModels.length > 0 && (() => {
+                const primaryModel = editModels[0];
+                const modelInfo = editAvailableModels.find(m => m.id === primaryModel);
+                const hasModelsDevData = !!(modelInfo && (modelInfo.context_window || modelInfo.max_tokens));
+                const autoContextWindow = modelInfo?.context_window?.toString() ?? "";
+                const autoMaxOutputTokens = modelInfo?.max_tokens?.toString() ?? "";
+                const autoSupportsToolCalling = modelInfo?.tool_call ?? true;
+                const displayContextWindow = hasModelsDevData ? autoContextWindow : editContextWindow;
+                const displayMaxOutputTokens = hasModelsDevData ? autoMaxOutputTokens : editMaxOutputTokens;
+                const displaySupportsToolCalling = hasModelsDevData ? autoSupportsToolCalling : editSupportsToolCalling;
+                return (
+                  <div>
+                    <label className="mb-1 block text-xs text-zinc-500">
+                      Model Capabilities
+                      {hasModelsDevData && <span className="ml-1 text-[10px] text-zinc-400">(from models.dev)</span>}
+                      {!hasModelsDevData && <span className="ml-1 text-[10px] text-amber-500">(manual input required)</span>}
+                    </label>
+                    <div className="flex gap-2">
+                      <div className="flex-1">
+                        <label className="mb-0.5 block text-[10px] text-zinc-400">Context Window</label>
+                        <input
+                          type="number"
+                          value={displayContextWindow}
+                          onChange={(e) => setEditContextWindow(e.target.value)}
+                          readOnly={hasModelsDevData}
+                          placeholder="e.g. 128000"
+                          className={cn(
+                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            hasModelsDevData
+                              ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
+                              : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                          )}
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <label className="mb-0.5 block text-[10px] text-zinc-400">Max Output Tokens</label>
+                        <input
+                          type="number"
+                          value={displayMaxOutputTokens}
+                          onChange={(e) => setEditMaxOutputTokens(e.target.value)}
+                          readOnly={hasModelsDevData}
+                          placeholder="e.g. 4096"
+                          className={cn(
+                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            hasModelsDevData
+                              ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
+                              : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                          )}
+                        />
+                      </div>
+                    </div>
+                    <div className="mt-1.5 flex items-center gap-2">
+                      <label className="flex items-center gap-1.5 text-xs text-zinc-500">
+                        <input
+                          type="checkbox"
+                          checked={displaySupportsToolCalling}
+                          onChange={(e) => setEditSupportsToolCalling(e.target.checked)}
+                          disabled={hasModelsDevData}
+                          className="accent-blue-600"
+                        />
+                        Supports Tool Calling
+                      </label>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="mt-4 flex justify-end gap-2">

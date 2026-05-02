@@ -171,7 +171,7 @@ impl GatewayClient {
         Ok(keys)
     }
 
-    /// `POST /api/vault/keys` (with optional base_url, default_model, and models)
+    /// `POST /api/vault/keys` (with optional base_url, default_model, models, and model_capabilities)
     pub async fn add_key(
         &self,
         provider: &str,
@@ -179,6 +179,7 @@ impl GatewayClient {
         base_url: Option<&str>,
         default_model: Option<&str>,
         models: Option<&[String]>,
+        model_capabilities: Option<&ModelCapabilities>,
     ) -> Result<GenericMessageResponse> {
         let mut body = serde_json::json!({ "provider": provider, "key": key });
         if let Some(url) = base_url {
@@ -193,6 +194,15 @@ impl GatewayClient {
             }
         } else if let Some(model) = default_model {
             body["default_model"] = serde_json::Value::String(model.to_string());
+        }
+        // Send model_capabilities if provided
+        if let Some(caps) = model_capabilities {
+            body["model_capabilities"] = serde_json::to_value(caps)
+                .unwrap_or_else(|_| serde_json::json!({
+                    "context_window": caps.context_window,
+                    "max_output_tokens": caps.max_output_tokens,
+                    "supports_tool_calling": caps.supports_tool_calling,
+                }));
         }
         let resp = self
             .client
@@ -226,6 +236,7 @@ impl GatewayClient {
         base_url: Option<&str>,
         default_model: Option<&str>,
         models: Option<&[String]>,
+        model_capabilities: Option<&ModelCapabilities>,
     ) -> Result<GenericMessageResponse> {
         let mut body = serde_json::json!({});
         if let Some(k) = key {
@@ -245,6 +256,15 @@ impl GatewayClient {
             }
         } else if let Some(model) = default_model {
             body["default_model"] = serde_json::Value::String(model.to_string());
+        }
+        // Send model_capabilities if provided
+        if let Some(caps) = model_capabilities {
+            body["model_capabilities"] = serde_json::to_value(caps)
+                .unwrap_or_else(|_| serde_json::json!({
+                    "context_window": caps.context_window,
+                    "max_output_tokens": caps.max_output_tokens,
+                    "supports_tool_calling": caps.supports_tool_calling,
+                }));
         }
         let resp = self
             .client
@@ -375,7 +395,7 @@ pub struct SendMessageResponse {
     pub status: String,
 }
 
-/// Vault key entry (masked, with optional base_url, default_model, and models list)
+/// Vault key entry (masked, with optional base_url, default_model, models list, and model capabilities)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VaultKeyEntry {
     pub provider: String,
@@ -389,6 +409,71 @@ pub struct VaultKeyEntry {
     /// Selected models list (may be empty)
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub models: Vec<String>,
+    /// Model capabilities (from models.dev or user input)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_capabilities: Option<ModelCapabilities>,
+}
+
+/// Model capabilities info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCapabilities {
+    /// Context window size (total tokens: input + output)
+    pub context_window: u64,
+    /// Maximum output tokens the model can generate
+    pub max_output_tokens: u64,
+    /// Whether the model supports tool/function calling
+    #[serde(default = "default_true")]
+    pub supports_tool_calling: bool,
+    /// Whether the model supports reasoning/thinking
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+    /// Whether the model supports file attachments
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_attachment: Option<bool>,
+    /// Whether the model supports temperature parameter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_temperature: Option<bool>,
+    /// Pricing information (USD per 1M tokens)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<ModelCostInfo>,
+    /// Supported modalities
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ModelModalities>,
+    /// Model display name
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Model family
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Knowledge cutoff date
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_cutoff: Option<String>,
+}
+
+/// Cost information for a model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCostInfo {
+    /// Input cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_per_million: Option<f64>,
+    /// Output cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_per_million: Option<f64>,
+}
+
+/// Modality information for a model
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelModalities {
+    /// Input modalities
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+    /// Output modalities
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// Config response

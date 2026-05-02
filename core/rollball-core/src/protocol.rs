@@ -22,6 +22,92 @@ fn default_connection_role() -> String {
     "main".to_string()
 }
 
+/// Default value for boolean fields that should default to true
+fn default_true() -> bool {
+    true
+}
+
+/// Cost information for a model (per million tokens)
+///
+/// Used by BudgetGuard for cost-aware token budgeting.
+/// Values are in USD per 1M tokens.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCostInfo {
+    /// Input cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_per_million: Option<f64>,
+    /// Output cost per million tokens (USD)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_per_million: Option<f64>,
+}
+
+/// Modality information for a model
+///
+/// Describes what input/output formats the model supports.
+/// Used for future multimodal routing decisions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelModalities {
+    /// Input modalities (e.g. "text", "image", "audio", "video")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub input: Vec<String>,
+    /// Output modalities (e.g. "text", "image")
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub output: Vec<String>,
+}
+
+/// Model capabilities info (queried from models.dev / offline data)
+///
+/// Populated by Gateway when delivering LLM config to Agent Runtime.
+/// The Runtime uses this to adapt max_tokens, budget tracking, and
+/// other parameters without hardcoding model limits in manifests.
+///
+/// Design principle: carry as much models.dev data as possible to
+/// avoid future protocol changes. All new fields are optional with
+/// serde defaults for backward compatibility.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelCapabilitiesInfo {
+    // ── Limit (core, always populated from models.dev) ──
+    /// Context window size (total tokens: input + output)
+    pub context_window: u64,
+    /// Maximum output tokens the model can generate
+    pub max_output_tokens: u64,
+
+    // ── Capability flags ──
+    /// Whether the model supports tool/function calling
+    #[serde(default = "default_true")]
+    pub supports_tool_calling: bool,
+    /// Whether the model supports reasoning/thinking (e.g. o1, deepseek-reasoner)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_reasoning: Option<bool>,
+    /// Whether the model supports file attachments (multimodal input)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_attachment: Option<bool>,
+    /// Whether the model supports temperature parameter
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_temperature: Option<bool>,
+
+    // ── Cost (for budget tracking) ──
+    /// Pricing information (USD per 1M tokens)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cost: Option<ModelCostInfo>,
+
+    // ── Modalities (for future multimodal support) ──
+    /// Supported input/output modalities
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modalities: Option<ModelModalities>,
+
+    // ── Metadata (for display and routing) ──
+    /// Model display name (e.g. "GPT-4o", "Claude Sonnet 4")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// Model family (e.g. "gpt", "claude", "qwen")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub family: Option<String>,
+    /// Knowledge cutoff date (e.g. "2025-04", "2024-10")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub knowledge_cutoff: Option<String>,
+}
+
 /// Gateway Service API request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -178,6 +264,11 @@ pub enum GatewayResponse {
         /// Available models for this provider (user-selected from models.dev).
         /// The agent can switch between these models at runtime.
         models: Vec<String>,
+        /// Model capabilities (context_window, max_output_tokens, tool_calling).
+        /// Populated by Gateway from models.dev / offline data.
+        /// None when model capabilities are not available (e.g. unknown model).
+        #[serde(default)]
+        model_capabilities: Option<ModelCapabilitiesInfo>,
     },
     /// Identity query result from System Agent
     IdentityQueryResult {

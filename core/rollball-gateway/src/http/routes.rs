@@ -141,6 +141,23 @@ impl AppState {
             models_cache: std::sync::Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
+
+    /// Create a new AppState sharing an existing models cache (e.g. from GatewayState)
+    pub(crate) fn with_models_cache(
+        gateway_state: SharedHttpState,
+        auth: Arc<HttpAuth>,
+        session_mgr: Option<SharedSessionMgr>,
+        bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+        models_cache: crate::http::models_api::ModelsCache,
+    ) -> Self {
+        Self {
+            gateway_state,
+            auth,
+            session_mgr,
+            bridge_tx,
+            models_cache,
+        }
+    }
 }
 
 /// Build the HTTP router with all routes

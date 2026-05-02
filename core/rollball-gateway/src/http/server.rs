@@ -114,13 +114,14 @@ fn is_pid_alive(pid: u32) -> bool {
 ///
 /// Binds to the configured host:port. If port is occupied,
 /// auto-increments up to port_max.
-pub async fn start_http_server(
+pub(crate) async fn start_http_server(
     http_config: &HttpConfig,
     gateway_state: Arc<RwLock<GatewayState>>,
     socket_path: &str,
     data_dir: &Path,
     session_mgr: Option<SharedSessionMgr>,
     bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    models_cache: crate::http::models_api::ModelsCache,
 ) -> Result<(), GatewayError> {
     if !http_config.enabled {
         tracing::info!("HTTP API disabled by configuration");
@@ -132,11 +133,12 @@ pub async fn start_http_server(
     auth.write_token_file(data_dir)?;
 
     // Build app state
-    let app_state = AppState::new(
+    let app_state = AppState::with_models_cache(
         gateway_state,
         auth,
         session_mgr,
         bridge_tx,
+        models_cache,
     );
 
     // S5.9: Clean up stale pidfile from a previous Gateway run before writing a new one.

@@ -30,6 +30,8 @@ pub struct LlmConfigReceived {
     pub base_url: Option<String>,
     /// Available models for this provider (user-selected)
     pub models: Vec<String>,
+    /// Model capabilities from models.dev / offline data
+    pub model_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo>,
 }
 
 /// IPC client for Gateway communication
@@ -188,11 +190,13 @@ impl GatewayClient {
                     api_key,
                     base_url,
                     models,
+                    model_capabilities,
                 }))) => {
                     tracing::info!(
                         provider = %provider,
                         model = ?model,
                         models = ?models,
+                        model_capabilities = ?model_capabilities,
                         "Received LLMConfigDelivery from Gateway"
                     );
                     return Ok(LlmConfigReceived {
@@ -201,6 +205,7 @@ impl GatewayClient {
                         api_key: Some(api_key),
                         base_url,
                         models,
+                        model_capabilities,
                     });
                 }
                 Ok(Ok(Some(_other))) => {

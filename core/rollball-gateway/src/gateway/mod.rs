@@ -464,9 +464,13 @@ impl Gateway {
         let http_session_mgr = Some(session_mgr.clone());
 
         // Store session manager in shared state so HTTP API can access it
+        // Also store models_cache so IPC server can look up model capabilities
+        let models_cache: crate::http::models_api::ModelsCache =
+            std::sync::Arc::new(tokio::sync::RwLock::new(None));
         {
             let mut gw = shared_state.write().await;
             gw.ipc_sessions = Some(session_mgr.clone());
+            gw.models_cache = Some(models_cache.clone());
         }
 
         // S3.1: Start cron scheduler tick loop
@@ -499,6 +503,7 @@ impl Gateway {
         // Start HTTP server in a separate tokio task (parallel with IPC)
         let http_state = shared_state.clone();
         let http_socket_path = socket_path.clone();
+        let http_models_cache = models_cache.clone();
         let http_handle = tokio::spawn(async move {
             if let Err(e) = crate::http::server::start_http_server(
                 &http_config,
@@ -507,6 +512,7 @@ impl Gateway {
                 &data_dir_path,
                 http_session_mgr,
                 http_bridge_tx,
+                http_models_cache,
             ).await {
                 tracing::error!("HTTP server failed: {}", e);
             }
