@@ -146,18 +146,18 @@ export function AgentList({ width }: AgentListProps) {
 
   return (
     <div
-      className="flex flex-col bg-white dark:bg-zinc-900"
+      className="flex flex-col bg-[#EEEEF0] dark:bg-[#2F2F30]"
       style={{ width: width ?? 240 }}
     >
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
-        <span className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">
+      {/* Header - 微信联系人列表风格 */}
+      <div className="flex items-center justify-between bg-[#EEEEF0] px-4 py-3 dark:bg-[#2F2F30]">
+        <span className="text-xs font-medium uppercase tracking-wider text-zinc-600 dark:text-zinc-400">
           Agents
         </span>
       </div>
 
-      {/* Agent list */}
-      <div className="flex-1 overflow-y-auto py-1" role="list" aria-label="Agent list">
+      {/* Agent list - 微信联系人列表风格 */}
+      <div className="flex-1 overflow-y-auto bg-[#EEEEF0] px-2 py-1 dark:bg-[#2F2F30]" role="list" aria-label="Agent list">
         {loading && agents.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600 dark:border-zinc-600 dark:border-t-zinc-300" />
@@ -172,10 +172,10 @@ export function AgentList({ width }: AgentListProps) {
             <div
               key={agent.agent_id}
               className={cn(
-                "flex cursor-pointer items-start gap-3 px-3 py-3 transition-colors duration-150",
+                "flex cursor-pointer items-start gap-3 rounded-lg px-3 py-2.5 transition-colors duration-150",
                 selectedAgentId === agent.agent_id
-                  ? "bg-zinc-100 dark:bg-zinc-800"
-                  : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50",
+                  ? "bg-[#D8D9DC] dark:bg-[#3D3D3F]"
+                  : "hover:bg-[#E2E3E6] dark:hover:bg-[#38383A]",
               )}
               onClick={() => selectAgent(agent.agent_id)}
               onContextMenu={(e) => handleContextMenu(e, agent.agent_id)}
@@ -228,12 +228,12 @@ export function AgentList({ width }: AgentListProps) {
         )}
       </div>
 
-      {/* Bottom action area */}
-      <div className="border-t border-zinc-200 p-2 dark:border-zinc-800">
+      {/* Bottom action area - 微信联系人列表风格 */}
+      <div className="bg-[#EEEEF0] px-3 py-2 dark:bg-[#2F2F30]">
         <button
           onClick={handleInstall}
           disabled={installing}
-          className="flex w-full items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-1.5 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 disabled:opacity-50 dark:bg-zinc-800 dark:text-zinc-300 dark:hover:bg-zinc-700"
+          className="flex w-full items-center justify-center gap-1.5 rounded-md bg-[#E2E3E6] px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-[#D8D9DC] disabled:opacity-50 dark:bg-[#38383A] dark:text-zinc-300 dark:hover:bg-[#3D3D3F]"
         >
           {installing ? (
             <>

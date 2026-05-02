@@ -11,6 +11,9 @@
   },
   "app": {
     "withGlobalTauri": true,
+    "security": {
+      "capabilities": ["main-capability"]
+    },
     "windows": [
       {
         "title": "Rollball",
@@ -18,7 +21,7 @@
         "height": 800,
         "minWidth": 1024,
         "minHeight": 600,
-        "decorations": true,
+        "decorations": false,
         "center": true,
         "visible": true
       }

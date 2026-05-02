@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import type { NavView } from "../../lib/types";
 import { NavBar } from "./NavBar";
+import { TitleBar } from "./TitleBar";
 import { AgentList } from "../agent-list/AgentList";
 import { ChatPanel } from "../chat/ChatPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
@@ -70,7 +71,10 @@ export function AppLayout() {
   }, [handleMouseMove, handleMouseUp, sidebarWidth]);
 
   return (
-    <div className="flex h-full w-full flex-col bg-white dark:bg-zinc-950">
+    <div className="flex h-full w-full flex-col bg-[#BEBFC5] dark:bg-[#292A2C]">
+      {/* Custom title bar */}
+      <TitleBar />
+
       {/* Gateway disconnected banner */}
       {gatewayStatus !== "connected" && <GatewayBanner />}
 

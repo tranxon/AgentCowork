@@ -669,7 +669,7 @@ function MessageBubble({ message, isStreaming }: { message: ChatMessage; isStrea
     return (
       <MessageContentWrapper>
         <div className="flex justify-end">
-          <div className="max-w-[70%] rounded-lg rounded-br-sm bg-zinc-800 px-3 py-2 text-sm text-white dark:bg-zinc-700 select-text">
+          <div className="max-w-[70%] rounded-lg rounded-br-sm bg-[#D8D9DC] px-3 py-2 text-sm text-zinc-900 dark:bg-[#3D3D3F] dark:text-zinc-100 select-text">
             {message.content}
           </div>
         </div>
