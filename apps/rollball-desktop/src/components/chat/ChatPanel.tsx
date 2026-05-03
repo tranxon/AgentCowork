@@ -845,7 +845,10 @@ function ModelMenu({
                 </span>
                 <div className="flex items-center gap-1.5">
                   <span className={cn("font-medium", isActive && "text-blue-600 dark:text-blue-400")}>
-                    {m.name}
+                    {/* Display model name with provider prefix stripped if it matches the provider */}
+                    {m.name.includes('/') && m.name.split('/')[0].toLowerCase() === m.provider.toLowerCase()
+                      ? m.name.split('/').slice(1).join('/')
+                      : m.name}
                   </span>
                   <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
                     {m.provider}
