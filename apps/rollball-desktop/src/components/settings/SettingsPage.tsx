@@ -671,13 +671,13 @@ function ProvidersTab() {
       {showAddDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-            <h3 className="mb-4 text-sm font-semibold">Add API Key: {newProviderDef?.name || newProvider}</h3>
+            <h3 className="mb-3 text-sm font-semibold">Add API Key: {newProviderDef?.name || newProvider}</h3>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               {/* Provider display (read-only) */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">Provider</label>
-                <div className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
+                <div className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                   {newProviderDef?.name || newProvider}
                 </div>
               </div>
@@ -690,7 +690,7 @@ function ProvidersTab() {
                     value={newKey}
                     onChange={(e) => setNewKey(e.target.value)}
                     placeholder={newProviderDef?.keyPlaceholder ?? "API key..."}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                 </div>
               )}
@@ -769,7 +769,7 @@ function ProvidersTab() {
                   value={modelSearchTerm}
                   onChange={(e) => setModelSearchTerm(e.target.value)}
                   placeholder="Search models..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {modelsLoading ? (
@@ -824,11 +824,11 @@ function ProvidersTab() {
                   )}
                 </div>
                 {/* Manual model input */}
-                <div className="mt-1 flex gap-1">
+                <div className="mt-2 flex gap-1">
                   <input
                     type="text"
                     placeholder="Or type a custom model name..."
-                    className="flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         const val = (e.target as HTMLInputElement).value.trim();
@@ -873,7 +873,7 @@ function ProvidersTab() {
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 128000"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -889,7 +889,7 @@ function ProvidersTab() {
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 4096"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -962,9 +962,9 @@ function ProvidersTab() {
       {showEditDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-            <h3 className="mb-4 text-sm font-semibold">Edit: {showEditDialog}</h3>
+            <h3 className="mb-3 text-sm font-semibold">Edit: {showEditDialog}</h3>
 
-            <div className="space-y-3">
+            <div className="space-y-2">
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">API Key</label>
                 <input
@@ -972,7 +972,7 @@ function ProvidersTab() {
                   value={editKey}
                   onChange={(e) => setEditKey(e.target.value)}
                   placeholder="Enter new API key..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
               </div>
 
@@ -1009,7 +1009,7 @@ function ProvidersTab() {
                   value={editModelSearchTerm}
                   onChange={(e) => setEditModelSearchTerm(e.target.value)}
                   placeholder="Search models..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {editModelsLoading ? (
@@ -1049,11 +1049,11 @@ function ProvidersTab() {
                       ))
                   )}
                 </div>
-                <div className="mt-1 flex gap-1">
+                <div className="mt-2 flex gap-1">
                   <input
                     type="text"
                     placeholder="Or type a custom model name..."
-                    className="flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         const val = (e.target as HTMLInputElement).value.trim();
@@ -1095,7 +1095,7 @@ function ProvidersTab() {
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 128000"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -1111,7 +1111,7 @@ function ProvidersTab() {
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 4096"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs",
+                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
