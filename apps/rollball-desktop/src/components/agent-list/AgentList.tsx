@@ -229,7 +229,7 @@ export function AgentList({ width }: AgentListProps) {
       </div>
 
       {/* Bottom action area - 微信联系人列表风格 */}
-      <div className="bg-[#EEEEF0] px-3 py-2 dark:bg-[#2F2F30]">
+      <div className="bg-[#EEEEF0] px-3 pt-1 pb-3 dark:bg-[#2F2F30]">
         <button
           onClick={handleInstall}
           disabled={installing}
