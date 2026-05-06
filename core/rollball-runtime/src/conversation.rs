@@ -3,7 +3,7 @@
 //! Provides `ConversationSession` for managing a single session's JSONL file
 //! and `ConversationWriter` for channel-based single-writer thread architecture.
 
-use std::io::{BufRead, BufReader, Read, Seek, Write};
+use std::io::{BufRead, BufReader, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -52,6 +52,10 @@ pub struct SessionMetadata {
     /// Optional message count
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_count: Option<u32>,
+    /// Whether the metadata was recovered from a corrupted first line.
+    /// When true, other fields may contain degraded/default values.
+    #[serde(default)]
+    pub corrupted: bool,
 }
 
 /// Commands sent to the background writer thread.
@@ -67,13 +71,15 @@ pub enum WriterCommand {
 /// Background writer that exclusively owns the JSONL file handle.
 pub struct ConversationWriter {
     file: std::fs::File,
+    /// Path to the JSONL file (needed for atomic rename in rewrite_metadata)
+    path: PathBuf,
     receiver: mpsc::UnboundedReceiver<WriterCommand>,
 }
 
 impl ConversationWriter {
     /// Create a new writer.
-    fn new(file: std::fs::File, receiver: mpsc::UnboundedReceiver<WriterCommand>) -> Self {
-        Self { file, receiver }
+    fn new(file: std::fs::File, path: PathBuf, receiver: mpsc::UnboundedReceiver<WriterCommand>) -> Self {
+        Self { file, path, receiver }
     }
 
     /// Run the writer loop. Blocks until Shutdown is received.
@@ -102,39 +108,58 @@ impl ConversationWriter {
     }
 
     /// Write a single entry as a JSON line.
+    ///
+    /// Builds the complete line in memory first, then issues a single
+    /// `write_all` call so the OS can apply atomicity for small writes.
+    /// Follows up with `sync_data` to flush to disk.
     fn write_entry(&mut self, entry: &ConversationEntry) -> std::io::Result<()> {
         // Always seek to end for append; handles resume where file position may be at 0
         self.file.seek(std::io::SeekFrom::End(0))?;
-        let mut buf_writer = std::io::BufWriter::new(&self.file);
-        serde_json::to_writer(&mut buf_writer, entry)?;
-        writeln!(buf_writer)?;
-        buf_writer.flush()?;
+        // Build the complete line in memory first to ensure atomic write
+        let mut line = serde_json::to_string(entry)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        line.push('\n');
+        // Single write_all call — OS-level atomicity for small writes
+        self.file.write_all(line.as_bytes())?;
+        self.file.sync_data()?;
         Ok(())
     }
 
     /// Rewrite the first line with updated metadata.
     ///
-    /// Reads all content after the first line, truncates the file to 0,
-    /// writes the new metadata, then restores the remaining content.
-    /// This is more reliable than seek-and-overwrite which leaves leftover
-    /// bytes when the new line is shorter than the old one.
+    /// Uses write-to-temp + atomic rename to prevent data loss on crash.
+    /// If the process dies during rewrite, the original file remains intact
+    /// (the temp file is simply discarded).
     fn rewrite_metadata(&mut self, meta: &SessionMetadata) -> std::io::Result<()> {
-        // Read all existing content after the first line
-        let mut reader = std::io::BufReader::new(&self.file);
-        let mut first_line = String::new();
-        reader.read_line(&mut first_line)?; // skip and discard the first line
-        let mut rest = Vec::new();
-        reader.read_to_end(&mut rest)?;
-        drop(reader);
+        let original_path = self.path.clone();
+        let temp_path = original_path.with_extension("jsonl.tmp");
 
-        // Truncate the file to 0 and rewrite from the start
-        self.file.set_len(0)?;
-        self.file.seek(std::io::SeekFrom::Start(0))?;
+        // Read existing content from current file
+        let content = std::fs::read_to_string(&original_path)?;
+        let mut lines: Vec<&str> = content.lines().collect();
 
-        let new_line = serde_json::to_string(meta)?;
-        writeln!(self.file, "{}", new_line)?;
-        self.file.write_all(&rest)?;
-        self.file.flush()?;
+        // Replace first line with new metadata
+        let new_meta = serde_json::to_string(meta)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        if lines.is_empty() {
+            lines.push(&new_meta);
+        } else {
+            lines[0] = &new_meta;
+        }
+
+        // Write complete content to temp file
+        let mut output = lines.join("\n");
+        output.push('\n');
+        std::fs::write(&temp_path, &output)?;
+
+        // Atomic rename — on same filesystem, this is atomic on both Unix and Windows
+        std::fs::rename(&temp_path, &original_path)?;
+
+        // Reopen the file handle since the old handle points to a replaced file
+        self.file = std::fs::OpenOptions::new()
+            .read(true)
+            .append(true)
+            .open(&original_path)?;
 
         Ok(())
     }
@@ -167,7 +192,7 @@ impl ConversationSession {
         std::fs::create_dir_all(&conversations_dir)?;
 
         let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
-        let file = std::fs::OpenOptions::new()
+        let mut file = std::fs::OpenOptions::new()
             .create(true)
             .read(true)
             .write(true)
@@ -184,17 +209,18 @@ impl ConversationSession {
             title: None,
             updated_at: Some(now),
             message_count: Some(0),
+            corrupted: false,
         };
 
-        // Write metadata as the first line
-        let mut buf_writer = std::io::BufWriter::new(&file);
-        serde_json::to_writer(&mut buf_writer, &metadata)?;
-        writeln!(buf_writer)?;
-        buf_writer.flush()?;
-        drop(buf_writer);
+        // Write metadata as the first line — build complete line then single write
+        let mut line = serde_json::to_string(&metadata)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        line.push('\n');
+        file.write_all(line.as_bytes())?;
+        file.sync_data()?;
 
         let (tx, rx) = mpsc::unbounded_channel::<WriterCommand>();
-        let writer = ConversationWriter::new(file, rx);
+        let writer = ConversationWriter::new(file, file_path.clone(), rx);
         std::thread::spawn(move || writer.run());
 
         Ok(Self {
@@ -225,7 +251,7 @@ impl ConversationSession {
         let meta = read_session_metadata(&file_path)?;
 
         let (tx, rx) = mpsc::unbounded_channel::<WriterCommand>();
-        let writer = ConversationWriter::new(file, rx);
+        let writer = ConversationWriter::new(file, file_path.clone(), rx);
         std::thread::spawn(move || writer.run());
 
         Ok(Self {
@@ -339,6 +365,7 @@ impl ConversationSession {
             title: Some(title.clone()),
             updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             message_count: None,
+            corrupted: false,
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -355,10 +382,10 @@ impl ConversationSession {
     /// Returns `true` if the title was actually written (was different from current).
     pub fn update_title_force(&self, title: &str) -> bool {
         // No-op if the title hasn't changed
-        if let Ok(current) = self.current_title.lock() {
-            if current.as_deref() == Some(title) {
-                return false;
-            }
+        if let Ok(current) = self.current_title.lock()
+            && current.as_deref() == Some(title)
+        {
+            return false;
         }
         let truncated = {
             let chars: Vec<char> = title.chars().collect();
@@ -377,6 +404,7 @@ impl ConversationSession {
             title: Some(truncated.clone()),
             updated_at: Some(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)),
             message_count: None,
+            corrupted: false,
         };
         self.update_metadata(metadata);
         // Track current title for dedup
@@ -416,6 +444,8 @@ pub struct SessionInfo {
     pub message_count: u32,
     /// Optional session title
     pub title: Option<String>,
+    /// Whether the session metadata was recovered from a corrupted first line
+    pub corrupted: bool,
 }
 
 /// Paginated message result.
@@ -494,6 +524,7 @@ pub fn scan_sessions_async(
                     created_at: meta.created_at,
                     message_count: meta.message_count.unwrap_or(0),
                     title: meta.title,
+                    corrupted: meta.corrupted,
                 });
             }
         }
@@ -502,13 +533,42 @@ pub fn scan_sessions_async(
 }
 
 /// Read session metadata from the first line of a JSONL file.
+///
+/// If the first line is corrupted (invalid JSON), attempts recovery by
+/// inferring `session_id` from the filename and filling remaining fields
+/// with safe defaults. The returned `SessionMetadata` will have
+/// `corrupted: true` to signal degraded data.
 pub fn read_session_metadata(path: &Path) -> Result<SessionMetadata> {
     let file = std::fs::File::open(path)?;
     let mut reader = BufReader::new(file);
     let mut first_line = String::new();
     reader.read_line(&mut first_line)?;
-    let meta: SessionMetadata = serde_json::from_str(first_line.trim())?;
-    Ok(meta)
+
+    match serde_json::from_str::<SessionMetadata>(first_line.trim()) {
+        Ok(meta) => Ok(meta),
+        Err(e) => {
+            tracing::warn!(
+                "Corrupted session metadata in {}: {}. Attempting recovery from filename.",
+                path.display(),
+                e
+            );
+            // Recover session_id from filename (e.g. "session_abc123.jsonl" -> "session_abc123")
+            let filename = path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            Ok(SessionMetadata {
+                version: CONVERSATION_FORMAT_VERSION,
+                session_id: filename.to_string(),
+                created_at: String::new(),
+                agent_id: String::new(),
+                title: Some("(corrupted session)".to_string()),
+                updated_at: None,
+                message_count: None,
+                corrupted: true,
+            })
+        }
+    }
 }
 
 /// Read messages from a JSONL file with pagination.
@@ -691,6 +751,7 @@ mod tests {
                 title: None,
                 updated_at: None,
                 message_count: Some(0),
+                corrupted: false,
             };
             let mut file = std::fs::File::create(&path).unwrap();
             serde_json::to_writer(&mut file, &meta).unwrap();
@@ -721,6 +782,7 @@ mod tests {
                 title: None,
                 updated_at: None,
                 message_count: Some(5),
+                corrupted: false,
             };
             serde_json::to_writer(&mut file, &meta).unwrap();
             writeln!(file).unwrap();
@@ -805,5 +867,127 @@ mod tests {
 
         let entry2: ConversationEntry = serde_json::from_str(lines[2]).unwrap();
         assert_eq!(entry2.content, "Resumed response");
+    }
+
+    #[test]
+    fn test_read_session_metadata_corrupted_recovery() {
+        let temp_dir = TempDir::new().unwrap();
+        let conv_dir = temp_dir.path().join("conversations");
+        std::fs::create_dir_all(&conv_dir).unwrap();
+
+        let session_id = "20260503_100000_corrupt1";
+        let file_path = conv_dir.join(format!("{}.jsonl", session_id));
+
+        // Write a file with corrupted first line (not valid JSON)
+        {
+            let mut file = std::fs::File::create(&file_path).unwrap();
+            writeln!(file, "THIS IS NOT VALID JSON!!!").unwrap();
+            // Write valid message entries after corrupted header
+            let entry = ConversationEntry {
+                id: "msg-1".to_string(),
+                ts: chrono::Utc::now().to_rfc3339(),
+                role: "user".to_string(),
+                content: "Hello".to_string(),
+                metadata: None,
+            };
+            serde_json::to_writer(&mut file, &entry).unwrap();
+            writeln!(file).unwrap();
+        }
+
+        // read_session_metadata should return degraded metadata instead of Err
+        let meta = read_session_metadata(&file_path).unwrap();
+        assert!(meta.corrupted, "corrupted flag should be true for degraded metadata");
+        assert_eq!(meta.session_id, session_id, "session_id should be recovered from filename");
+        assert_eq!(meta.title, Some("(corrupted session)".to_string()));
+        assert!(meta.created_at.is_empty());
+        assert!(meta.agent_id.is_empty());
+
+        // read_messages_paginated should still work, skipping the corrupted header
+        let page = read_messages_paginated(&file_path, None, 10, "backward").unwrap();
+        assert_eq!(page.messages.len(), 1, "Should recover the valid message entry");
+        assert_eq!(page.messages[0].content, "Hello");
+    }
+
+    #[test]
+    fn test_read_session_metadata_valid_not_corrupted() {
+        let temp_dir = TempDir::new().unwrap();
+        let conv_dir = temp_dir.path().join("conversations");
+        std::fs::create_dir_all(&conv_dir).unwrap();
+
+        let session_id = "20260503_100000_valid01";
+        let file_path = conv_dir.join(format!("{}.jsonl", session_id));
+
+        // Write a valid metadata header
+        let meta = SessionMetadata {
+            version: 1,
+            session_id: session_id.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            agent_id: "com.test".to_string(),
+            title: Some("Valid session".to_string()),
+            updated_at: None,
+            message_count: Some(3),
+            corrupted: false,
+        };
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        serde_json::to_writer(&mut file, &meta).unwrap();
+        writeln!(file).unwrap();
+
+        let read_meta = read_session_metadata(&file_path).unwrap();
+        assert!(!read_meta.corrupted, "valid metadata should not be marked as corrupted");
+        assert_eq!(read_meta.session_id, session_id);
+        assert_eq!(read_meta.title, Some("Valid session".to_string()));
+    }
+
+    #[test]
+    fn test_scan_sessions_includes_corrupted() {
+        let temp_dir = TempDir::new().unwrap();
+        let conv_dir = temp_dir.path().join("conversations");
+        std::fs::create_dir_all(&conv_dir).unwrap();
+
+        // Create a valid session
+        let valid_id = "20260503_100000_valid";
+        let valid_path = conv_dir.join(format!("{}.jsonl", valid_id));
+        let valid_meta = SessionMetadata {
+            version: 1,
+            session_id: valid_id.to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            agent_id: "com.test".to_string(),
+            title: Some("Valid".to_string()),
+            updated_at: None,
+            message_count: Some(0),
+            corrupted: false,
+        };
+        let mut file = std::fs::File::create(&valid_path).unwrap();
+        serde_json::to_writer(&mut file, &valid_meta).unwrap();
+        writeln!(file).unwrap();
+
+        // Create a corrupted session
+        let corrupt_id = "20260503_110000_corrupt";
+        let corrupt_path = conv_dir.join(format!("{}.jsonl", corrupt_id));
+        let mut file = std::fs::File::create(&corrupt_path).unwrap();
+        writeln!(file, "BROKEN METADATA LINE").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let sessions = rt.block_on(async {
+            scan_sessions_async(conv_dir).await.unwrap()
+        });
+
+        assert_eq!(sessions.len(), 2, "Should find both valid and corrupted sessions");
+
+        let valid_session = sessions.iter().find(|s| s.session_id == valid_id).unwrap();
+        assert!(!valid_session.corrupted);
+
+        let corrupt_session = sessions.iter().find(|s| s.session_id == corrupt_id).unwrap();
+        assert!(corrupt_session.corrupted);
+        assert_eq!(corrupt_session.title, Some("(corrupted session)".to_string()));
+    }
+
+    #[test]
+    fn test_session_metadata_serde_backward_compatible() {
+        // Ensure old JSON without "corrupted" field deserializes with corrupted=false
+        let old_json = r#"{"version":1,"session_id":"test","created_at":"2026-01-01T00:00:00Z","agent_id":"com.test","title":null,"updated_at":null,"message_count":0}"#;
+        let meta: SessionMetadata = serde_json::from_str(old_json).unwrap();
+        assert!(!meta.corrupted, "Missing 'corrupted' field should default to false");
+        assert_eq!(meta.session_id, "test");
     }
 }

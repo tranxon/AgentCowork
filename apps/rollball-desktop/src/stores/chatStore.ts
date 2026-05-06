@@ -33,6 +33,8 @@ interface ChatStore {
   isLoadingMore: boolean;
   /** Whether initial session messages are being loaded */
   isLoadingSession: boolean;
+  /** Error message when session message loading fails (null = no error) */
+  loadError: string | null;
   /** Per-session message cache: sessionId → { messages, cursor, hasMore, loadedAt } */
   sessionMessagesCache: Record<string, {
     messages: ChatMessage[];
@@ -59,6 +61,7 @@ interface ChatStore {
   /** Disconnect a specific agent's WebSocket, or all if no agentId provided */
   disconnectStream: (agentId?: string) => void;
   clearMessages: () => void;
+  invalidateSessionCache: (sessionId: string) => void;
   setCurrentModel: (model: string, provider: string, agentId: string) => void;
   setAvailableModels: (models: { name: string; provider: string }[]) => void;
   /** Get the WebSocket for a specific agent */
@@ -151,6 +154,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   messageCursor: null,
   isLoadingMore: false,
   isLoadingSession: false,
+  loadError: null,
   currentTurnId: null,
   streamBuffer: "",
   thinkingMessageId: null,
@@ -303,6 +307,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       // Reset streaming state — messages will be created on first chunk
       set({ streamBuffer: "", streamingMessageId: null, thinkingMessageId: null, isInThinkPhase: false });
+
+      // After successful message send, invalidate cache for this session
+      const currentSessionId = useSessionStore.getState().currentSessionId;
+      if (currentSessionId) {
+        get().invalidateSessionCache(currentSessionId);
+      }
     };
 
     // If WebSocket exists, try to use it
@@ -359,6 +369,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         messages: [...state.messages, replyMsg],
         sending: false,
       }));
+      // After successful message send, invalidate cache for this session
+      const currentSessionId = useSessionStore.getState().currentSessionId;
+      if (currentSessionId) {
+        get().invalidateSessionCache(currentSessionId);
+      }
     } catch (error) {
       console.error("[ChatStore] HTTP message send failed:", error);
       const errorMsg: ChatMessage = {
@@ -452,9 +467,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  clearMessages: () => {
-    set({ messages: [], tokenUsage: null, streamBuffer: "", streamingMessageId: null, thinkingMessageId: null, isInThinkPhase: false, sending: false });
-  },
+  clearMessages: () => set({ messages: [], sessionMessagesCache: {}, tokenUsage: null, streamBuffer: "", streamingMessageId: null, thinkingMessageId: null, isInThinkPhase: false, sending: false, loadError: null }),
+  invalidateSessionCache: (sessionId: string) => set((state) => {
+    const newCache = { ...state.sessionMessagesCache };
+    delete newCache[sessionId];
+    return { sessionMessagesCache: newCache };
+  }),
   setCurrentModel: (model: string, provider: string, agentId: string) => {
     // Optimistically update UI only — don't cache until confirmed by backend
     const prevModel = get().currentModel;
@@ -585,6 +603,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!cursor) {
       const cached = get().sessionMessagesCache[sessionId];
       if (cached && Date.now() - cached.loadedAt < CACHE_TTL) {
+        // Race condition guard: verify this is still the active session
+        if (sessionId !== useSessionStore.getState().currentSessionId) {
+          console.log(`[ChatStore] Discarding stale cache for session ${sessionId} — no longer active`);
+          return; // Stale request, discard
+        }
         console.log(`[ChatStore] Using cached messages for session ${sessionId}`);
         set({
           messages: cached.messages,
@@ -598,7 +621,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
 
     if (!cursor) {
-      set({ isLoadingSession: true });
+      set({ isLoadingSession: true, loadError: null });
     }
 
     try {
@@ -649,6 +672,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             messageCursor: data.cursor,
             isLoadingMore: false,
             isLoadingSession: false,
+            loadError: null,
           };
         }
 
@@ -667,6 +691,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           messageCursor: data.cursor,
           isLoadingMore: false,
           isLoadingSession: false,
+          loadError: null,
           sessionMessagesCache: newCache,
         };
       });
@@ -683,7 +708,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         return;
       }
       console.error("[ChatStore] Failed to load session messages:", e);
-      set({ messages: [], hasMoreMessages: false, messageCursor: null, isLoadingMore: false, isLoadingSession: false });
+      set({ messages: [], loadError: `消息加载失败: ${e instanceof Error ? e.message : String(e)}`, hasMoreMessages: false, messageCursor: null, isLoadingMore: false, isLoadingSession: false });
     } finally {
       // Clear the controller if it's still the one we created
       const currentController = get().abortController;

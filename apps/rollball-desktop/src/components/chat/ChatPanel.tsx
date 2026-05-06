@@ -22,7 +22,7 @@ import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
 
 export function ChatPanel() {
   const { agents, selectedAgentId, startAgent } = useAgentStore();
-  const { messages, sending, wsMap, connectStream, sendMessage, stopCurrentMessage, streamingMessageId, currentModel, currentProvider, availableModels, setCurrentModel, setAvailableModels, loadAgentModel, iterationLimitPaused, continueExecution, contextUsage, isLoadingSession } = useChatStore();
+  const { messages, sending, wsMap, connectStream, sendMessage, stopCurrentMessage, streamingMessageId, currentModel, currentProvider, availableModels, setCurrentModel, setAvailableModels, loadAgentModel, iterationLimitPaused, continueExecution, contextUsage, isLoadingSession, loadError } = useChatStore();
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const gatewayStatus = useGatewayStore((s) => s.status);
   const { activeSkill, clearActiveSkill } = useSkillStore();
@@ -164,6 +164,7 @@ export function ChatPanel() {
       isLoadingMore: false,
       iterationLimitPaused: null,
       contextUsage: null,
+      sessionMessagesCache: {},
     });
 
     if (selectedAgentId && selectedAgent?.running) {
@@ -370,7 +371,28 @@ export function ChatPanel() {
             </div>
           )}
           
-          {!isLoadingSession && messages.length === 0 && (
+          {loadError && !isLoadingSession && (
+            <div className="flex h-full flex-col items-center justify-center gap-3 px-4">
+              <div className="text-sm text-red-500 dark:text-red-400">Session 加载失败</div>
+              <div className="max-w-xs text-center text-xs text-zinc-500 dark:text-zinc-400">
+                {loadError}
+              </div>
+              <button
+                onClick={() => {
+                  const sessionId = useSessionStore.getState().currentSessionId;
+                  const agentId = useAgentStore.getState().selectedAgentId;
+                  if (sessionId && agentId) {
+                    useChatStore.setState({ loadError: null });
+                    useChatStore.getState().loadSessionMessages(agentId, sessionId);
+                  }
+                }}
+                className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+              >
+                重试
+              </button>
+            </div>
+          )}
+          {!loadError && !isLoadingSession && messages.length === 0 && (
             <div className="flex h-full items-center justify-center text-xs text-zinc-400 dark:text-zinc-500">
               Start a conversation with {selectedAgent.name}
             </div>

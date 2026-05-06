@@ -285,10 +285,10 @@ fn install_skill_package(
         if file.is_dir() {
             std::fs::create_dir_all(&outpath).ok();
         } else {
-            if let Some(p) = outpath.parent() {
-                if !p.exists() {
-                    std::fs::create_dir_all(p).ok();
-                }
+            if let Some(p) = outpath.parent()
+                && !p.exists()
+            {
+                std::fs::create_dir_all(p).ok();
             }
             let mut outfile = std::fs::File::create(&outpath)
                 .map_err(|e| GatewayError::Package(format!(

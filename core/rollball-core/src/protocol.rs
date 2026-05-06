@@ -527,6 +527,9 @@ pub struct SessionInfoDto {
     /// Optional session title
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether the session metadata was recovered from a corrupted first line
+    #[serde(default)]
+    pub corrupted: bool,
 }
 
 /// Conversation entry DTO for IPC responses (S1.14)

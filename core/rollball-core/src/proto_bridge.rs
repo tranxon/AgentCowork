@@ -190,6 +190,7 @@ impl From<&protocol::SessionInfoDto> for proto::SessionInfoDto {
             created_at: s.created_at.clone(),
             message_count: s.message_count,
             title: s.title.clone().unwrap_or_default(),
+            corrupted: s.corrupted,
         }
     }
 }
@@ -201,6 +202,7 @@ impl From<proto::SessionInfoDto> for protocol::SessionInfoDto {
             created_at: s.created_at,
             message_count: s.message_count,
             title: if s.title.is_empty() { None } else { Some(s.title) },
+            corrupted: s.corrupted,
         }
     }
 }
@@ -881,6 +883,7 @@ mod tests {
             created_at: "2026-05-03T14:30:22Z".to_string(),
             message_count: 42,
             title: Some("Test Session".to_string()),
+            corrupted: false,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();

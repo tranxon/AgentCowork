@@ -1221,6 +1221,7 @@ async fn handle_list_sessions(
             created_at: s.created_at,
             message_count: s.message_count,
             title: s.title,
+            corrupted: s.corrupted,
         })
         .collect();
 
@@ -1502,7 +1503,7 @@ async fn handle_update_session_title(
     };
 
     match agent_loop.update_session_title(&title) {
-        Ok(true) => {
+        Some(true) => {
             let session_id = agent_loop.current_session_id().map(|s| s.to_string()).unwrap_or_default();
             let data = serde_json::json!({
                 "session_id": session_id,
@@ -1511,7 +1512,7 @@ async fn handle_update_session_title(
             });
             send_session_response(grpc_client, &request_id, data).await;
         }
-        Ok(false) => {
+        Some(false) => {
             // Title unchanged — no-op
             let session_id = agent_loop.current_session_id().map(|s| s.to_string()).unwrap_or_default();
             let data = serde_json::json!({
@@ -1521,7 +1522,7 @@ async fn handle_update_session_title(
             });
             send_session_response(grpc_client, &request_id, data).await;
         }
-        Err(_) => {
+        None => {
             tracing::warn!("update_session_title called but no active session");
             let data = serde_json::json!({
                 "error": "No active session to update",

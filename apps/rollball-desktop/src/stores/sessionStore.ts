@@ -182,6 +182,7 @@ export const useSessionStore = create<SessionState>((set) => ({
   },
 
   setSessionPanelOpen: (open: boolean) => {
+    set({ isSessionPanelOpen: open });
   },
 
   toggleSessionPanel: () => {
