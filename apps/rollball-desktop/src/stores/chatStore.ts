@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
 import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry } from "../lib/types";
 import { usePermissionStore } from "./permissionStore";
+import { useSessionStore } from "./sessionStore";
 import { getGatewayUrl } from "../lib/config";
 
 interface ChatStore {
@@ -932,28 +933,36 @@ function handleMessageEvent(
         }
 
         // Set endTime on the currently streaming think message (if any)
-        // This stops the ThinkBlock timer when the LLM call finishes.
-        if (state.thinkingMessageId) {
-          const endTime = Date.now();
-          messages = messages.map((msg) =>
-            msg.id === state.thinkingMessageId && !msg.endTime
-              ? { ...msg, endTime }
-              : msg,
-          );
-        }
+      // Set endTime on the currently streaming think message (if any)
+      // This stops the ThinkBlock timer when the LLM call finishes.
+      if (state.thinkingMessageId) {
+        const endTime = Date.now();
+        messages = messages.map((msg) =>
+          msg.id === state.thinkingMessageId && !msg.endTime
+            ? { ...msg, endTime }
+            : msg,
+        );
+      }
 
-        return {
-          messages,
-          streamingMessageId: null,
-          sending: false,
-          tokenUsage: usage ?? state.tokenUsage,
-          currentTurnId: null,
-          streamBuffer: "",
-          thinkingMessageId: null,
-          isInThinkPhase: false,
-        };
-      });
-      break;
+      return {
+        messages,
+        streamingMessageId: null,
+        sending: false,
+        tokenUsage: usage ?? state.tokenUsage,
+        currentTurnId: null,
+        streamBuffer: "",
+        thinkingMessageId: null,
+        isInThinkPhase: false,
+      };
+    });
+    // Refresh session list after response completes — Runtime has updated JSONL metadata (title, message_count)
+    const agentIdForRefresh = get().currentAgentId;
+    if (agentIdForRefresh) {
+      setTimeout(() => {
+        useSessionStore.getState().fetchSessions(agentIdForRefresh);
+      }, 500);
+    }
+    break;
     }
 
     case "model_confirmed": {
