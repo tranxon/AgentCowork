@@ -171,7 +171,7 @@ export function AgentList({ width }: AgentListProps) {
       className="flex flex-col bg-[#EEEEF0] dark:bg-[#2F2F30]"
       style={{ width: width ?? 240 }}
     >
-      {/* Header - 微信联系人搜索风格 */}
+      {/* Header - 联系人搜索风格 */}
       <div className="bg-[#EEEEF0] px-3 py-2 dark:bg-[#2F2F30]">
         <div className="flex items-center gap-2">
           {/* Search input */}
@@ -219,15 +219,18 @@ export function AgentList({ width }: AgentListProps) {
         </div>
       </div>
 
-      {/* Agent list - 微信联系人列表风格 */}
-      <div className="flex-1 overflow-y-auto bg-[#EEEEF0] py-1 dark:bg-[#2F2F30]" role="list" aria-label="Agent list">
+      {/* Agent list - 联系人列表风格 */}
+      <div className="flex-1 overflow-y-auto bg-[#EEEEF0] dark:bg-[#2F2F30]" role="list" aria-label="Agent list">
+        {/* 分隔线 - 搜索框与 Agent 列表之间 */}
+        <div className="border-t border-[#C8C8C8]/40 dark:border-zinc-600/40" />
+
         {loading && agents.length === 0 && (
           <div className="flex items-center justify-center py-8">
             <div className="h-5 w-5 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-600 dark:border-zinc-600 dark:border-t-zinc-300" />
           </div>
         )}
 
-        {filteredAgents.map((agent) => {
+        {filteredAgents.map((agent, index) => {
           const isSystem = agent.agent_id === "com.rollball.system";
           const sessionTitle = sessionTitles[agent.agent_id];
           
@@ -239,6 +242,8 @@ export function AgentList({ width }: AgentListProps) {
                 selectedAgentId === agent.agent_id
                   ? "bg-[#D8D9DC] dark:bg-[#3D3D3F]"
                   : "hover:bg-[#E2E3E6] dark:hover:bg-[#38383A]",
+                // 分割线，最后一项不加
+                index < filteredAgents.length - 1 && "border-b border-[#C8C8C8]/40 dark:border-zinc-600/40"
               )}
               onClick={() => selectAgent(agent.agent_id)}
               onContextMenu={(e) => handleContextMenu(e, agent.agent_id)}
