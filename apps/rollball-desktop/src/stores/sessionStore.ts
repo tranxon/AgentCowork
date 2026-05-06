@@ -20,6 +20,8 @@ interface SessionState {
   createSession: (agentId: string) => Promise<void>;
   setSessionPanelOpen: (open: boolean) => void;
   toggleSessionPanel: () => void;
+  /** Update a session's title locally (no API call) */
+  updateSessionTitle: (sessionId: string, title: string) => void;
   reset: () => void;
 }
 
@@ -114,6 +116,14 @@ export const useSessionStore = create<SessionState>((set) => ({
 
   toggleSessionPanel: () => {
     set((state) => ({ isSessionPanelOpen: !state.isSessionPanelOpen }));
+  },
+
+  updateSessionTitle: (sessionId: string, title: string) => {
+    set((state) => ({
+      sessions: state.sessions.map((s) =>
+        s.session_id === sessionId && !s.title ? { ...s, title } : s,
+      ),
+    }));
   },
 
   reset: () => {

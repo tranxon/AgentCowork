@@ -614,6 +614,20 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 }));
 
+/** Compute session title from first user message (mirrors backend set_title logic) */
+function makeSessionTitle(content: string): string {
+  return content.replace(/\n/g, " ").trim().substring(0, 30);
+}
+
+/** Find first user message and update session title if not yet set */
+function updateSessionTitleFromMessages(messages: ChatMessage[]) {
+  const firstUserMsg = messages.find((m) => m.type === "user");
+  if (!firstUserMsg || !firstUserMsg.content) return;
+  const sessionId = useSessionStore.getState().currentSessionId;
+  if (!sessionId) return;
+  useSessionStore.getState().updateSessionTitle(sessionId, makeSessionTitle(firstUserMsg.content));
+}
+
 /** Convert a ConversationEntry from Gateway to UI ChatMessage */
 function convertConversationEntry(entry: ConversationEntry): ChatMessage {
   const base: ChatMessage = {
@@ -955,13 +969,8 @@ function handleMessageEvent(
         isInThinkPhase: false,
       };
     });
-    // Refresh session list after response completes — Runtime has updated JSONL metadata (title, message_count)
-    const agentIdForRefresh = get().currentAgentId;
-    if (agentIdForRefresh) {
-      setTimeout(() => {
-        useSessionStore.getState().fetchSessions(agentIdForRefresh);
-      }, 500);
-    }
+    // Update session title from first user message (only if not yet set)
+    updateSessionTitleFromMessages(get().messages);
     break;
     }
 

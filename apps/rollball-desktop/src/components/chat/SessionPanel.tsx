@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { useSessionStore } from "../../stores/sessionStore";
-import { Brain, MessageSquarePlus, Clock, MessageCircle, ChevronDown } from "lucide-react";
+import { Brain, MessageSquarePlus, Clock, MessageCircle, ChevronDown, Loader2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 interface SessionPanelProps {
@@ -39,10 +39,10 @@ export function SessionPanel({ agentId, onOpenMemory }: SessionPanelProps) {
 
   // Fetch sessions when panel opens or agent changes
   useEffect(() => {
-    if (agentId) {
+    if (agentId && open) {
       void fetchSessions(agentId);
     }
-  }, [agentId, fetchSessions]);
+  }, [agentId, fetchSessions, open]);
 
   // Close on outside click
   useEffect(() => {
@@ -97,7 +97,8 @@ export function SessionPanel({ agentId, onOpenMemory }: SessionPanelProps) {
           {/* Session list */}
           <div className="max-h-80 overflow-y-auto py-1">
             {isLoading && sessions.length === 0 && (
-              <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
+              <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-zinc-400 dark:text-zinc-500">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
                 Loading sessions...
               </div>
             )}
