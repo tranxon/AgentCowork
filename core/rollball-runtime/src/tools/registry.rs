@@ -52,10 +52,15 @@ impl ToolRegistry {
             // No tool declarations → all tools available
             self.tools.clone()
         } else {
-            // Filter to only declared tools
+            // Filter to only declared tools.
+            // Shell tools may be declared as "shell" in the manifest but
+            // registered as "bash"/"powershell" by the platform detector.
             self.tools
                 .iter()
-                .filter(|tool| manifest.has_tool(&tool.name()))
+                .filter(|tool| {
+                    manifest.has_tool(&tool.name())
+                        || is_shell_alias(&tool.name(), manifest)
+                })
                 .cloned()
                 .collect()
         };
@@ -231,6 +236,17 @@ mod tests {
         let reg = ToolRegistry::default();
         assert!(reg.all().is_empty());
     }
+}
+
+/// Check whether a tool is a shell variant that should match a "shell"
+/// declaration in the manifest.
+///
+/// Platform-aware shell tools (bash, powershell) fill the same role as the
+/// legacy unified "shell" tool.  If the manifest declares "shell" but the
+/// platform detector registered "bash" + "powershell", they should still pass
+/// the activation filter.
+fn is_shell_alias(tool_name: &str, manifest: &AgentManifest) -> bool {
+    matches!(tool_name, "bash" | "powershell" | "shell") && manifest.has_tool("shell")
 }
 
 /// Load workspace directories from `.agent_workspaces.json`
