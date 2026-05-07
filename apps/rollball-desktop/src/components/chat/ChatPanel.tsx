@@ -754,6 +754,11 @@ function parseThinkContent(content: string): {
   return { thinkContent, replyContent, thinkClosed: true };
 }
 
+/** Shell tools (bash, powershell, shell) need Terminal icon and command preview. */
+function isShellTool(name: string): boolean {
+  return name === "shell" || name === "bash" || name === "powershell";
+}
+
 /** Aggregated tool call group with smart summary */
 function ToolCallGroup({ items }: { items: ChatMessage[] }) {
   const [expanded, setExpanded] = useState(false);
@@ -778,7 +783,7 @@ function ToolCallGroup({ items }: { items: ChatMessage[] }) {
     const params = JSON.parse(item.content || "{}");
     if (toolName === "file_read" || toolName === "file_write" || toolName === "file_edit") {
       return params.path?.split(/[\\/]/).pop() || "file";
-    } else if (toolName === "shell") {
+    } else if (isShellTool(toolName)) {
       const cmd = params.command || "";
       return cmd.split(' ')[0] || "cmd";
     }
@@ -789,7 +794,7 @@ function ToolCallGroup({ items }: { items: ChatMessage[] }) {
   const summary = summaryItems.join(", ") + (hasMore ? ` + ${callItems.length - 3} more` : "");
 
   // Icon based on tool type
-  const Icon = toolName === "shell" ? Terminal : FileText;
+  const Icon = isShellTool(toolName) ? Terminal : FileText;
 
   // Pair tool_call with its corresponding tool_result
   const pairedItems: Array<{ call: ChatMessage; result?: ChatMessage }> = [];
@@ -853,7 +858,7 @@ function ToolCallGroup({ items }: { items: ChatMessage[] }) {
                         const params = JSON.parse(call.content || "{}");
                         if (toolName === "file_read" || toolName === "file_write" || toolName === "file_edit") {
                           return params.path || call.content.substring(0, 60);
-                        } else if (toolName === "shell") {
+                        } else if (isShellTool(toolName)) {
                           return params.command || call.content.substring(0, 60);
                         }
                         return call.content.substring(0, 60);
