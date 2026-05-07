@@ -440,14 +440,16 @@ export function ChatPanel() {
 
                     {/* Think message with folding */}
                     {displayItem.type === 'think_group' && (
-                      <ThinkBlock
-                        content={displayItem.item.content}
-                        isStreaming={displayItem.item.id === streamingMessageId}
-                        hasReplyStarted={displayItem.item.id !== streamingMessageId}
-                        startTime={displayItem.item.startTime}
-                        endTime={displayItem.item.endTime}
-                        defaultExpanded={false}
-                      />
+                      <div className="max-w-[min(var(--content-max-width),900px)]">
+                        <ThinkBlock
+                          content={displayItem.item.content}
+                          isStreaming={displayItem.item.id === streamingMessageId}
+                          hasReplyStarted={displayItem.item.id !== streamingMessageId}
+                          startTime={displayItem.item.startTime}
+                          endTime={displayItem.item.endTime}
+                          defaultExpanded={false}
+                        />
+                      </div>
                     )}
 
                     {/* Regular message */}
