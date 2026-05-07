@@ -66,9 +66,16 @@ pub fn validate_permission(manifest: &AgentManifest, tool_name: &str) -> Result<
     // Special case for rag_query: the manifest declares RAG tools with a custom
     // name (e.g., "enterprise_knowledge") and type="rag". The built-in tool's
     // runtime name is always "rag_query", so we check manifest.has_rag() instead.
+    //
+    // Shell tools: bash/powershell/shell/pwsh are interchangeable — any one
+    // declared in manifest activates all platform-available shell tools.
     if !manifest.tools.is_empty() {
         let tool_declared = if tool_name == "rag_query" {
             manifest.has_rag()
+        } else if matches!(tool_name, "bash" | "powershell" | "pwsh" | "shell") {
+            manifest.tools.iter().any(|t| {
+                matches!(t.name.as_str(), "bash" | "powershell" | "pwsh" | "shell")
+            })
         } else {
             manifest.has_tool(tool_name)
         };
