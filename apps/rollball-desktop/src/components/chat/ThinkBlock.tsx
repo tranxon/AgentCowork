@@ -58,7 +58,7 @@ export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultEx
           className="w-full ml-5 mt-1 pl-3 py-2 bg-zinc-50 dark:bg-zinc-800/50 text-zinc-500 dark:text-zinc-400 border-l-2 border-zinc-300 dark:border-zinc-600 overflow-y-auto"
           style={{ maxHeight: `${MAX_VISIBLE_LINES * LINE_HEIGHT_REM}rem` }}
         >
-          <div className="prose prose-sm prose-zinc max-w-none dark:prose-invert [&_*]:!text-zinc-500 dark:[&_*]:!text-zinc-400" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>
+          <div className="prose prose-sm prose-zinc max-w-none [&_*]:!text-zinc-500 dark:[&_*]:!text-zinc-400" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{content.trim() || "..."}</ReactMarkdown>
           </div>
         </div>

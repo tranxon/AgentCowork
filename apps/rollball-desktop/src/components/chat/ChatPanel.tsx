@@ -917,7 +917,7 @@ function MessageBubble({ message, isStreaming }: { message: ChatMessage; isStrea
         <div className="flex justify-start">
           <div className="w-full max-w-[min(var(--content-max-width),900px)] rounded-lg rounded-bl-sm bg-zinc-100 px-3 py-2 dark:bg-zinc-800 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
             {message.content && (
-              <div className="prose prose-sm prose-zinc max-w-none prose-headings:my-2 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-headings:font-semibold dark:prose-invert select-text" style={fontSizeStyle}>
+              <div className="prose prose-sm prose-zinc max-w-none prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-headings:font-semibold select-text" style={fontSizeStyle}>
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               </div>
             )}

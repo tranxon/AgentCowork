@@ -159,11 +159,15 @@ body {
   --tw-prose-td-borders: hsl(240 5% 25%);
 }
 
-/* Code blocks — softer background, no harsh borders */
+/* Code blocks — softer background, proper padding & scrolling */
 .prose pre {
   background-color: hsl(240 5% 94%);
   border: 1px solid hsl(240 5% 88%);
   border-radius: 6px;
+  padding: 0.75em 1em;
+  overflow-x: auto;
+  font-size: 0.85em;
+  line-height: 1.6;
 }
 
 .dark .prose pre {
@@ -171,22 +175,17 @@ body {
   border: 1px solid hsl(240 5% 22%);
 }
 
-.prose code {
-  background-color: hsl(240 5% 94%);
+/* Inline code — visible background pill */
+.prose :where(code):not(:where(pre code)) {
+  background-color: hsl(240 5% 92%);
   padding: 0.15em 0.4em;
   border-radius: 4px;
-  font-size: 0.9em;
+  font-size: 0.88em;
+  font-weight: 500;
 }
 
-.dark .prose code {
-  background-color: hsl(240 5% 18%);
-}
-
-/* Inline code — less prominent */
-.prose :where(code):not(:where(pre code)) {
-  background-color: transparent;
-  padding: 0;
-  font-weight: 400;
+.dark .prose :where(code):not(:where(pre code)) {
+  background-color: hsl(240 5% 20%);
 }
 
 /* Links — subtle, not harsh blue */
@@ -240,14 +239,23 @@ body {
   color: hsl(240 5% 75%);
 }
 
-/* Tables — subtle borders */
+/* Tables — clear borders and cell dividers */
 .prose table {
-  border-collapse: separate;
-  border-spacing: 0;
+  border-collapse: collapse;
+  width: 100%;
+  border: 1px solid var(--tw-prose-td-borders);
+}
+
+.prose th,
+.prose td {
+  border: 1px solid var(--tw-prose-td-borders);
+  padding: 0.5em 0.75em;
 }
 
 .prose th {
   background-color: hsl(240 5% 96%);
+  border-color: var(--tw-prose-th-borders);
+  font-weight: 600;
 }
 
 .dark .prose th {
@@ -262,4 +270,86 @@ body {
 
 .dark .prose hr {
   border-color: hsl(240 5% 25%);
+}
+
+/* ── Chat-context spacing — tighter than article prose ── */
+/* Paragraphs — reduced spacing for chat bubbles */
+.prose p {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose p:first-child {
+  margin-top: 0;
+}
+
+.prose p:last-child {
+  margin-bottom: 0;
+}
+
+/* Lists — compact spacing */
+.prose ul,
+.prose ol {
+  margin-top: 0.4em;
+  margin-bottom: 0.4em;
+  padding-left: 1.5em;
+}
+
+.prose li {
+  margin-top: 0.15em;
+  margin-bottom: 0.15em;
+}
+
+/* Nested lists — even tighter */
+.prose li > ul,
+.prose li > ol {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+}
+
+/* Images — rounded with max constraint */
+.prose img {
+  border-radius: 6px;
+  max-width: 100%;
+  height: auto;
+}
+
+/* Pre + code blocks spacing in chat */
+.prose pre {
+  margin-top: 0.6em;
+  margin-bottom: 0.6em;
+}
+
+/* Headings spacing — tighter for chat */
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  margin-top: 0.8em;
+  margin-bottom: 0.4em;
+}
+
+.prose h1:first-child,
+.prose h2:first-child,
+.prose h3:first-child,
+.prose h4:first-child {
+  margin-top: 0;
+}
+
+/* Table spacing */
+.prose table {
+  margin-top: 0.6em;
+  margin-bottom: 0.6em;
+  font-size: 0.88em;
+}
+
+/* Blockquote spacing */
+.prose blockquote {
+  margin-top: 0.5em;
+  margin-bottom: 0.5em;
+}
+
+.prose blockquote > p {
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
 }
