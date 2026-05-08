@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { invoke } from "@tauri-apps/api/core";
 import { useAgentStore } from "../../stores/agentStore";
@@ -11,11 +11,12 @@ import { getGatewayUrl } from "../../lib/config";
 import { needsApiKey, keyPlaceholder } from "../../lib/providers";
 import { fetchProviderModels, fetchProviders } from "../../lib/gateway-api";
 import { toolbarButton, toolbarButtonActive } from "../../lib/ui-styles";
-import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, Check, X, Square, Copy, FileText, Terminal, Plus, RefreshCw, Layers, Cpu, Loader } from "lucide-react";
+import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Layers, Cpu, Loader } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContextUsageInfo, VaultKeyEntry, ModelInfo } from "../../lib/types";
 import { ThinkBlock } from "./ThinkBlock";
+import { ExploreBlock } from "./ExploreBlock";
 import { MemoryPanel } from "../memory/MemoryPanel";
 import { SessionPanel } from "./SessionPanel";
 import { SkillsPanel } from "../skills/SkillsPanel";
@@ -30,7 +31,19 @@ let lastLoadedSessionId: string | null = null;
 
 export function ChatPanel() {
   const { agents, selectedAgentId, startAgent } = useAgentStore();
-  const { messages, sending, wsMap, connectStream, sendMessage, stopCurrentMessage, streamingMessageId, thinkingMessageId, currentModel, currentProvider, availableModels, setCurrentModel, setAvailableModels, loadAgentModel, iterationLimitPaused, continueExecution, contextUsage, isLoadingSession, loadError } = useChatStore();
+
+  // Per-agent state selectors — read from agentStates[selectedAgentId]
+  const agentState = useChatStore((s) => selectedAgentId ? s.agentStates[selectedAgentId] : null);
+  const messages = agentState?.messages ?? [];
+  const streamingMessageId = agentState?.streamingMessageId ?? null;
+  const thinkingMessageId = agentState?.thinkingMessageId ?? null;
+  const contextUsage = agentState?.contextUsage ?? null;
+  const iterationLimitPaused = agentState?.iterationLimitPaused ?? null;
+
+  // Global state and actions
+  const { sending, wsMap, connectStream, sendMessage, stopCurrentMessage, currentModel, currentProvider, availableModels, setCurrentModel, setAvailableModels, loadAgentModel, continueExecution } = useChatStore();
+  const isLoadingSession = agentState?.isLoadingSession ?? false;
+  const loadError = agentState?.loadError ?? null;
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const gatewayStatus = useGatewayStore((s) => s.status);
   const { activeSkill, clearActiveSkill } = useSkillStore();
@@ -51,67 +64,66 @@ export function ChatPanel() {
   const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
 
   // Group consecutive messages for display
-  // - Consecutive tool_call/tool_result → folded together (always aggregated)
-  // - think messages / assistant <think> → folded with timer
+  // - Consecutive think + tool_call + tool_result → explore_group (aggregated)
+  // - assistant reply (non-think) → display as-is
   // - Everything else → display as-is
   const displayMessages = useMemo(() => {
     const grouped: Array<
       | ChatMessage
-      | { type: 'tool_group'; items: ChatMessage[] }
-      | { type: 'think_group'; item: ChatMessage }
+      | { type: 'explore_group'; items: ChatMessage[] }
     > = [];
     
-    let toolGroup: ChatMessage[] = [];
+    let exploreBuffer: ChatMessage[] = [];
 
-    const flushToolGroup = () => {
-      if (toolGroup.length > 0) {
-        grouped.push({ type: 'tool_group', items: [...toolGroup] });
-        toolGroup = [];
+    const flushExplore = () => {
+      if (exploreBuffer.length > 0) {
+        grouped.push({ type: 'explore_group', items: [...exploreBuffer] });
+        exploreBuffer = [];
       }
     };
 
     for (const msg of messages) {
       if (msg.type === 'tool_call' || msg.type === 'tool_result') {
-        toolGroup.push(msg);
-      } else {
-        flushToolGroup();
-        
-        if (msg.type === 'assistant') {
-          // Streaming: if content starts with <think> but no </think> yet,
-          // treat entire content as thinking
-          if (msg.id === streamingMessageId) {
-            const trimmed = msg.content.trimStart();
-            if (trimmed.startsWith('<think>') && !trimmed.includes('</think>')) {
-              const thinkContent = trimmed.slice(7);
-              if (thinkContent) {
-                grouped.push({ type: 'think_group', item: { ...msg, content: thinkContent } });
-              }
-              continue;
+        exploreBuffer.push(msg);
+      } else if (msg.type === 'thought') {
+        exploreBuffer.push(msg);
+      } else if (msg.type === 'assistant') {
+        // Streaming: if content starts with a think tag but no closing tag yet,
+        // treat entire content as thinking
+        if (msg.id === streamingMessageId) {
+          const trimmed = msg.content.trimStart();
+          if (trimmed.startsWith('<think>') && !trimmed.includes('</think>')) {
+            const thinkContent = trimmed.slice(7);
+            if (thinkContent) {
+              exploreBuffer.push({ ...msg, type: 'thought' as any, content: thinkContent });
             }
+            continue;
           }
+        }
 
-          const { thinkContent, replyContent } = parseThinkContent(msg.content);
-          if (thinkContent) {
-            grouped.push({ type: 'think_group', item: { ...msg, content: thinkContent } });
-          }
-          if (replyContent.trim()) {
-            grouped.push({ ...msg, content: replyContent });
-          } else if (!thinkContent) {
-            // Empty message (streaming)
-            grouped.push(msg);
-          }
-        } else if (msg.type === 'thought') {
-          grouped.push({ type: 'think_group', item: msg });
-        } else {
+        const { thinkContent, replyContent } = parseThinkContent(msg.content);
+        if (thinkContent) {
+          exploreBuffer.push({ ...msg, type: 'thought' as any, content: thinkContent });
+        }
+        if (replyContent.trim()) {
+          flushExplore();
+          grouped.push({ ...msg, content: replyContent });
+        } else if (!thinkContent) {
+          // Empty message (streaming)
+          flushExplore();
           grouped.push(msg);
         }
+      } else {
+        // user message or other
+        flushExplore();
+        grouped.push(msg);
       }
     }
 
-    flushToolGroup();
+    flushExplore();
     return grouped;
   }, [messages, streamingMessageId]);
-
+  
   // Virtual scrolling: only render visible messages
   const virtualizer = useVirtualizer({
     count: displayMessages.length,
@@ -180,20 +192,10 @@ export function ChatPanel() {
     }
 
     if (!isSameAgentRemount) {
-      // 1. Clear current messages from previous agent
-      useChatStore.getState().clearMessages();
-      lastLoadedSessionId = null; // Allow reload for new agent/session
-      // 2. Reset session state (sessions, currentSessionId, etc.)
+      // Allow reload for new agent/session
+      lastLoadedSessionId = null;
+      // Reset session state (sessions, currentSessionId, etc.)
       useSessionStore.getState().reset();
-      // Clear additional chat state for a clean agent switch
-      useChatStore.setState({
-        hasMoreMessages: false,
-        messageCursor: null,
-        isLoadingMore: false,
-        iterationLimitPaused: null,
-        contextUsage: null,
-        sessionMessagesCache: {},
-      });
     }
 
     if (selectedAgentId && selectedAgent?.running) {
@@ -211,46 +213,51 @@ export function ChatPanel() {
       void initModel();
 
       if (!isSameAgentRemount) {
-        // 3. Fetch sessions and 4. restore previously selected session (or latest)
-        const initSession = async () => {
-          isInitialLoadRef.current = true;
-          initAbortedRef.current = false;
+        // Only load session messages on first switch to this agent if no messages yet.
+        // Per-agent state preserves messages across remounts, so skip reload if already loaded.
+        const agentMessages = useChatStore.getState().agentStates[selectedAgentId]?.messages;
+        if (!agentMessages || agentMessages.length === 0) {
+          // 3. Fetch sessions and 4. restore previously selected session (or latest)
+          const initSession = async () => {
+            isInitialLoadRef.current = true;
+            initAbortedRef.current = false;
 
-          // Retry fetching sessions until Agent is ready (max 10 attempts, 1s interval)
-          const maxRetries = 10;
-          let sessions = useSessionStore.getState().sessions;
+            // Retry fetching sessions until Agent is ready (max 10 attempts, 1s interval)
+            const maxRetries = 10;
+            let sessions = useSessionStore.getState().sessions;
 
-          for (let i = 0; i < maxRetries; i++) {
-            if (initAbortedRef.current) return;
-            await useSessionStore.getState().fetchSessions(selectedAgentId);
-            sessions = useSessionStore.getState().sessions;
-            if (sessions.length > 0) break;
-            if (i < maxRetries - 1) {
-              await new Promise(resolve => setTimeout(resolve, 1000));
+            for (let i = 0; i < maxRetries; i++) {
+              if (initAbortedRef.current) return;
+              await useSessionStore.getState().fetchSessions(selectedAgentId);
+              sessions = useSessionStore.getState().sessions;
+              if (sessions.length > 0) break;
+              if (i < maxRetries - 1) {
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              }
             }
-          }
 
-          if (initAbortedRef.current) return;
+            if (initAbortedRef.current) return;
 
-          if (sessions.length === 0) {
+            if (sessions.length === 0) {
+              isInitialLoadRef.current = false;
+              return;
+            }
+
+            // Restore previously selected session for this agent, fallback to latest
+            const rememberedSessionId = useSessionStore.getState().agentSessionMap[selectedAgentId];
+            const targetSession = rememberedSessionId
+              ? sessions.find((s) => s.session_id === rememberedSessionId) ?? sessions[0]
+              : sessions[0];
+            if (targetSession) {
+              await useChatStore
+                .getState()
+                .loadSessionMessages(selectedAgentId, targetSession.session_id);
+              await useSessionStore.getState().switchSession(targetSession.session_id, selectedAgentId);
+            }
             isInitialLoadRef.current = false;
-            return;
-          }
-
-          // Restore previously selected session for this agent, fallback to latest
-          const rememberedSessionId = useSessionStore.getState().agentSessionMap[selectedAgentId];
-          const targetSession = rememberedSessionId
-            ? sessions.find((s) => s.session_id === rememberedSessionId) ?? sessions[0]
-            : sessions[0];
-          if (targetSession) {
-            await useChatStore
-              .getState()
-              .loadSessionMessages(selectedAgentId, targetSession.session_id);
-            await useSessionStore.getState().switchSession(targetSession.session_id, selectedAgentId);
-          }
-          isInitialLoadRef.current = false;
-        };
-        void initSession();
+          };
+          void initSession();
+        }
       }
     } else if (!isSameAgentRemount) {
       lastInitAgentId = null;
@@ -299,34 +306,50 @@ export function ChatPanel() {
       });
   }, [currentSessionId, selectedAgentId]);
 
-  // Auto-scroll to bottom on new messages, but not when loading more
-  useEffect(() => {
+  // Initial load / agent switch: scroll to bottom synchronously before paint
+  const prevDisplayCountRef = useRef(0);
+  const prevScrollAgentRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    // Reset count tracking when agent changes so we jump instead of smooth-scroll
+    if (prevScrollAgentRef.current !== selectedAgentId) {
+      prevDisplayCountRef.current = 0;
+      prevScrollAgentRef.current = selectedAgentId ?? null;
+    }
+    const prevCount = prevDisplayCountRef.current;
+
     if (isLoadingMoreRef.current) {
       // Loading more: restore scroll position to keep view stable
-      // With virtualizer, use scrollToOffset to adjust for prepended items
       if (prevScrollHeightRef.current > 0 && displayMessages.length > 0) {
         const prevOffset = prevScrollHeightRef.current;
         prevScrollHeightRef.current = 0;
         isLoadingMoreRef.current = false;
         virtualizer.scrollToOffset(prevOffset, { align: "start" });
       }
+      prevDisplayCountRef.current = displayMessages.length;
       return;
     }
-    // Initial load: scroll to bottom immediately without animation
-    if (isInitialLoadRef.current && messages.length > 0 && displayMessages.length > 0) {
-      virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end" });
-    } else if (displayMessages.length > 0) {
-      // Normal new message: smooth scroll to bottom
-      virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "smooth" });
+
+    if (displayMessages.length > 0) {
+      if (prevCount === 0) {
+        // Agent switch or initial load: jump to bottom instantly (before paint)
+        virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end" });
+      } else if (displayMessages.length > prevCount) {
+        // New message arrived: smooth scroll to bottom
+        virtualizer.scrollToIndex(displayMessages.length - 1, { align: "end", behavior: "smooth" });
+      }
     }
-  }, [messages, displayMessages.length, virtualizer]);
+
+    prevDisplayCountRef.current = displayMessages.length;
+  }, [messages, displayMessages.length, virtualizer, selectedAgentId]);
 
   // Scroll handler: load more messages when scrolled to top
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
     if (!container || !selectedAgentId) return;
 
-    const { isLoadingMore, hasMoreMessages } = useChatStore.getState();
+    const { isLoadingMore } = useChatStore.getState();
+    const agentState = useChatStore.getState().agentStates[selectedAgentId];
+    const hasMoreMessages = agentState?.hasMoreMessages ?? false;
     const currentSessionId = useSessionStore.getState().currentSessionId;
     if (isLoadingMore || !hasMoreMessages || !currentSessionId) return;
 
@@ -448,7 +471,6 @@ export function ChatPanel() {
                   const sessionId = useSessionStore.getState().currentSessionId;
                   const agentId = useAgentStore.getState().selectedAgentId;
                   if (sessionId && agentId) {
-                    useChatStore.setState({ loadError: null });
                     useChatStore.getState().loadSessionMessages(agentId, sessionId);
                   }
                 }}
@@ -490,27 +512,18 @@ export function ChatPanel() {
                     }}
                     className=""
                   >
-                    {/* Tool group - multiple consecutive tool calls/results */}
-                    {displayItem.type === 'tool_group' && (
-                      <ToolCallGroup items={displayItem.items} />
-                    )}
-
-                    {/* Think message with folding */}
-                    {displayItem.type === 'think_group' && (
-                      <div className="max-w-[min(var(--content-max-width),900px)]">
-                        <ThinkBlock
-                          content={displayItem.item.content}
-                          isStreaming={displayItem.item.id === thinkingMessageId}
-                          hasReplyStarted={displayItem.item.id !== thinkingMessageId}
-                          startTime={displayItem.item.startTime}
-                          endTime={displayItem.item.endTime}
-                          defaultExpanded={false}
-                        />
-                      </div>
+                    {/* Explore group - aggregated think + tool calls/results */}
+                    {displayItem.type === 'explore_group' && (
+                      <ExploreBlock
+                        items={displayItem.items}
+                        isStreaming={displayItem.items.some(
+                          (m: ChatMessage) => m.id === streamingMessageId || m.id === thinkingMessageId
+                        )}
+                      />
                     )}
 
                     {/* Regular message */}
-                    {displayItem.type !== 'tool_group' && displayItem.type !== 'think_group' && (
+                    {displayItem.type !== 'explore_group' && (
                       <MessageBubble message={item as ChatMessage} isStreaming={(item as ChatMessage).id === streamingMessageId} />
                     )}
                   </div>
@@ -790,159 +803,6 @@ function parseThinkContent(content: string): {
 }
 
 /** Shell tools (bash, powershell, shell) need Terminal icon and command preview. */
-function isShellTool(name: string): boolean {
-  return name === "shell" || name === "bash" || name === "powershell";
-}
-
-/** Aggregated tool call group with smart summary */
-function ToolCallGroup({ items }: { items: ChatMessage[] }) {
-  const [expanded, setExpanded] = useState(false);
-  const [expandedItem, setExpandedItem] = useState<number | null>(null);
-
-  // Group by tool name and count
-  const toolCounts = items.reduce((acc, msg) => {
-    if (msg.type === "tool_call" && msg.toolName) {
-      acc[msg.toolName] = (acc[msg.toolName] || 0) + 1;
-    }
-    return acc;
-  }, {} as Record<string, number>);
-
-  // Determine primary tool and count
-  const primaryTool = Object.entries(toolCounts)[0];
-  if (!primaryTool) return null;
-  const [toolName] = primaryTool;
-
-  // Generate summary
-  const callItems = items.filter(m => m.type === "tool_call");
-  const totalCalls = callItems.length;
-  const summaryItems = callItems.slice(0, 3).map(item => {
-    const params = JSON.parse(item.content || "{}");
-    if (toolName === "file_read" || toolName === "file_write" || toolName === "file_edit") {
-      return params.path?.split(/[\\/]/).pop() || "file";
-    } else if (isShellTool(toolName)) {
-      const cmd = params.command || "";
-      return cmd.split(' ')[0] || "cmd";
-    }
-    return item.toolName || "tool";
-  });
-
-  const hasMore = callItems.length > 3;
-  const summary = summaryItems.join(", ") + (hasMore ? ` + ${callItems.length - 3} more` : "");
-
-  // Pair tool_call with its corresponding tool_result
-  const pairedItems: Array<{ call: ChatMessage; result?: ChatMessage }> = [];
-  let currentCall: ChatMessage | null = null;
-  
-  for (const item of items) {
-    if (item.type === "tool_call") {
-      if (currentCall) {
-        pairedItems.push({ call: currentCall });
-      }
-      currentCall = item;
-    } else if (item.type === "tool_result" && currentCall) {
-      pairedItems.push({ call: currentCall, result: item });
-      currentCall = null;
-    }
-  }
-  if (currentCall) {
-    pairedItems.push({ call: currentCall });
-  }
-
-  return (
-    <div className="space-y-1 min-w-0 max-w-full overflow-hidden">
-      {/* Collapsed/Summary card */}
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex w-fit max-w-[min(var(--content-max-width),900px)] items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-600 transition-colors hover:bg-zinc-100 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
-      >
-        <Wrench className="h-4 w-4 shrink-0 text-zinc-400" />
-        <span className="font-medium">
-          工具调用 ({totalCalls} {totalCalls === 1 ? "call" : "calls"})
-        </span>
-        <span className="truncate text-zinc-500 dark:text-zinc-500">
-          {summary}
-        </span>
-        {expanded ? (
-          <ChevronDown className="ml-auto h-4 w-4 shrink-0" />
-        ) : (
-          <ChevronRight className="ml-auto h-4 w-4 shrink-0" />
-        )}
-      </button>
-
-      {/* Expanded details - paired call + result */}
-      {expanded && (
-        <div className="ml-4 space-y-1 border-l-2 border-zinc-200 pl-4 dark:border-zinc-700">
-          {pairedItems.map((pair, idx) => {
-            const isExpanded = expandedItem === idx;
-            const { call, result } = pair;
-            
-            return (
-              <div key={call.id} className="space-y-1">
-                {/* Tool call row */}
-                <button
-                  onClick={() => setExpandedItem(isExpanded ? null : idx)}
-                  className="flex w-fit max-w-[min(var(--content-max-width),900px)] items-center gap-2 rounded-md bg-zinc-50 px-2 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100 dark:bg-zinc-800/30 dark:text-zinc-400 dark:hover:bg-zinc-800"
-                >
-                  <span className="font-medium">{call.toolName}</span>
-                  <span className="text-zinc-500 dark:text-zinc-500">
-                    {(() => {
-                      try {
-                        const params = JSON.parse(call.content || "{}");
-                        if (toolName === "file_read" || toolName === "file_write" || toolName === "file_edit") {
-                          return params.path || call.content.substring(0, 60);
-                        } else if (isShellTool(toolName)) {
-                          return params.command || call.content.substring(0, 60);
-                        }
-                        return call.content.substring(0, 60);
-                      } catch {
-                        return call.content.substring(0, 60);
-                      }
-                    })()}
-                    {call.content.length > 60 ? "..." : ""}
-                  </span>
-                  {isExpanded ? (
-                    <ChevronDown className="h-3 w-3 shrink-0" />
-                  ) : (
-                    <ChevronRight className="h-3 w-3 shrink-0" />
-                  )}
-                </button>
-
-                {/* Expanded details */}
-                {isExpanded && (
-                  <div className="ml-5 space-y-2">
-                    {/* Call details */}
-                    <div>
-                      <div className="mb-1 text-[10px] font-medium text-zinc-500">Arguments:</div>
-                      <pre className="w-fit max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-50 p-2 text-[10px] text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400">
-                        {call.content}
-                      </pre>
-                    </div>
-                    
-                    {/* Result if exists */}
-                    {result && (
-                      <div>
-                        <div className="mb-1 flex items-center gap-1 text-[10px] font-medium text-emerald-600 dark:text-emerald-400">
-                          <Check className="h-3 w-3" />
-                          Result ({result.content.length} chars)
-                        </div>
-                        <pre className="w-fit max-w-full overflow-x-auto whitespace-pre-wrap break-all rounded bg-zinc-50 p-2 text-[10px] text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400">
-                          {result.content.length > 500 
-                            ? result.content.substring(0, 500) + "\n\n... (truncated)"
-                            : result.content
-                          }
-                        </pre>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /** Wrapper that provides right-click context menu for copying text */
 function MessageContentWrapper({ children }: { children: React.ReactNode }) {
