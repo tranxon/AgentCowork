@@ -1,5 +1,6 @@
 import { useChatStore } from "../../stores/chatStore";
 import { useAgentStore } from "../../stores/agentStore";
+import type { ChatMessage } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { PanelRight } from "lucide-react";
 
@@ -7,9 +8,13 @@ interface ResultsPanelProps {
   onCollapse: () => void;
 }
 
+// Stable empty array reference to avoid Zustand selector infinite loop
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
 export function ResultsPanel({ onCollapse }: ResultsPanelProps) {
-  const { tokenUsage, messages } = useChatStore();
   const { agents, selectedAgentId } = useAgentStore();
+  const tokenUsage = useChatStore((s) => selectedAgentId ? (s.agentStates[selectedAgentId]?.tokenUsage ?? null) : null);
+  const messages = useChatStore((s) => selectedAgentId ? (s.agentStates[selectedAgentId]?.messages ?? EMPTY_MESSAGES) : EMPTY_MESSAGES);
 
   // Selected agent info
   const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);

@@ -127,12 +127,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         currentSessionId: data.session_id,
       }));
       // Clear chatStore messages immediately so old session's content doesn't leak
-      useChatStore.getState().clearMessages();
-      useChatStore.setState({
-        hasMoreMessages: false,
-        messageCursor: null,
-        isLoadingMore: false,
-      });
+      useChatStore.getState().clearMessages(agentId);
     } catch (e) {
       console.error("[SessionStore] Failed to create session:", e);
     }
@@ -161,12 +156,7 @@ export const useSessionStore = create<SessionState>((set) => ({
 
       // If the deleted session was current, clear chat and update agent map
       if (isCurrent) {
-        useChatStore.getState().clearMessages();
-        useChatStore.setState({
-          hasMoreMessages: false,
-          messageCursor: null,
-          isLoadingMore: false,
-        });
+        useChatStore.getState().clearMessages(agentId);
         if (newCurrentId) {
           useSessionStore.getState().saveSessionForAgent(agentId, newCurrentId);
         }
