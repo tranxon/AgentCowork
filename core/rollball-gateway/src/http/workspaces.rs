@@ -527,8 +527,10 @@ pub fn format_workspace_context(workspaces: &[&WorkspaceDir], primary_workspace:
         ));
     }
 
-    buf.push_str("\nWhen performing file operations, use the directory marked as Current (*) by default.\n");
+    buf.push_str("\nThe directory marked with `*` in the Current column is your currently active workspace.\n");
+    buf.push_str("When performing file operations, use the active workspace directory by default.\n");
     buf.push_str("All listed directories are authorized for access at the indicated permission level.\n");
+    buf.push_str("The 'Primary workspace (agent home)' is the agent's installation directory, not a user-configured workspace.\n");
 
     buf
 }
@@ -544,9 +546,6 @@ pub fn resolve_workspace_context(
     install_path: &str,
 ) -> Option<(String, Option<String>, Option<String>)> {
     let config = load_workspace_config(install_path).ok()?;
-    if config.additional_dirs.is_empty() {
-        return None;
-    }
 
     let context_dirs = compute_context_workspaces(&config.additional_dirs);
     let context_text = format_workspace_context(&context_dirs, install_path);
