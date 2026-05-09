@@ -416,20 +416,14 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     console.log("[ChatStore] Stopping current message for agent:", currentAgentId);
 
-    // Send stop command via WebSocket if available
+    // Send stop command via WebSocket if available.
+    // This sends an Interrupt signal (soft stop) — the agent's inference
+    // is cancelled but the agent process stays alive.
     const ws = get().wsMap[currentAgentId];
     if (ws && ws.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "stop", agentId: currentAgentId }));
-    }
-
-    // Also send via HTTP API as fallback
-    try {
-      await fetch(`${getGatewayUrl()}/api/agents/${currentAgentId}/stop`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-      });
-    } catch (error) {
-      console.warn("[ChatStore] HTTP stop request failed:", error);
+    } else {
+      console.warn("[ChatStore] WebSocket not available for stop, skipping");
     }
 
     // Update UI state immediately
