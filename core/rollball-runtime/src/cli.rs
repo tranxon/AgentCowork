@@ -1026,6 +1026,22 @@ async fn run_gateway_loop(
     }
 
     tracing::info!("Gateway message loop ended");
+
+    // Explicitly close the Grafeo memory store so all pending WAL
+    // entries are checkpointed to the .grafeo file on disk.  Relying
+    // solely on Drop is fragile when the process is terminated via
+    // Ctrl+C or the desktop app kills the child process.
+    if let Some(store) = session_manager.memory_store() {
+        if let Err(e) = store.close() {
+            tracing::warn!(
+                error = %e,
+                "Failed to close Grafeo memory store during shutdown (non-fatal)"
+            );
+        } else {
+            tracing::info!("Grafeo memory store closed (checkpointed to disk)");
+        }
+    }
+
     Ok(())
 }
 
@@ -1509,6 +1525,11 @@ async fn spawn_memory_query_handler(
 }
 
 /// Handle MemoryNodesQuery — list nodes with pagination, filtering, search.
+/// Maximum number of nodes to scan without any filter (keyword or type).
+/// Queries exceeding this limit are rejected to prevent unbounded memory
+/// allocation and excessive CPU usage on the Runtime side.
+const MAX_UNFILTERED_MEMORY_SCAN: usize = 10_000;
+
 fn handle_memory_nodes_query(
     memory_store: Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>>,
     query: rollball_core::proto::MemoryNodesQuery,
@@ -1533,6 +1554,33 @@ fn handle_memory_nodes_query(
 
     // Collect nodes from all memory labels
     let labels = ["Episodic", "Knowledge", "Procedural", "Autobiographical"];
+
+    // P0: Reject unfiltered queries when the database is too large.
+    // Without a filter (keyword or type), the handler scans every node
+    // and builds a full Vec in memory before paginating.  This is safe
+    // for small databases but becomes a denial-of-service vector when
+    // the node count grows into the tens of thousands.
+    let has_filter = !query.keyword.is_empty() || !query.r#type.is_empty();
+    if !has_filter {
+        let total_nodes: usize = labels
+            .iter()
+            .map(|l| graph.nodes_by_label(l).len())
+            .sum();
+        if total_nodes > MAX_UNFILTERED_MEMORY_SCAN {
+            tracing::warn!(
+                total_nodes,
+                max = MAX_UNFILTERED_MEMORY_SCAN,
+                "MemoryNodesQuery: rejected unfiltered scan (too many nodes)"
+            );
+            return ClientPayload::MemoryNodesResult(proto::MemoryNodesResult {
+                total: total_nodes as u64,
+                page: query.page,
+                size: query.size,
+                nodes: vec![],
+            });
+        }
+    }
+
     let mut all_entries: Vec<proto::MemoryNodeEntry> = Vec::new();
 
     for label in &labels {

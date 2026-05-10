@@ -170,8 +170,15 @@ impl AgentCore {
         let db_path = memory_dir.join("private.grafeo");
         match GrafeoStore::open(&db_path) {
             Ok(store) => {
+                // Count existing nodes to confirm data loaded from disk.
+                let graph = store.db().graph_store();
+                let existing: usize = ["Episodic", "Knowledge", "Procedural", "Autobiographical"]
+                    .iter()
+                    .map(|l| graph.nodes_by_label(l).len())
+                    .sum();
                 tracing::info!(
                     path = %db_path.display(),
+                    existing_nodes = existing,
                     "Grafeo memory store opened"
                 );
                 self.memory_store = Some(Arc::new(store));

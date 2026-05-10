@@ -423,9 +423,17 @@ impl MemoryManager {
             props.push(("metadata", Value::from(ids_json.as_str())));
         }
 
-        store
+        let node_id = store
             .store_node(labels::EPISODIC, props)
             .map_err(|e| RuntimeError::Tool(format!("Failed to record episode: {e}")))?;
+
+        tracing::info!(
+            node_id = node_id.0,
+            session_id = %record.session_id,
+            turn_index = record.turn_index,
+            content_len = content.len(),
+            "MemoryManager: recorded episode"
+        );
 
         Ok(())
     }

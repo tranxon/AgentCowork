@@ -50,6 +50,11 @@ const _: () = {
     assert_sync::<GrafeoStore>();
 };
 
+/// Default checkpoint interval: how often the engine flushes dirty
+/// sections to the .grafeo file (via background thread). 5 minutes
+/// balances crash safety against write amplification.
+const DEFAULT_CHECKPOINT_INTERVAL: Duration = Duration::from_secs(300);
+
 impl GrafeoStore {
     /// Open or create a persistent Grafeo database at the given path.
     ///
@@ -60,15 +65,11 @@ impl GrafeoStore {
 
     /// Open or create a persistent Grafeo database with custom HNSW config.
     pub fn open_with_config(path: &Path, config: HnswConfig) -> Result<Self> {
-        let db = GrafeoDB::open(path)?;
+        let engine_config = grafeo_engine::Config::persistent(path)
+            .with_checkpoint_interval(DEFAULT_CHECKPOINT_INTERVAL);
+        let db = GrafeoDB::with_config(engine_config)?;
         let store = Self { db, hnsw_config: config };
         store.init_schema()?;
-
-        // Recover any uncommitted WAL data (e.g. after a crash).
-        // Without this, writes that were only in the WAL and never
-        // checkpointed become invisible to queries.
-        let _ = store.db.wal_checkpoint();
-
         Ok(store)
     }
 

@@ -102,6 +102,10 @@ pub struct GrpcSessionManager {
     /// Pending Gateway→Runtime requests awaiting response.
     /// Maps request_id → oneshot sender for ClientMessage response.
     pending_requests: HashMap<u64, oneshot::Sender<proto::ClientMessage>>,
+    /// Reverse index: conn_id → Vec<request_id>.  Used to clean up
+    /// pending requests when a session is removed (e.g. Runtime crash)
+    /// so the oneshot senders don't leak.
+    session_requests: HashMap<String, Vec<u64>>,
     /// Monotonically increasing request ID counter for Gateway→Runtime requests.
     next_request_id: AtomicU64,
 }
@@ -111,6 +115,7 @@ impl GrpcSessionManager {
         Self {
             sessions: HashMap::new(),
             pending_requests: HashMap::new(),
+            session_requests: HashMap::new(),
             next_request_id: AtomicU64::new(1),
         }
     }
@@ -135,8 +140,24 @@ impl GrpcSessionManager {
         self.sessions.get_mut(conn_id)
     }
 
-    /// Remove a session (on disconnect)
+    /// Remove a session (on disconnect).
+    ///
+    /// Also cleans up any pending Gateway→Runtime requests associated
+    /// with this session so that HTTP handlers awaiting responses don't
+    /// leak memory (the dropped oneshot::Sender will wake them with a
+    /// RecvError).
     pub fn remove_session(&mut self, conn_id: &str) -> Option<GrpcSession> {
+        // Clean up pending requests belonging to this session.
+        if let Some(request_ids) = self.session_requests.remove(conn_id) {
+            for request_id in &request_ids {
+                self.pending_requests.remove(request_id);
+            }
+            tracing::debug!(
+                conn_id = %conn_id,
+                count = request_ids.len(),
+                "Cleaned up pending requests for removed session"
+            );
+        }
         self.sessions.remove(conn_id)
     }
 
@@ -216,23 +237,46 @@ impl GrpcSessionManager {
         // This uses try_send to avoid deadlocking: push_request is async
         // but we cannot hold a sync Mutex across .await.
         // The push channel is unbounded so try_send always succeeds.
-        if let Some(session) = self.find_by_agent_id(agent_id).map(|(_, s)| s) {
-            if !session.try_push_request(server_msg) {
-                tracing::warn!(
-                    agent_id = %agent_id,
-                    "Failed to push memory request to Runtime (channel closed)"
-                );
+        // Look up the session and try to push.  We defer all &mut self
+        // operations to after the find_by_agent_id borrow is released
+        // so the borrow checker can see disjoint field access.
+        let push_result: Result<String, ()> = {
+            match self.find_by_agent_id(agent_id) {
+                Some((conn_id, session)) => {
+                    if !session.try_push_request(server_msg) {
+                        tracing::warn!(
+                            agent_id = %agent_id,
+                            "Failed to push memory request to Runtime (channel closed)"
+                        );
+                        Err(())
+                    } else {
+                        Ok(conn_id.clone())
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        agent_id = %agent_id,
+                        "Agent not connected, cannot send memory request"
+                    );
+                    Err(())
+                }
+            }
+        };
+
+        match push_result {
+            Ok(conn_id) => {
+                // Record the conn_id → request_id mapping so that
+                // remove_session() can clean up when the Runtime disconnects.
+                self.session_requests
+                    .entry(conn_id)
+                    .or_default()
+                    .push(request_id);
+            }
+            Err(()) => {
                 self.pending_requests.remove(&request_id);
                 return None;
             }
-        } else {
-            tracing::warn!(
-                agent_id = %agent_id,
-                "Agent not connected, cannot send memory request"
-            );
-            self.pending_requests.remove(&request_id);
-            return None;
-        }
+        };
 
         Some((request_id, rx))
     }
