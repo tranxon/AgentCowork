@@ -25,6 +25,7 @@ rollball-core.workspace = true
 rollball-memory.workspace = true
 rollball-grafeo.workspace = true
 grafeo-common.workspace = true
+grafeo-core.workspace = true
 async-trait.workspace = true
 tokio.workspace = true
 reqwest = { workspace = true, features = ["blocking"] }

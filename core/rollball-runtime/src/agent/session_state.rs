@@ -27,6 +27,10 @@ pub struct SessionState {
     pub(crate) loop_detector: LoopDetector,
     /// Budget guard (per-session for independent token accounting)
     pub(crate) budget_guard: BudgetGuard,
+    /// Turn counter for Grafeo episodic storage (P1-2 fix).
+    /// Monotonically increasing per session; used as `turn_index` in
+    /// ConversationRecord to preserve chronological order.
+    pub(crate) turn_counter: u32,
 }
 
 impl SessionState {
@@ -42,6 +46,7 @@ impl SessionState {
             conversation,
             loop_detector: LoopDetector::with_defaults(),
             budget_guard: BudgetGuard::new(budget),
+            turn_counter: 0,
         }
     }
 

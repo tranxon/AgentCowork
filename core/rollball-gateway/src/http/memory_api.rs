@@ -126,6 +126,19 @@ pub async fn list_memory_nodes(
     Path(agent_id): Path<String>,
     Query(query): Query<MemoryNodesQuery>,
 ) -> Result<Json<MemoryNodesListResponse>, (StatusCode, Json<ApiError>)> {
+    let page = query.effective_page();
+    let size = query.effective_size();
+
+    tracing::info!(
+        agent_id = %agent_id,
+        page,
+        size,
+        r#type = ?query.r#type,
+        keyword = ?query.keyword,
+        time_range = ?query.time_range,
+        "Memory API: list_memory_nodes"
+    );
+
     // Verify agent exists
     {
         let gw = state.gateway_state.read().await;
@@ -136,96 +149,93 @@ pub async fn list_memory_nodes(
         }
     }
 
-    // Check if memory store is available
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
-
-    let page = query.effective_page();
-    let size = query.effective_size();
-
-    match memory_store {
-        Some(store) => {
-            // Use the memory store to query stats, then build a paginated response
-            match store.stats() {
-                Ok(stats) => {
-                    // Build a hybrid search query if keyword is provided,
-                    // otherwise return stats-based summary
-                    let total = stats.node_count + stats.episode_count;
-
-                    // If keyword filter is provided, perform a search
-                    if let Some(ref keyword) = query.keyword {
-                        let mut mq = rollball_memory::MemoryQuery::new(keyword.clone());
-                        mq.limit = size as usize;
-                        mq.filters = build_memory_filters(&query);
-
-                        match store.hybrid_search(&mq) {
-                            Ok(results) => {
-                                let nodes: Vec<MemoryNodeResponse> = results
-                                    .into_iter()
-                                    .map(|r| MemoryNodeResponse {
-                                        node_id: r.node_id,
-                                        node_type: r.label,
-                                        content: r.content,
-                                        confidence: r.score,
-                                        decay_score: 0.0, // Not directly available from SearchResult
-                                        created_at: 0,    // Not directly available from SearchResult
-                                        last_accessed_at: 0,
-                                        access_count: 0,
-                                        status: "Active".to_string(),
-                                    })
-                                    .collect();
-                                let result_count = nodes.len() as u64;
-                                Ok(Json(MemoryNodesListResponse {
-                                    total: result_count,
-                                    page,
-                                    size,
-                                    nodes,
-                                }))
-                            }
-                            Err(e) => {
-                                tracing::warn!("Memory search failed for agent {}: {}", agent_id, e);
-                                Ok(Json(MemoryNodesListResponse {
-                                    total: 0,
-                                    page,
-                                    size,
-                                    nodes: vec![],
-                                }))
-                            }
-                        }
-                    } else {
-                        // No keyword: return stats-based empty list
-                        // (Full node listing requires iteration support not in current trait)
-                        Ok(Json(MemoryNodesListResponse {
-                            total,
-                            page,
-                            size,
-                            nodes: vec![],
-                        }))
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Memory stats query failed for agent {}: {}", agent_id, e);
-                    Ok(Json(MemoryNodesListResponse {
-                        total: 0,
-                        page,
-                        size,
-                        nodes: vec![],
-                    }))
-                }
-            }
-        }
-        None => {
-            // Memory store not initialized — return empty data with informational message
-            Ok(Json(MemoryNodesListResponse {
-                total: 0,
+    // Query Runtime via gRPC — lock only for push, then wait without lock
+    if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let proto_query = rollball_core::proto::server_message::Payload::MemoryNodesQuery(
+            rollball_core::proto::MemoryNodesQuery {
                 page,
                 size,
-                nodes: vec![],
-            }))
+                r#type: query.r#type.unwrap_or_default(),
+                keyword: query.keyword.unwrap_or_default(),
+                time_range: query.time_range.unwrap_or_default(),
+            },
+        );
+
+        let (request_id, rx) = {
+            let mut mgr = grpc_mgr.lock().await;
+            match mgr.send_memory_request(&agent_id, proto_query) {
+                Some(h) => h,
+                None => return Ok(Json(MemoryNodesListResponse {
+                    total: 0, page, size, nodes: vec![],
+                })),
+            }
+        }; // Lock released here — do NOT hold across the timeout await
+
+        // Wait for response without the lock (avoids deadlock with
+        // inbound handler that needs the lock for fulfill_pending).
+        let response = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(msg)) => Some(msg),
+            Ok(Err(_)) => {
+                tracing::warn!("Runtime dropped memory response sender");
+                None
+            }
+            Err(_) => {
+                tracing::warn!(agent_id = %agent_id, request_id, "Memory request timed out");
+                grpc_mgr.lock().await.cleanup_pending(request_id);
+                None
+            }
+        };
+
+        if let Some(response) = response {
+            if let Some(rollball_core::proto::client_message::Payload::MemoryNodesResult(result)) = response.payload {
+                let node_count = result.nodes.len();
+                tracing::info!(
+                    agent_id = %agent_id,
+                    total = result.total,
+                    node_count,
+                    "Memory API: list_memory_nodes response"
+                );
+                let nodes = result.nodes.into_iter().map(|n| MemoryNodeResponse {
+                    node_id: n.node_id,
+                    node_type: n.node_type,
+                    content: n.content,
+                    confidence: n.confidence,
+                    decay_score: n.decay_score,
+                    created_at: n.created_at,
+                    last_accessed_at: n.last_accessed_at,
+                    access_count: n.access_count,
+                    status: n.status,
+                }).collect();
+                return Ok(Json(MemoryNodesListResponse {
+                    total: result.total,
+                    page: result.page,
+                    size: result.size,
+                    nodes,
+                }));
+            }
+            tracing::warn!(
+                agent_id = %agent_id,
+                "Memory API: unexpected response payload type"
+            );
         }
+    } else {
+        tracing::warn!(
+            agent_id = %agent_id,
+            "Memory API: no gRPC session manager available"
+        );
     }
+
+    // No gRPC connection or query failed — return empty
+    tracing::info!(
+        agent_id = %agent_id,
+        "Memory API: list_memory_nodes returning empty (no connection)"
+    );
+    Ok(Json(MemoryNodesListResponse {
+        total: 0,
+        page,
+        size,
+        nodes: vec![],
+    }))
 }
 
 /// `GET /api/agents/{id}/memory/stats` — get memory statistics for an agent
@@ -243,69 +253,58 @@ pub async fn get_memory_stats(
         }
     }
 
-    // Check if memory store is available
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
+    // Query Runtime via gRPC — lock only for push, then wait without lock
+    if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let proto_query = rollball_core::proto::server_message::Payload::MemoryStatsQuery(
+            rollball_core::proto::MemoryStatsQuery {},
+        );
 
-    match memory_store {
-        Some(store) => {
-            match store.stats() {
-                Ok(stats) => {
-                    let mut by_type = std::collections::HashMap::new();
-                    by_type.insert("Episodic".to_string(), stats.episode_count);
-                    by_type.insert("Knowledge".to_string(), stats.active_node_count);
-                    by_type.insert("Procedural".to_string(), 0); // Not separated in current stats
-                    by_type.insert("Autobiographical".to_string(), 0);
+        let (request_id, rx) = {
+            let mut mgr = grpc_mgr.lock().await;
+            match mgr.send_memory_request(&agent_id, proto_query) {
+                Some(h) => h,
+                None => return Ok(Json(MemoryStatsResponse {
+                    total_nodes: 0, storage_bytes: 0,
+                    by_type: std::collections::HashMap::new(),
+                    by_status: std::collections::HashMap::new(),
+                    avg_decay_score: 0.0, index_health: "not_connected".to_string(),
+                })),
+            }
+        }; // Lock released here
 
-                    let mut by_status = std::collections::HashMap::new();
-                    by_status.insert("Active".to_string(), stats.active_node_count);
-                    by_status.insert("Dormant".to_string(), stats.dormant_node_count);
+        let response = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(msg)) => Some(msg),
+            Ok(Err(_)) => { tracing::warn!("Runtime dropped memory response sender"); None }
+            Err(_) => {
+                tracing::warn!(agent_id = %agent_id, request_id, "Memory request timed out");
+                grpc_mgr.lock().await.cleanup_pending(request_id);
+                None
+            }
+        };
 
-                    let total = stats.node_count + stats.episode_count;
-                    let avg_decay = if total > 0 { 0.5 } else { 0.0 }; // Placeholder
-
-                    let index_health = if stats.index_count > 0 {
-                        "healthy".to_string()
-                    } else {
-                        "no_indexes".to_string()
-                    };
-
-                    Ok(Json(MemoryStatsResponse {
-                        total_nodes: total,
-                        storage_bytes: stats.storage_size_bytes,
-                        by_type,
-                        by_status,
-                        avg_decay_score: avg_decay,
-                        index_health,
-                    }))
-                }
-                Err(e) => {
-                    tracing::warn!("Memory stats query failed for agent {}: {}", agent_id, e);
-                    Ok(Json(MemoryStatsResponse {
-                        total_nodes: 0,
-                        storage_bytes: 0,
-                        by_type: std::collections::HashMap::new(),
-                        by_status: std::collections::HashMap::new(),
-                        avg_decay_score: 0.0,
-                        index_health: "error".to_string(),
-                    }))
-                }
+        if let Some(response) = response {
+            if let Some(rollball_core::proto::client_message::Payload::MemoryStatsResult(result)) = response.payload {
+                return Ok(Json(MemoryStatsResponse {
+                    total_nodes: result.total_nodes,
+                    storage_bytes: result.storage_bytes,
+                    by_type: result.by_type,
+                    by_status: result.by_status,
+                    avg_decay_score: result.avg_decay_score,
+                    index_health: result.index_health,
+                }));
             }
         }
-        None => {
-            // Memory store not initialized — return empty stats
-            Ok(Json(MemoryStatsResponse {
-                total_nodes: 0,
-                storage_bytes: 0,
-                by_type: std::collections::HashMap::new(),
-                by_status: std::collections::HashMap::new(),
-                avg_decay_score: 0.0,
-                index_health: "not_initialized".to_string(),
-            }))
-        }
     }
+
+    // No gRPC connection or query failed — return empty stats
+    Ok(Json(MemoryStatsResponse {
+        total_nodes: 0,
+        storage_bytes: 0,
+        by_type: std::collections::HashMap::new(),
+        by_status: std::collections::HashMap::new(),
+        avg_decay_score: 0.0,
+        index_health: "not_connected".to_string(),
+    }))
 }
 
 /// `DELETE /api/agents/{id}/memory/nodes/{node_id}` — delete a memory node
@@ -323,38 +322,50 @@ pub async fn delete_memory_node(
         }
     }
 
-    // Check if memory store is available
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
+    // Query Runtime via gRPC — lock only for push, then wait without lock
+    if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let proto_query = rollball_core::proto::server_message::Payload::MemoryDeleteQuery(
+            rollball_core::proto::MemoryDeleteQuery { node_id },
+        );
 
-    match memory_store {
-        Some(_store) => {
-            // Current MemoryStore trait does not expose a direct delete-by-ID method.
-            // Nodes transition via decay (Active → Dormant → Purge).
-            // For now, force-reactivate then mark as consolidated for cleanup.
-            tracing::info!(
-                "Memory node delete requested: agent={}, node_id={}",
-                agent_id, node_id
-            );
-            Ok(Json(DeleteNodeResponse {
-                node_id,
-                deleted: false,
-                message: "Direct node deletion not supported; use decay/purge lifecycle".to_string(),
-            }))
-        }
-        None => {
-            Err(ApiError::service_unavailable("Memory store not initialized"))
+        let (request_id, rx) = {
+            let mut mgr = grpc_mgr.lock().await;
+            match mgr.send_memory_request(&agent_id, proto_query) {
+                Some(h) => h,
+                None => return Err(ApiError::service_unavailable("Agent not connected via gRPC")),
+            }
+        }; // Lock released here
+
+        let response = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(msg)) => Some(msg),
+            Ok(Err(_)) => { tracing::warn!("Runtime dropped memory response sender"); None }
+            Err(_) => {
+                tracing::warn!(agent_id = %agent_id, request_id, "Memory request timed out");
+                grpc_mgr.lock().await.cleanup_pending(request_id);
+                None
+            }
+        };
+
+        if let Some(response) = response {
+            if let Some(rollball_core::proto::client_message::Payload::MemoryDeleteResult(result)) = response.payload {
+                return Ok(Json(DeleteNodeResponse {
+                    node_id: result.node_id,
+                    deleted: result.deleted,
+                    message: result.message,
+                }));
+            }
         }
     }
+
+    // No gRPC connection — return error
+    Err(ApiError::service_unavailable("Agent not connected via gRPC"))
 }
 
 /// `POST /api/agents/{id}/memory/consolidate` — trigger memory consolidation
 pub async fn trigger_consolidate(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
-    Json(_body): Json<ConsolidateRequest>,
+    Json(body): Json<ConsolidateRequest>,
 ) -> Result<Json<ConsolidateResponse>, (StatusCode, Json<ApiError>)> {
     // Verify agent exists
     {
@@ -366,92 +377,48 @@ pub async fn trigger_consolidate(
         }
     }
 
-    // Check if memory store is available
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
+    // Query Runtime via gRPC — lock only for push, then wait without lock
+    if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+        let proto_query = rollball_core::proto::server_message::Payload::MemoryConsolidateQuery(
+            rollball_core::proto::MemoryConsolidateQuery {
+                force: body.force.unwrap_or(false),
+                retention_days: body.retention_days.unwrap_or(0),
+            },
+        );
 
-    match memory_store {
-        Some(store) => {
-            // Run decay scan to transition nodes
-            let decay_config = rollball_memory::DecayConfig::default();
-            let start = std::time::Instant::now();
-
-            let mut episodes_consolidated = 0u64;
-            let mut knowledge_generated = 0u64;
-
-            match store.run_decay_scan(&decay_config) {
-                Ok(result) => {
-                    episodes_consolidated = result.reactivated;
-                    knowledge_generated = result.to_dormant;
-                    tracing::info!(
-                        "Memory consolidation completed for agent {}: {} dormant, {} reactivated",
-                        agent_id, result.to_dormant, result.reactivated
-                    );
-                }
-                Err(e) => {
-                    tracing::warn!("Memory consolidation failed for agent {}: {}", agent_id, e);
-                }
+        let (request_id, rx) = {
+            let mut mgr = grpc_mgr.lock().await;
+            match mgr.send_memory_request(&agent_id, proto_query) {
+                Some(h) => h,
+                None => return Err(ApiError::service_unavailable("Agent not connected via gRPC")),
             }
+        }; // Lock released here
 
-            // Also cleanup old consolidated episodes
-            if let Some(retention_days) = _body.retention_days {
-                let duration = std::time::Duration::from_secs(retention_days as u64 * 24 * 3600);
-                if let Err(e) = store.cleanup_episodes(duration) {
-                    tracing::warn!("Episode cleanup failed for agent {}: {}", agent_id, e);
-                }
+        let response = match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+            Ok(Ok(msg)) => Some(msg),
+            Ok(Err(_)) => { tracing::warn!("Runtime dropped memory response sender"); None }
+            Err(_) => {
+                tracing::warn!(agent_id = %agent_id, request_id, "Memory request timed out");
+                grpc_mgr.lock().await.cleanup_pending(request_id);
+                None
             }
-
-            let duration_ms = start.elapsed().as_millis() as u64;
-
-            Ok(Json(ConsolidateResponse {
-                started: true,
-                duration_ms,
-                episodes_consolidated,
-                knowledge_nodes_generated: knowledge_generated,
-                message: "Consolidation completed".to_string(),
-            }))
-        }
-        None => {
-            Err(ApiError::service_unavailable("Memory store not initialized"))
-        }
-    }
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────
-
-/// Build MemoryFilters from query parameters
-fn build_memory_filters(query: &MemoryNodesQuery) -> rollball_memory::MemoryFilters {
-    let mut filters = rollball_memory::MemoryFilters::default();
-
-    if let Some(ref node_type) = query.r#type {
-        let type_filter = match node_type.as_str() {
-            "Knowledge" => Some(rollball_memory::NodeTypeFilter::Knowledge),
-            "Episodic" => Some(rollball_memory::NodeTypeFilter::Episodic),
-            "Procedural" => Some(rollball_memory::NodeTypeFilter::Procedural),
-            "Autobiographical" => Some(rollball_memory::NodeTypeFilter::Autobiographical),
-            _ => None,
         };
-        if let Some(tf) = type_filter {
-            filters.node_types = vec![tf];
+
+        if let Some(response) = response {
+            if let Some(rollball_core::proto::client_message::Payload::MemoryConsolidateResult(result)) = response.payload {
+                return Ok(Json(ConsolidateResponse {
+                    started: result.started,
+                    duration_ms: result.duration_ms,
+                    episodes_consolidated: result.episodes_consolidated,
+                    knowledge_nodes_generated: result.knowledge_nodes_generated,
+                    message: result.message,
+                }));
+            }
         }
     }
 
-    if let Some(ref time_range) = query.time_range {
-        let now = chrono::Utc::now();
-        let from = match time_range.as_str() {
-            "1h" => now - chrono::Duration::hours(1),
-            "1d" => now - chrono::Duration::days(1),
-            "7d" => now - chrono::Duration::days(7),
-            "30d" => now - chrono::Duration::days(30),
-            "all" => return filters, // No filter
-            _ => return filters,
-        };
-        filters.time_range = Some((from, now));
-    }
-
-    filters
+    // No gRPC connection — return error
+    Err(ApiError::service_unavailable("Agent not connected via gRPC"))
 }
 
 #[cfg(test)]
@@ -498,33 +465,6 @@ mod tests {
         let req: ConsolidateRequest = serde_json::from_str(json).unwrap();
         assert!(req.force.is_none());
         assert!(req.retention_days.is_none());
-    }
-
-    #[test]
-    fn test_build_memory_filters_type() {
-        let query = MemoryNodesQuery {
-            page: None,
-            size: None,
-            r#type: Some("Knowledge".to_string()),
-            keyword: None,
-            time_range: None,
-        };
-        let filters = build_memory_filters(&query);
-        assert_eq!(filters.node_types.len(), 1);
-        assert_eq!(filters.node_types[0], rollball_memory::NodeTypeFilter::Knowledge);
-    }
-
-    #[test]
-    fn test_build_memory_filters_time_range() {
-        let query = MemoryNodesQuery {
-            page: None,
-            size: None,
-            r#type: None,
-            keyword: None,
-            time_range: Some("7d".to_string()),
-        };
-        let filters = build_memory_filters(&query);
-        assert!(filters.time_range.is_some());
     }
 
     #[test]

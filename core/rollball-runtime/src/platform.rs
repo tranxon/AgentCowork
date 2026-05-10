@@ -85,15 +85,14 @@ pub fn find_git_bash() -> Option<(String, String)> {
     if let Ok(output) = std::process::Command::new("where")
         .arg("bash")
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Some(path_str) = stdout.lines().next() {
-                let trimmed = path_str.trim();
-                if !trimmed.is_empty() {
-                    tracing::info!(path = %trimmed, "Found Git Bash via PATH (where bash)");
-                    return Some(("bash".to_string(), trimmed.to_string()));
-                }
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        if let Some(path_str) = stdout.lines().next() {
+            let trimmed = path_str.trim();
+            if !trimmed.is_empty() {
+                tracing::info!(path = %trimmed, "Found Git Bash via PATH (where bash)");
+                return Some(("bash".to_string(), trimmed.to_string()));
             }
         }
     }

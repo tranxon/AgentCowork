@@ -284,8 +284,8 @@ pub async fn get_conversations(
         }
     }
 
-    // Legacy fallback: use Grafeo memory store
-    let conversations = get_conversations_legacy(&state, &agent_id).await;
+    // No running agent with IPC session — return empty list
+    let conversations = vec![];
     Ok(Json(ConversationsListResponse { conversations }))
 }
 
@@ -387,11 +387,10 @@ pub async fn get_latest_conversation(
         }
     }
 
-    // Legacy fallback: use Grafeo memory store
-    let (session_id, messages) = get_latest_conversation_legacy(&state, &agent_id).await;
+    // No running agent with IPC session — return empty response
     Ok(Json(LatestConversationResponse {
-        session_id,
-        messages,
+        session_id: String::new(),
+        messages: vec![],
     }))
 }
 
@@ -1282,144 +1281,6 @@ fn parse_iso8601_to_unix(ts: &str) -> i64 {
     chrono::DateTime::parse_from_rfc3339(ts)
         .map(|dt| dt.timestamp())
         .unwrap_or(0)
-}
-
-// ── Legacy Grafeo-based conversation queries ──────────────────────────────────
-
-/// Legacy implementation of get_conversations using Grafeo memory store.
-async fn get_conversations_legacy(
-    state: &AppState,
-    agent_id: &str,
-) -> Vec<ConversationSummary> {
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
-
-    match memory_store {
-        Some(store) => match store.get_episodes(None, 10000) {
-            Ok(episodes) => {
-                let prefix = format!("{}#", agent_id);
-                let episodes: Vec<_> = episodes
-                    .into_iter()
-                    .filter(|ep| ep.session_id.starts_with(&prefix))
-                    .collect();
-
-                let mut session_map: std::collections::HashMap<
-                    String,
-                    Vec<rollball_memory::Episode>,
-                > = std::collections::HashMap::new();
-                for ep in episodes {
-                    session_map
-                        .entry(ep.session_id.clone())
-                        .or_default()
-                        .push(ep);
-                }
-
-                let mut conversations: Vec<ConversationSummary> = session_map
-                    .into_iter()
-                    .map(|(session_id, mut eps)| {
-                        eps.sort_by_key(|a| a.timestamp);
-                        let started_at =
-                            eps.first().map(|e| e.timestamp.timestamp()).unwrap_or(0);
-                        let last_message_at =
-                            eps.last().map(|e| e.timestamp.timestamp()).unwrap_or(0);
-                        ConversationSummary {
-                            session_id,
-                            started_at,
-                            message_count: eps.len() as u32,
-                            last_message_at,
-                        }
-                    })
-                    .collect();
-
-                conversations.sort_by_key(|b| std::cmp::Reverse(b.last_message_at));
-                conversations
-            }
-            Err(e) => {
-                tracing::warn!("Failed to get episodes for agent {}: {}", agent_id, e);
-                vec![]
-            }
-        },
-        None => vec![],
-    }
-}
-
-/// Legacy implementation of get_latest_conversation using Grafeo memory store.
-async fn get_latest_conversation_legacy(
-    state: &AppState,
-    agent_id: &str,
-) -> (String, Vec<ConversationMessage>) {
-    let memory_store = {
-        let gw = state.gateway_state.read().await;
-        gw.memory_store.clone()
-    };
-
-    match memory_store {
-        Some(store) => match store.get_episodes(None, 10000) {
-            Ok(episodes) => {
-                let prefix = format!("{}#", agent_id);
-                let episodes: Vec<_> = episodes
-                    .into_iter()
-                    .filter(|ep| ep.session_id.starts_with(&prefix))
-                    .collect();
-
-                if episodes.is_empty() {
-                    return (String::new(), vec![]);
-                }
-
-                let mut session_latest: std::collections::HashMap<String, i64> =
-                    std::collections::HashMap::new();
-                for ep in &episodes {
-                    let ts = ep.timestamp.timestamp();
-                    let current = session_latest
-                        .entry(ep.session_id.clone())
-                        .or_insert(ts);
-                    if ts > *current {
-                        *current = ts;
-                    }
-                }
-
-                let latest_session = session_latest
-                    .into_iter()
-                    .max_by_key(|(_, ts)| *ts)
-                    .map(|(sid, _)| sid)
-                    .unwrap_or_default();
-
-                if latest_session.is_empty() {
-                    return (String::new(), vec![]);
-                }
-
-                let mut session_eps: Vec<rollball_memory::Episode> = episodes
-                    .into_iter()
-                    .filter(|ep| ep.session_id == latest_session)
-                    .collect();
-
-                session_eps.sort_by(|a, b| {
-                    a.turn_index
-                        .cmp(&b.turn_index)
-                        .then_with(|| a.timestamp.cmp(&b.timestamp))
-                });
-
-                let messages: Vec<ConversationMessage> = session_eps
-                    .into_iter()
-                    .map(|ep| ConversationMessage {
-                        role: ep.role,
-                        content: ep.content,
-                        timestamp: ep.timestamp.timestamp(),
-                        turn_index: ep.turn_index,
-                    })
-                    .collect();
-
-                (latest_session, messages)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to get episodes for agent {}: {}", agent_id, e);
-                (String::new(), vec![])
-            }
-        },
-        None => (String::new(), vec![]),
-    }
 }
 
 /// Push LLMConfigDelivery to a specific agent after a model_switch.

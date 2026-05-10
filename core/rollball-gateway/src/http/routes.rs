@@ -15,6 +15,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::gateway::state::GatewayState;
+use crate::grpc::SharedGrpcSessionMgr;
 use crate::http::auth::HttpAuth;
 use crate::ipc::session::SessionManager;
 
@@ -142,6 +143,8 @@ pub struct AppState {
     pub session_pending: SessionPendingRequests,
     /// Tracing reload handle for dynamic log level changes
     pub log_reload_handle: Option<crate::LogReloadHandle>,
+    /// gRPC session manager for Gateway→Runtime request-response
+    pub grpc_session_mgr: Option<SharedGrpcSessionMgr>,
 }
 
 impl AppState {
@@ -163,6 +166,7 @@ impl AppState {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
             }),
             log_reload_handle: None,
+            grpc_session_mgr: None,
         }
     }
 
@@ -186,6 +190,7 @@ impl AppState {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
             }),
             log_reload_handle,
+            grpc_session_mgr: None,
         }
     }
 }

@@ -21,6 +21,9 @@ pub struct ContextBuilder {
     tool_definitions: Option<Vec<serde_json::Value>>,
     /// Model override from Gateway LLMConfigDelivery (takes precedence over manifest suggested_model)
     override_model: Option<String>,
+    /// Retrieved memory context (from Grafeo) for injection into system prompt.
+    /// Set by AgentLoop before each build via `set_retrieved_memory()`.
+    retrieved_memory: Option<String>,
 }
 
 impl ContextBuilder {
@@ -32,6 +35,7 @@ impl ContextBuilder {
             workspace_context: None,
             tool_definitions: None,
             override_model: None,
+            retrieved_memory: None,
         }
     }
 
@@ -95,6 +99,32 @@ impl ContextBuilder {
         self.workspace_context = Some(context_text);
     }
 
+    /// Set retrieved memory context for injection into the system prompt.
+    ///
+    /// Called by AgentLoop before each `build()` invocation with memories
+    /// retrieved from Grafeo via MemoryManager.
+    pub fn set_retrieved_memory(&mut self, memory_text: String) {
+        if !memory_text.is_empty() {
+            tracing::debug!(
+                memory_len = memory_text.len(),
+                "ContextBuilder retrieved memory context set"
+            );
+            self.retrieved_memory = Some(memory_text);
+        }
+    }
+
+    /// Clear retrieved memory context.
+    ///
+    /// Must be called at the start of each `run()` invocation to prevent
+    /// stale memory from previous turns leaking into the next LLM call.
+    /// See P0 fix: ContextBuilder reused across turns in SessionTask loop.
+    pub fn clear_retrieved_memory(&mut self) {
+        if self.retrieved_memory.is_some() {
+            tracing::debug!("ContextBuilder retrieved memory context cleared (stale prevention)");
+            self.retrieved_memory = None;
+        }
+    }
+
     /// Build the complete ChatRequest for the LLM
     pub fn build(
         &self,
@@ -118,7 +148,10 @@ impl ContextBuilder {
             system_content.push_str(&format!("\n\n{workspace}"));
         }
 
-        // 2.5 Autobiographical context (Phase 1: skip, Phase 2: from Grafeo)
+        // 2.5 Retrieved memory context from Grafeo (long-term memory)
+        if let Some(ref memory) = self.retrieved_memory {
+            system_content.push_str(&format!("\n\n## Relevant Memories\n{memory}"));
+        }
 
         // 3. Environment platform info (runtime detection)
         let shell_info = crate::platform::detected_shell();

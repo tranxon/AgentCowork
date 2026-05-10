@@ -8,5 +8,6 @@
 pub mod server;
 pub mod dispatch;
 
-// Re-export the main entry point
+// Re-export the main entry point and types
 pub use server::start_grpc_server;
+pub use server::SharedGrpcSessionMgr;

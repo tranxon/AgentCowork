@@ -227,9 +227,9 @@ async fn test_tool_call_with_valid_json_arguments() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Read the file test.txt", &context_builder).await;
+    let result = agent_loop.run("Read the file test.txt", &mut context_builder).await;
     assert!(result.is_ok(), "Valid tool call should succeed: {:?}", result);
 }
 
@@ -269,9 +269,9 @@ async fn test_tool_call_with_invalid_json_arguments() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Read a file", &context_builder).await;
+    let result = agent_loop.run("Read a file", &mut context_builder).await;
     // Should NOT panic — the invalid JSON is caught and produces a graceful error
     assert!(result.is_ok(), "Invalid JSON arguments should not crash: {:?}", result);
 }
@@ -308,9 +308,9 @@ async fn test_tool_call_with_empty_arguments() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Read a file with no args", &context_builder).await;
+    let result = agent_loop.run("Read a file with no args", &mut context_builder).await;
     assert!(result.is_ok(), "Empty arguments should not crash: {:?}", result);
 }
 
@@ -1016,9 +1016,9 @@ async fn test_provider_error_does_not_crash_runtime() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Hello", &context_builder).await;
+    let result = agent_loop.run("Hello", &mut context_builder).await;
     // Should return an error, not panic
     assert!(result.is_err(), "Provider error should propagate as Err");
 }
@@ -1071,9 +1071,9 @@ async fn test_multiple_concurrent_tool_calls() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Read both files", &context_builder).await;
+    let result = agent_loop.run("Read both files", &mut context_builder).await;
     assert!(result.is_ok(), "Concurrent tool calls should succeed: {:?}", result);
 
     // Verify history has the tool call messages
@@ -1119,9 +1119,9 @@ async fn test_unknown_tool_returns_error_not_panic() {
     let budget = test_budget();
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
 
-    let result = agent_loop.run("Use a nonexistent tool", &context_builder).await;
+    let result = agent_loop.run("Use a nonexistent tool", &mut context_builder).await;
     assert!(result.is_ok(), "Unknown tool should not crash: {:?}", result);
 }
 

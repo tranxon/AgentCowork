@@ -139,7 +139,7 @@ impl SessionTask {
                         );
                         continue;
                     }
-                    match agent_loop.run(&content, &context_builder).await {
+                    match agent_loop.run(&content, &mut context_builder).await {
                         Ok(response) => {
                             tracing::info!(
                                 session_id = %self.session_id,

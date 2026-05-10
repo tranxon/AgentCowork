@@ -603,7 +603,10 @@ fn metadata_end_offset(file: &mut std::fs::File) -> std::io::Result<u64> {
     let mut reader = BufReader::new(file.try_clone()?);
     let mut first_line = String::new();
     reader.read_line(&mut first_line)?;
-    Ok(first_line.len() as u64 + 1) // +1 for '\n'
+    // read_line includes all bytes through the newline in the returned string;
+    // first_line.len() is therefore the exact byte count of the first line,
+    // which equals the file offset where the second line begins.
+    Ok(first_line.len() as u64)
 }
 
 /// Find the latest session in the conversations directory.

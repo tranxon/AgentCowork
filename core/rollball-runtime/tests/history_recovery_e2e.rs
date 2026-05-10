@@ -322,9 +322,9 @@ async fn test_agent_restart_with_polluted_history_no_400() {
     }
 
     // Run with a new user message — should NOT panic or error
-    let context_builder = ContextBuilder::new("You are a test assistant.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a test assistant.".to_string());
     let result = agent_loop
-        .run("New message after restart", &context_builder)
+        .run("New message after restart", &mut context_builder)
         .await;
     assert!(
         result.is_ok(),

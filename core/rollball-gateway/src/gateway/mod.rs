@@ -384,6 +384,7 @@ impl Gateway {
             tracing::warn!("Failed to auto-start System Agent: {}", e);
         }
 
+
         // Wrap state in Arc<RwLock> for concurrent access in multi-connection mode.
         // std::mem::take replaces self.state with Default so the Arc takes ownership.
         // This is safe because run() is the terminal daemon method that blocks forever.
@@ -515,6 +516,12 @@ impl Gateway {
         let http_session_pending = Some(session_pending.clone());
         let grpc_session_pending = Some(session_pending);
 
+        // Task #12: Create shared gRPC session manager for Gateway→Runtime request-response.
+        // Both the gRPC server and HTTP server share this instance.
+        let grpc_session_mgr: crate::grpc::SharedGrpcSessionMgr =
+            Arc::new(tokio::sync::Mutex::new(crate::grpc::server::GrpcSessionManager::new()));
+        let http_grpc_session_mgr = Some(grpc_session_mgr.clone());
+
         // Start HTTP server in a separate tokio task (parallel with IPC)
         let http_state = shared_state.clone();
         let http_socket_path = socket_path.clone();
@@ -526,6 +533,7 @@ impl Gateway {
                 &http_socket_path,
                 &data_dir_path,
                 http_session_mgr,
+                http_grpc_session_mgr,
                 http_bridge_tx,
                 http_models_cache,
                 http_session_pending,
@@ -539,7 +547,6 @@ impl Gateway {
         // The gRPC server registers each connection in ipc_session_mgr,
         // so HTTP handlers find gRPC-connected agents via the same path.
         let grpc_state = shared_state.clone();
-        let grpc_session_mgr = session_mgr.clone();
         let grpc_perm_store = shared_perm_store.clone();
         let grpc_bridge_tx = Some(bridge_tx.clone());
         let (capability_tx, _) = tokio::sync::broadcast::channel::<rollball_core::protocol::GatewayResponse>(64);
@@ -549,6 +556,7 @@ impl Gateway {
                 grpc_addr,
                 grpc_state,
                 grpc_session_mgr,
+                session_mgr,
                 grpc_perm_store,
                 capability_tx,
                 grpc_bridge_tx,

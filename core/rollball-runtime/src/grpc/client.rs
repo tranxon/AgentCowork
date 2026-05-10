@@ -56,6 +56,11 @@ pub struct GatewayGrpcClient {
     connected: Arc<AtomicBool>,
     /// S4.5.2: Pending usage reports buffered during disconnect
     pending_reports: Arc<Mutex<VecDeque<budget::UsageReport>>>,
+    /// Memory query receiver — inbound loop forwards MemoryXxxQuery here.
+    /// The agent loop polls this channel and handles memory operations.
+    /// Wrapped in Option to allow take_memory_query_rx() extraction
+    /// for tokio::select! without &mut self conflicts.
+    memory_query_rx: Option<mpsc::UnboundedReceiver<(u64, proto::server_message::Payload)>>,
 }
 
 impl GatewayGrpcClient {
@@ -95,7 +100,11 @@ impl GatewayGrpcClient {
             HashMap::<u64, oneshot::Sender<proto::ServerMessage>>::new(),
         ));
         let (push_tx, push_rx) = mpsc::unbounded_channel();
+        let (memory_query_tx, memory_query_rx) = mpsc::unbounded_channel();
         let connected = Arc::new(AtomicBool::new(true));
+
+        // Clone outbound_tx for the spawned task (for memory query responses)
+        let _outbound_tx_clone = outbound_tx.clone();
 
         // Spawn inbound receive loop.
         // When this task exits, push_tx is dropped, causing push_rx.recv() to
@@ -106,6 +115,16 @@ impl GatewayGrpcClient {
             loop {
                 match inbound.message().await {
                     Ok(Some(msg)) => {
+                        // Check if this is a memory API query from Gateway.
+                        // These require non-trivial request_id for Gateway→Runtime
+                        // request-response, and are forwarded to the agent loop.
+                        if is_memory_query_payload(&msg) {
+                            if let Some(payload) = msg.payload {
+                                let _ = memory_query_tx.send((msg.request_id, payload));
+                            }
+                            continue;
+                        }
+
                         if msg.request_id == 0 {
                             // Server-push message → forward to push_rx
                             if push_tx.send(msg).is_err() {
@@ -149,6 +168,7 @@ impl GatewayGrpcClient {
             push_rx,
             connected,
             pending_reports: Arc::new(Mutex::new(VecDeque::new())),
+            memory_query_rx: Some(memory_query_rx),
         })
     }
 
@@ -251,6 +271,17 @@ impl GatewayGrpcClient {
     /// the shared gRPC stream without needing a full `GatewayGrpcClient`.
     pub fn outbound_sender(&self) -> mpsc::Sender<proto::ClientMessage> {
         self.outbound_tx.clone()
+    }
+
+    /// Take the memory query receiver out of the client.
+    ///
+    /// This is needed so the agent loop can `tokio::select!` on both
+    /// `recv_message()` and the memory query channel without &mut self
+    /// conflicts. Returns None if already taken.
+    pub fn take_memory_query_rx(
+        &mut self,
+    ) -> Option<mpsc::UnboundedReceiver<(u64, proto::server_message::Payload)>> {
+        self.memory_query_rx.take()
     }
 
     // ── Status ─────────────────────────────────────────────────────────────
@@ -1155,7 +1186,30 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
             tracing::warn!("Received ServerMessage with empty payload");
             GatewayResponse::UsageReportAck {}
         }
+
+        // Memory API query variants — handled by the agent loop via
+        // dedicated GatewayResponse variants, not proto_to_gateway_response.
+        _ => {
+            tracing::warn!(
+                "Received unrecognized ServerMessage payload variant"
+            );
+            GatewayResponse::UsageReportAck {}
+        }
     }
+}
+
+/// Check if a ServerMessage payload is a memory API query from Gateway.
+///
+/// These are gateway→runtime requests that bypass the push channel and
+/// are forwarded to the agent loop via `memory_query_tx`.
+fn is_memory_query_payload(msg: &proto::ServerMessage) -> bool {
+    matches!(
+        msg.payload,
+        Some(ServerPayload::MemoryNodesQuery(_))
+            | Some(ServerPayload::MemoryStatsQuery(_))
+            | Some(ServerPayload::MemoryConsolidateQuery(_))
+            | Some(ServerPayload::MemoryDeleteQuery(_))
+    )
 }
 
 #[cfg(test)]

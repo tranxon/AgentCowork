@@ -253,6 +253,20 @@ pub async fn dispatch_grpc_request(
                 payload: None,
             };
         }
+
+        // Memory API response variants (MemoryNodesResult, MemoryStatsResult, etc.)
+        // are handled by the gRPC session manager's pending request map,
+        // not through the dispatch pathway.
+        _ => {
+            tracing::debug!(
+                request_id,
+                "ClientMessage payload not handled by dispatch (handled elsewhere)"
+            );
+            return proto::ServerMessage {
+                request_id,
+                payload: None,
+            };
+        }
     };
 
     // Convert domain GatewayResponse → proto ServerMessage
