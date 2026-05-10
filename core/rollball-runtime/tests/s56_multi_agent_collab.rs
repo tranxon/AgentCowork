@@ -294,12 +294,12 @@ async fn test_s56_calendar_create_event() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Calendar Agent. Help manage calendar events.".to_string(),
     );
 
     let result = agent_loop
-        .run("Create a team standup event at 9am for daily sync", &context)
+        .run("Create a team standup event at 9am for daily sync", &mut context)
         .await;
     assert!(result.is_ok(), "Calendar create should succeed: {:?}", result);
 
@@ -331,12 +331,12 @@ async fn test_s56_calendar_query_events() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Calendar Agent. Help manage calendar events.".to_string(),
     );
 
     let result = agent_loop
-        .run("Show me my meetings", &context)
+        .run("Show me my meetings", &mut context)
         .await;
     assert!(result.is_ok(), "Calendar query should succeed: {:?}", result);
 
@@ -368,12 +368,12 @@ async fn test_s56_calendar_delete_event() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Calendar Agent. Help manage calendar events.".to_string(),
     );
 
     let result = agent_loop
-        .run("Delete event evt-001", &context)
+        .run("Delete event evt-001", &mut context)
         .await;
     assert!(result.is_ok(), "Calendar delete should succeed: {:?}", result);
 
@@ -587,12 +587,12 @@ async fn test_s56_weather_to_calendar_collaboration() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Weather Agent. Check weather and create calendar alerts when needed.".to_string(),
     );
 
     let result = agent_loop
-        .run("Check Shanghai weather and create a reminder about it", &context)
+        .run("Check Shanghai weather and create a reminder about it", &mut context)
         .await;
     assert!(
         result.is_ok(),
@@ -792,12 +792,12 @@ async fn test_s56_doc_writer_multi_step_outline_and_write() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Document Writing Agent. Break down tasks into steps.".to_string(),
     );
 
     let result = agent_loop
-        .run("Write a technical document about system architecture. Start with an outline and then write the introduction.", &context)
+        .run("Write a technical document about system architecture. Start with an outline and then write the introduction.", &mut context)
         .await;
     assert!(result.is_ok(), "Doc writer multi-step should succeed: {:?}", result);
 
@@ -839,12 +839,12 @@ async fn test_s56_doc_writer_revise_section() {
     };
 
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context = ContextBuilder::new(
+    let mut context = ContextBuilder::new(
         "You are a Document Writing Agent. Revise sections as requested.".to_string(),
     );
 
     let result = agent_loop
-        .run("Revise the Architecture section to mention microservices", &context)
+        .run("Revise the Architecture section to mention microservices", &mut context)
         .await;
     assert!(result.is_ok(), "Doc writer revise should succeed: {:?}", result);
 

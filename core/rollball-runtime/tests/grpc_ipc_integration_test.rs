@@ -25,6 +25,7 @@ use rollball_core::proto;
 use rollball_core::protocol::{GatewayResponse, ProtocolType};
 
 use rollball_gateway::gateway::state::{AgentInfo, GatewayState, RunningAgentInfo};
+use rollball_gateway::grpc::server::GrpcSessionManager;
 use rollball_gateway::http::routes::{BridgeEvent, SessionPendingRequests, SharedSessionMgr};
 use rollball_gateway::ipc::server::{SharedPermissionStore, SharedState};
 use rollball_gateway::ipc::session::SessionManager;
@@ -138,6 +139,8 @@ impl TestServer {
         drop(listener); // Free the port so tonic can bind
 
         let state_clone = Arc::clone(&state);
+        let grpc_session_mgr = Arc::new(Mutex::new(GrpcSessionManager::new()));
+        let grpc_session_mgr_clone = Arc::clone(&grpc_session_mgr);
         let session_mgr_clone = Arc::clone(&session_mgr);
         let perm_store_clone = Arc::clone(&perm_store);
         let capability_tx_clone = capability_tx.clone();
@@ -148,6 +151,7 @@ impl TestServer {
             let _ = rollball_gateway::grpc::start_grpc_server(
                 addr,
                 state_clone,
+                grpc_session_mgr_clone,
                 session_mgr_clone,
                 perm_store_clone,
                 capability_tx_clone,

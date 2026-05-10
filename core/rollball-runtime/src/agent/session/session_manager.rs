@@ -229,6 +229,12 @@ impl SessionManager {
         self.core.manifest().llm.suggested_provider.clone()
     }
 
+    /// Access the Grafeo memory store from the shared core.
+    /// Returns None if the memory store was not initialized.
+    pub(crate) fn memory_store(&self) -> Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>> {
+        self.core.memory_store()
+    }
+
     /// Reap completed sessions (remove handles for tasks that have finished).
     ///
     /// Call this periodically to avoid memory leaks from accumulated

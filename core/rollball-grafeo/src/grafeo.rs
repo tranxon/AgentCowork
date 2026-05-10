@@ -63,6 +63,12 @@ impl GrafeoStore {
         let db = GrafeoDB::open(path)?;
         let store = Self { db, hnsw_config: config };
         store.init_schema()?;
+
+        // Recover any uncommitted WAL data (e.g. after a crash).
+        // Without this, writes that were only in the WAL and never
+        // checkpointed become invisible to queries.
+        let _ = store.db.wal_checkpoint();
+
         Ok(store)
     }
 

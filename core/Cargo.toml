@@ -53,7 +53,7 @@ clap = { version = "4.5", features = ["derive", "env"] }
 
 # Database
 rusqlite = { version = "0.37", features = ["bundled"] }
-grafeo-engine = { version = "0.5.39", features = [
+grafeo-engine = { version = "0.5.39", default-features = false, features = [
     "lpg",
     "gql",
     "vector-index",
@@ -64,6 +64,7 @@ grafeo-engine = { version = "0.5.39", features = [
     "algos",
     "cdc",
     "parallel",
+    "regex",
 ] }
 grafeo-common = "0.5.40"
 grafeo-core = "0.5.40"

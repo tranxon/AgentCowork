@@ -13,7 +13,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use tonic::{Request, Response, Status, Streaming};
 
 use rollball_core::proto;
@@ -76,6 +76,22 @@ impl GrpcSession {
     pub async fn push_proto(&self, msg: proto::ServerMessage) -> bool {
         self.push_tx.send(Ok(msg)).await.is_ok()
     }
+
+    /// Push a proto ServerMessage with a non-zero request_id.
+    /// Used for request-response patterns where the Runtime sends a
+    /// ClientMessage response with the same request_id.
+    pub async fn push_request(&self, msg: proto::ServerMessage) -> bool {
+        debug_assert_ne!(msg.request_id, 0, "push_request expects non-zero request_id");
+        self.push_tx.send(Ok(msg)).await.is_ok()
+    }
+
+    /// Non-async version of push_request for use in sync contexts.
+    /// Uses try_send on the bounded mpsc channel (capacity 32).
+    /// Returns false if the channel is closed; rarely fails due to full buffer.
+    pub fn try_push_request(&self, msg: proto::ServerMessage) -> bool {
+        debug_assert_ne!(msg.request_id, 0, "try_push_request expects non-zero request_id");
+        self.push_tx.try_send(Ok(msg)).is_ok()
+    }
 }
 
 // ── GrpcSessionManager ──────────────────────────────────────────────────────
@@ -83,12 +99,19 @@ impl GrpcSession {
 /// Manages all active gRPC sessions.
 pub struct GrpcSessionManager {
     sessions: HashMap<String, GrpcSession>,
+    /// Pending Gateway→Runtime requests awaiting response.
+    /// Maps request_id → oneshot sender for ClientMessage response.
+    pending_requests: HashMap<u64, oneshot::Sender<proto::ClientMessage>>,
+    /// Monotonically increasing request ID counter for Gateway→Runtime requests.
+    next_request_id: AtomicU64,
 }
 
 impl GrpcSessionManager {
     pub fn new() -> Self {
         Self {
             sessions: HashMap::new(),
+            pending_requests: HashMap::new(),
+            next_request_id: AtomicU64::new(1),
         }
     }
 
@@ -123,6 +146,101 @@ impl GrpcSessionManager {
             s.agent_id.as_deref() == Some(agent_id) && s.connection_role == "main"
         })
     }
+
+    /// Get a mutable reference to the session for a given agent_id.
+    pub fn find_by_agent_id_mut(&mut self, agent_id: &str) -> Option<&mut GrpcSession> {
+        self.sessions.iter_mut().find_map(|(_, s)| {
+            if s.agent_id.as_deref() == Some(agent_id) && s.connection_role == "main" {
+                Some(s)
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Allocate a new request_id for Gateway→Runtime requests.
+    pub fn next_request_id(&self) -> u64 {
+        self.next_request_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    /// Register a pending request and return a receiver for the response.
+    ///
+    /// The caller should send the ServerMessage to the Runtime, then await
+    /// the returned oneshot receiver. When the Runtime responds with a
+    /// ClientMessage bearing the same request_id, the inbound handler will
+    /// route it here.
+    pub fn register_pending_request(
+        &mut self,
+        request_id: u64,
+    ) -> oneshot::Receiver<proto::ClientMessage> {
+        let (tx, rx) = oneshot::channel();
+        self.pending_requests.insert(request_id, tx);
+        rx
+    }
+
+    /// Try to fulfill a pending request with a response ClientMessage.
+    /// Returns true if the request_id was found and fulfilled.
+    pub fn fulfill_pending(&mut self, request_id: u64, msg: proto::ClientMessage) -> bool {
+        if let Some(sender) = self.pending_requests.remove(&request_id) {
+            let _ = sender.send(msg);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Send a memory query ServerMessage to the Runtime and return a receiver
+    /// for the response.
+    ///
+    /// This method does NOT wait for the response. The caller MUST:
+    /// 1. Drop the `&mut self` reference (release the Mutex lock)
+    /// 2. Await the returned receiver with a timeout
+    /// 3. On timeout, call `cleanup_pending(request_id)` to unregister
+    ///
+    /// Returns None if the agent is not connected or the push fails.
+    pub fn send_memory_request(
+        &mut self,
+        agent_id: &str,
+        query: proto::server_message::Payload,
+    ) -> Option<(u64, oneshot::Receiver<proto::ClientMessage>)> {
+        let request_id = self.next_request_id();
+        let rx = self.register_pending_request(request_id);
+
+        // Build ServerMessage with the query payload
+        let server_msg = proto::ServerMessage {
+            request_id,
+            payload: Some(query),
+        };
+
+        // Push to the Runtime via the session's push channel.
+        // This uses try_send to avoid deadlocking: push_request is async
+        // but we cannot hold a sync Mutex across .await.
+        // The push channel is unbounded so try_send always succeeds.
+        if let Some(session) = self.find_by_agent_id(agent_id).map(|(_, s)| s) {
+            if !session.try_push_request(server_msg) {
+                tracing::warn!(
+                    agent_id = %agent_id,
+                    "Failed to push memory request to Runtime (channel closed)"
+                );
+                self.pending_requests.remove(&request_id);
+                return None;
+            }
+        } else {
+            tracing::warn!(
+                agent_id = %agent_id,
+                "Agent not connected, cannot send memory request"
+            );
+            self.pending_requests.remove(&request_id);
+            return None;
+        }
+
+        Some((request_id, rx))
+    }
+
+    /// Remove a pending request (call after timeout).
+    pub fn cleanup_pending(&mut self, request_id: u64) {
+        self.pending_requests.remove(&request_id);
+    }
 }
 
 impl Default for GrpcSessionManager {
@@ -132,7 +250,7 @@ impl Default for GrpcSessionManager {
 }
 
 /// Shared gRPC session manager type
-type SharedGrpcSessionMgr = Arc<Mutex<GrpcSessionManager>>;
+pub type SharedGrpcSessionMgr = Arc<Mutex<GrpcSessionManager>>;
 
 // ── GatewayGrpcService ──────────────────────────────────────────────────────
 
@@ -207,6 +325,15 @@ impl GatewayService for GatewayGrpcService {
                             Ok(Some(client_msg)) => {
                                 let _request_id = client_msg.request_id;
 
+                                // Intercept memory API responses from Runtime.
+                                // These bypass dispatch and are routed to the
+                                // pending request map for HTTP handler fulfillment.
+                                if is_memory_result(&client_msg) {
+                                    let mut mgr = grpc_session_mgr.lock().await;
+                                    mgr.fulfill_pending(client_msg.request_id, client_msg);
+                                    continue;
+                                }
+
                                 // Stream chunks: dispatch but don't send response
                                 if is_stream_chunk(&client_msg) {
                                     // For stream chunks, we still dispatch for bridge forwarding
@@ -220,6 +347,23 @@ impl GatewayService for GatewayGrpcService {
                                         &session_pending,
                                     ).await;
                                     continue;
+                                }
+
+                                // Intercept AgentHello to also authenticate the GrpcSession.
+                                // The dispatch handler authenticates the IPC session, but the
+                                // GrpcSession (used by send_memory_request → find_by_agent_id)
+                                // needs its own agent_id set for memory API routing.
+                                if let Some(proto::client_message::Payload::AgentHello(ref req)) = client_msg.payload {
+                                    let mut grpc_mgr = grpc_session_mgr.lock().await;
+                                    if let Some(session) = grpc_mgr.get_session_mut(&conn_id_clone) {
+                                        session.authenticate(&req.agent_id);
+                                        session.connection_role = req.connection_role.clone();
+                                        tracing::info!(
+                                            agent_id = %req.agent_id,
+                                            conn = %conn_id_clone,
+                                            "GrpcSession authenticated for memory API routing"
+                                        );
+                                    }
                                 }
 
                                 // Dispatch and send response
@@ -360,14 +504,13 @@ static CONN_COUNTER: AtomicU64 = AtomicU64::new(0);
 pub async fn start_grpc_server(
     addr: SocketAddr,
     state: SharedState,
+    grpc_session_mgr: SharedGrpcSessionMgr,
     ipc_session_mgr: SharedSessionMgr,
     perm_store: SharedPermissionStore,
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
     bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let grpc_session_mgr = Arc::new(Mutex::new(GrpcSessionManager::new()));
-
     let service = GatewayGrpcService {
         state,
         grpc_session_mgr,
@@ -383,7 +526,8 @@ pub async fn start_grpc_server(
     tonic::transport::Server::builder()
         .add_service(GatewayServiceServer::new(service))
         .serve(addr)
-        .await?;
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
 
     Ok(())
 }
@@ -391,6 +535,18 @@ pub async fn start_grpc_server(
 /// Build a default gRPC listen address.
 pub fn default_grpc_addr() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], DEFAULT_GRPC_PORT))
+}
+
+/// Check if a ClientMessage is a memory API response from Runtime.
+/// These are routed to the pending request map, not through dispatch.
+fn is_memory_result(msg: &proto::ClientMessage) -> bool {
+    matches!(
+        msg.payload,
+        Some(proto::client_message::Payload::MemoryNodesResult(_))
+            | Some(proto::client_message::Payload::MemoryStatsResult(_))
+            | Some(proto::client_message::Payload::MemoryConsolidateResult(_))
+            | Some(proto::client_message::Payload::MemoryDeleteResult(_))
+    )
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────────

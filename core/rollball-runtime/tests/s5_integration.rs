@@ -132,10 +132,10 @@ async fn test_s5_intent_cross_agent_call() {
         exceeded_action: "warn".to_string(),
     };
     let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-    let context_builder = ContextBuilder::new("You are a weather agent.".to_string());
+    let mut context_builder = ContextBuilder::new("You are a weather agent.".to_string());
 
     let result = agent_loop
-        .run("Check Shanghai weather and create a reminder", &context_builder)
+        .run("Check Shanghai weather and create a reminder", &mut context_builder)
         .await;
     assert!(result.is_ok(), "Intent cross-agent call should succeed: {:?}", result);
 

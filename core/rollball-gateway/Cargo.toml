@@ -58,7 +58,6 @@ dialoguer = { workspace = true, optional = true }
 [dev-dependencies]
 rollball-sign = { workspace = true }
 rollball-memory = { workspace = true }
-rollball-grafeo = { workspace = true }
 grafeo-common = { workspace = true }
 zip = { workspace = true }
 tempfile = { workspace = true }

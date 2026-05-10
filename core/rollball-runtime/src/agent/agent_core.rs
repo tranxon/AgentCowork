@@ -2,8 +2,9 @@
 //!
 //! `AgentCore` holds all resources that are shared across sessions:
 //! runtime config, manifest, LLM provider, tool registry, streaming channel,
-//! and Gateway model capabilities. These resources persist for the lifetime
-//! of the agent process and are independent of any individual session.
+//! Gateway model capabilities, and Grafeo memory store. These resources
+//! persist for the lifetime of the agent process and are independent of
+//! any individual session.
 //!
 //! Phase 1: direct ownership inside AgentLoop.
 //! Phase 2: wrapped in Arc for multi-session Actor sharing.
@@ -14,10 +15,12 @@ use std::sync::Arc;
 use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::providers::traits::Provider;
 use rollball_core::tools::traits::Tool;
+use rollball_grafeo::grafeo::GrafeoStore;
 use tokio::sync::mpsc;
 
 use crate::agent::loop_::ChunkEvent;
 use crate::config::RuntimeConfig;
+use crate::memory::{MemoryManager, MemoryManagerConfig};
 
 /// Cross-session shared state for the agent loop.
 ///
@@ -44,6 +47,10 @@ pub struct AgentCore {
     /// When set, each StreamEvent::Content delta is forwarded here
     /// so the caller can relay chunks to Gateway via StreamChunk.
     pub(crate) on_chunk: Option<mpsc::Sender<ChunkEvent>>,
+    /// Grafeo memory store (shared across all sessions of this agent).
+    /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
+    /// None if initialization failed (memory features degraded gracefully).
+    pub(crate) memory_store: Option<Arc<GrafeoStore>>,
 }
 
 impl AgentCore {
@@ -64,6 +71,7 @@ impl AgentCore {
             gateway_model_capabilities: HashMap::new(),
             max_output_tokens_limit: 32_768,
             on_chunk,
+            memory_store: None,
         }
     }
 
@@ -143,9 +151,58 @@ impl AgentCore {
         self.max_output_tokens_limit = limit;
     }
 
+    /// Initialize the Grafeo memory store at the given workspace path.
+    ///
+    /// Opens or creates `{work_dir}/memory/private.grafeo`.
+    /// On failure, logs a warning and leaves `memory_store` as None —
+    /// memory features degrade gracefully (no crash, no panic).
+    pub fn init_memory_store(&mut self, work_dir: &std::path::Path) {
+        let memory_dir = work_dir.join("memory");
+        if let Err(e) = std::fs::create_dir_all(&memory_dir) {
+            tracing::warn!(
+                error = %e,
+                dir = %memory_dir.display(),
+                "Failed to create memory directory, memory features disabled"
+            );
+            return;
+        }
+
+        let db_path = memory_dir.join("private.grafeo");
+        match GrafeoStore::open(&db_path) {
+            Ok(store) => {
+                tracing::info!(
+                    path = %db_path.display(),
+                    "Grafeo memory store opened"
+                );
+                self.memory_store = Some(Arc::new(store));
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    path = %db_path.display(),
+                    "Failed to open Grafeo memory store, memory features disabled"
+                );
+            }
+        }
+    }
+
+    /// Access the Grafeo memory store, if initialized.
+    pub fn memory_store(&self) -> Option<&Arc<GrafeoStore>> {
+        self.memory_store.as_ref()
+    }
+
+    /// Initialize and return a MemoryManager for this agent.
+    ///
+    /// The MemoryManager is a stateless orchestrator that operates on the
+    /// shared GrafeoStore. It does not own any state — it's just the
+    /// retrieve/inject/record pipeline configuration.
+    pub fn init_memory_manager(&self) -> MemoryManager {
+        MemoryManager::new(MemoryManagerConfig::default())
+    }
+
     /// Create a cheap clone of this AgentCore for a new session.
     ///
-    /// Heavy fields (provider, tools) are Arc-cloned (refcount increment),
+    /// Heavy fields (provider, tools, memory_store) are Arc-cloned (refcount increment),
     /// while value fields (config, manifest, capabilities) are deep-cloned.
     /// The `on_chunk` channel is replaced with the caller-provided one,
     /// since each session needs its own streaming channel.
@@ -158,6 +215,7 @@ impl AgentCore {
             gateway_model_capabilities: self.gateway_model_capabilities.clone(),
             max_output_tokens_limit: self.max_output_tokens_limit,
             on_chunk,
+            memory_store: self.memory_store.clone(),
         }
     }
 

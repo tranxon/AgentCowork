@@ -121,6 +121,7 @@ pub(crate) async fn start_http_server(
     socket_path: &str,
     data_dir: &Path,
     session_mgr: Option<SharedSessionMgr>,
+    grpc_session_mgr: Option<crate::grpc::SharedGrpcSessionMgr>,
     bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     models_cache: crate::http::models_api::ModelsCache,
     session_pending: Option<crate::http::routes::SessionPendingRequests>,
@@ -136,7 +137,7 @@ pub(crate) async fn start_http_server(
     auth.write_token_file(data_dir)?;
 
     // Build app state
-    let app_state = AppState::with_models_cache(
+    let mut app_state = AppState::with_models_cache(
         gateway_state,
         auth,
         session_mgr,
@@ -145,6 +146,7 @@ pub(crate) async fn start_http_server(
         session_pending,
         log_reload_handle,
     );
+    app_state.grpc_session_mgr = grpc_session_mgr;
 
     // S5.9: Clean up stale pidfile from a previous Gateway run before writing a new one.
     // If the previous process is still alive, this returns an error (prevents dual Gateway).

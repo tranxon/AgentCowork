@@ -162,6 +162,126 @@ impl AgentLoop {
         self.session.conversation.as_ref().map(|c| c.session_id())
     }
 
+    /// Initialize the Grafeo memory store at the given workspace path.
+    ///
+    /// Delegates to `AgentCore::init_memory_store()`.
+    /// Opens or creates `{work_dir}/memory/private.grafeo`.
+    pub fn init_memory_store(&mut self, work_dir: &std::path::Path) {
+        self.core.init_memory_store(work_dir);
+    }
+
+    /// Retrieve relevant long-term memories from Grafeo and inject them into
+    /// the ContextBuilder for the next LLM call.
+    ///
+    /// Runs once per `run()` invocation, before the first LLM iteration.
+    /// When the memory store is unavailable, this is a silent no-op.
+    ///
+    /// Returns the list of Grafeo node IDs that were retrieved (P2-4 fix).
+    /// These IDs are passed to `record_turn_to_memory` so that future
+    /// retrieval can trace which memories influenced each turn.
+    async fn retrieve_and_inject_memories(
+        &self,
+        user_message: &str,
+        context_builder: &mut ContextBuilder,
+    ) -> Vec<String> {
+        // P0 fix: Always clear stale memory from previous turns first.
+        // ContextBuilder is reused across turns (SessionTask loop), so
+        // without this, stale memory leaks into the next LLM call.
+        context_builder.clear_retrieved_memory();
+
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return vec![], // No store available, already cleared above
+        };
+
+        let manager = self.core.init_memory_manager();
+        let query = rollball_memory::MemoryQuery {
+            query_text: user_message.to_string(),
+            embedding: None, // Text-only search initially; hybrid when embedding is available
+            filters: Default::default(),
+            limit: 10,
+            expand_hops: 0,
+            min_score: None,
+            abstention_enabled: false,
+            hint_type: rollball_memory::HintType::Semantic,
+        };
+
+        // P2-4 fix: Use retrieve + inject separately (instead of process_turn)
+        // so we can capture the node IDs of retrieved memories for traceability.
+        match manager.retrieve(store, &query).await {
+            Ok(retrieval) => {
+                // Capture node IDs before inject (inject discards the RetrievalResult)
+                let memory_ids: Vec<String> = retrieval
+                    .memories
+                    .iter()
+                    .filter(|m| m.node_id != 0) // 0 = RAG result, not Grafeo local
+                    .map(|m| m.node_id.to_string())
+                    .collect();
+
+                let metrics = retrieval.metrics.clone();
+                let injected = manager.inject(&retrieval, crate::memory::MemoryManagerConfig::default().max_inject_tokens);
+                if !injected.formatted_text.is_empty() {
+                    tracing::info!(
+                        memory_count = injected.memory_count,
+                        token_count = injected.token_count,
+                        avg_score = metrics.avg_score,
+                        "Retrieved and injected long-term memories into context"
+                    );
+                    context_builder.set_retrieved_memory(injected.formatted_text);
+                }
+                memory_ids
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to retrieve memories from Grafeo (non-fatal)"
+                );
+                vec![]
+            }
+        }
+    }
+
+    /// Record a conversation turn to the Grafeo memory store.
+    ///
+    /// This is called at the end of each successful agent loop iteration
+    /// (when a text response is returned without tool calls).
+    fn record_turn_to_memory(
+        &self,
+        user_message: &str,
+        assistant_response: &str,
+        turn_index: u32,
+        retrieved_memory_ids: Vec<String>,
+    ) {
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return, // Memory store not initialized, skip silently
+        };
+
+        let session_id = self
+            .session
+            .conversation
+            .as_ref()
+            .map(|c| c.session_id().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let record = crate::memory::ConversationRecord {
+            session_id,
+            turn_index, // P1-2 fix: use actual turn counter from SessionState
+            user_message: user_message.to_string(),
+            assistant_response: assistant_response.to_string(),
+            retrieved_memory_ids, // P2-4 fix: node IDs from retrieve_and_inject_memories
+            timestamp: chrono::Utc::now(),
+        };
+
+        let manager = self.core.init_memory_manager();
+        if let Err(e) = manager.record(store, &record) {
+            tracing::warn!(
+                error = %e,
+                "Failed to record conversation turn to Grafeo memory (non-fatal)"
+            );
+        }
+    }
+
     /// Update the title of the currently active conversation session.
     ///
     /// Returns `Some(true)` if the title was actually written (different from current),
@@ -182,6 +302,29 @@ impl AgentLoop {
     /// otherwise falls back to config.history_max_tokens.
     fn context_trim_budget(&self) -> u64 {
         self.core.context_trim_budget()
+    }
+
+    /// Write a distilled episode to the Grafeo memory store (best-effort).
+    ///
+    /// P2-1 fix: extracted common pattern from 3 duplicate code blocks
+    /// (trimmed distillation, switch-session distillation, session-close distillation).
+    fn write_distilled_to_grafeo(
+        memory_store: &Option<std::sync::Arc<rollball_grafeo::GrafeoStore>>,
+        episode: &crate::episode_distill::DistilledEpisode,
+        context: &str, // for logging: "trimmed", "switch-session", "session"
+    ) {
+        if let Some(store) = memory_store {
+            let manager = crate::memory::MemoryManager::new(
+                crate::memory::MemoryManagerConfig::default(),
+            );
+            if let Err(e) = manager.record_distilled(store, episode) {
+                tracing::warn!(
+                    error = %e,
+                    distill_context = context,
+                    "Failed to write distillation to Grafeo (non-fatal)"
+                );
+            }
+        }
     }
 
     /// Trim history to fit within the context window budget.
@@ -229,6 +372,7 @@ impl AgentLoop {
             })
             .and_then(|m| m.name.clone())
             .unwrap_or_else(|| "default".to_string());
+        let memory_store = self.core.memory_store().cloned();
 
         let msg_count = trimmed_messages.len();
         tracing::info!(
@@ -248,6 +392,8 @@ impl AgentLoop {
             .await
             {
                 Ok(episode) => {
+                    // Write distilled episode to Grafeo memory store (P2-1: using shared helper)
+                    Self::write_distilled_to_grafeo(&memory_store, &episode, "trimmed");
                     tracing::info!(
                         summary = %episode.summary,
                         importance = episode.importance,
@@ -330,6 +476,7 @@ impl AgentLoop {
                 })
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| "default".to_string());
+            let memory_store = self.core.memory_store().cloned();
 
             tokio::spawn(async move {
                 // Distill the old session
@@ -342,6 +489,8 @@ impl AgentLoop {
                 .await
                 {
                     Ok(episode) => {
+                        // Write distilled episode to Grafeo memory store (P2-1: using shared helper)
+                        Self::write_distilled_to_grafeo(&memory_store, &episode, "switch-session");
                         tracing::info!(
                             summary = %episode.summary,
                             importance = episode.importance,
@@ -381,6 +530,7 @@ impl AgentLoop {
                 })
                 .and_then(|m| m.name.clone())
                 .unwrap_or_else(|| "default".to_string());
+            let memory_store = self.core.memory_store().cloned();
 
             tracing::info!(
                 session_id = %session_id,
@@ -399,6 +549,8 @@ impl AgentLoop {
                 .await
                 {
                     Ok(episode) => {
+                        // Write distilled episode to Grafeo memory store (P2-1: using shared helper)
+                        Self::write_distilled_to_grafeo(&memory_store, &episode, "session");
                         tracing::info!(
                             summary = %episode.summary,
                             importance = episode.importance,
@@ -421,7 +573,7 @@ impl AgentLoop {
     }
 
     /// Run the agent loop for a single user message
-    pub async fn run(&mut self, user_message: &str, context_builder: &ContextBuilder) -> Result<String> {
+    pub async fn run(&mut self, user_message: &str, context_builder: &mut ContextBuilder) -> Result<String> {
         // Add user message to history
         self.session.history.append(ChatMessage::user(user_message));
 
@@ -431,6 +583,10 @@ impl AgentLoop {
             // Set session title from first user message (first 100 chars)
             conversation.set_title(user_message);
         }
+
+        // Retrieve relevant long-term memories and inject into context
+        // P2-4 fix: capture memory node IDs for later traceability in record_turn_to_memory
+        let retrieved_memory_ids = self.retrieve_and_inject_memories(user_message, context_builder).await;
 
         let mut iteration = 0u32;
 
@@ -618,6 +774,12 @@ impl AgentLoop {
                 self.session.history.append(ChatMessage {
                     ..ChatMessage::assistant(response.content)
                 });
+
+                // Record conversation turn to Grafeo memory store
+                // P1-2 fix: increment turn_counter, P2-4 fix: pass retrieved memory IDs
+                let turn_index = self.session.turn_counter;
+                self.session.turn_counter += 1;
+                self.record_turn_to_memory(user_message, &content, turn_index, retrieved_memory_ids.clone());
 
                 tracing::info!(iteration, "Agent returned text response");
                 return Ok(content);
@@ -1601,8 +1763,8 @@ mod tests {
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let budget = test_budget();
         let (mut agent_loop, _inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Hello from standalone!");
     }
@@ -1619,8 +1781,8 @@ mod tests {
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Accumulated content here");
     }
@@ -1637,8 +1799,8 @@ mod tests {
         let manifest = test_manifest();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
     }
 
@@ -1651,8 +1813,8 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Final response");
         // Verify usage was tracked (budget guard should have been updated)
@@ -1671,8 +1833,8 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_err());
         // Error from chat_stream propagates as Core(RollballError::Provider(...))
         // because Provider trait returns rollball_core::RollballError
@@ -1693,8 +1855,8 @@ mod tests {
         let manifest = test_manifest();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "All done");
     }
@@ -1707,8 +1869,8 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "");
     }
@@ -1722,8 +1884,8 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let _ = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let _ = agent_loop.run("Hi", &mut context_builder).await;
         let messages = agent_loop.history().messages();
         // Should have: user message + assistant message
         let assistant_msgs: Vec<_> = messages.iter()
@@ -1741,8 +1903,8 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
-        let _ = agent_loop.run("Hi", &context_builder).await;
+        let mut context_builder = ContextBuilder::new("System".to_string());
+        let _ = agent_loop.run("Hi", &mut context_builder).await;
         // Budget guard should have been updated with usage from the stream
         // (MockProvider returns usage with total_tokens=150)
         // We can't directly check budget_guard, but we verify no error occurred
@@ -1758,12 +1920,12 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         // Inject a user message before running
         inbound_tx.try_send(InboundMessage::UserMessage("Injected question".to_string())).unwrap();
 
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         // Verify the injected message appeared in history
         let messages = agent_loop.history().messages();
@@ -1781,14 +1943,14 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         inbound_tx.try_send(InboundMessage::SystemNotification {
             notification_type: "identity_update".to_string(),
             data: serde_json::json!({"key": "new_value"}),
         }).unwrap();
 
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let notif: Vec<_> = messages.iter()
@@ -1805,7 +1967,7 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         inbound_tx.try_send(InboundMessage::IntentMessage {
             from: "com.rollball.system".to_string(),
@@ -1813,7 +1975,7 @@ mod tests {
             params: serde_json::json!({}),
         }).unwrap();
 
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let intent: Vec<_> = messages.iter()
@@ -1830,14 +1992,14 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         // Inject 10 messages concurrently
         for i in 0..10 {
             inbound_tx.try_send(InboundMessage::UserMessage(format!("Message {i}"))).unwrap();
         }
 
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let injected: Vec<_> = messages.iter()
@@ -1874,11 +2036,11 @@ mod tests {
         let budget = test_budget();
         let tools: Vec<Arc<dyn Tool>> = vec![];
         let (mut agent_loop, _inbound_tx) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         // Run without any inbound messages — drain should return immediately
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Hi", &context_builder).await;
+        let result = agent_loop.run("Hi", &mut context_builder).await;
         let elapsed = start.elapsed();
         assert!(result.is_ok());
         // Drain should not block — total time should be well under 1 second
@@ -1972,10 +2134,10 @@ mod tests {
         let config = RuntimeConfig::default();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Run parallel", &context_builder).await;
+        let result = agent_loop.run("Run parallel", &mut context_builder).await;
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "Parallel execution should succeed: {:?}", result);
@@ -2085,9 +2247,9 @@ mod tests {
         let config = RuntimeConfig::default();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
-        let result = agent_loop.run("Test failure", &context_builder).await;
+        let result = agent_loop.run("Test failure", &mut context_builder).await;
         assert!(result.is_ok(), "Should succeed even with one tool failure");
         assert_eq!(result.unwrap(), "Mixed results");
     }
@@ -2146,10 +2308,10 @@ mod tests {
         let config = RuntimeConfig { iteration_timeout_ms: 100, ..Default::default() }; // 100ms timeout
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Test timeout", &context_builder).await;
+        let result = agent_loop.run("Test timeout", &mut context_builder).await;
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "Should succeed with timeout error captured: {:?}", result);
@@ -2198,11 +2360,11 @@ mod tests {
         let config = RuntimeConfig::default();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         // The tool call will fail because shell is not in the tool registry
         // (empty tools vec), so it should produce "Unknown tool: shell"
-        let result = agent_loop.run("Run shell", &context_builder).await;
+        let result = agent_loop.run("Run shell", &mut context_builder).await;
         // Should still succeed — error becomes tool result message
         assert!(result.is_ok());
     }
@@ -2303,9 +2465,9 @@ mod tests {
         let config = RuntimeConfig::default();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
-        let result = agent_loop.run("Run ordered", &context_builder).await;
+        let result = agent_loop.run("Run ordered", &mut context_builder).await;
         assert!(result.is_ok());
 
         // Verify that tool results in history are in order
@@ -2435,10 +2597,10 @@ mod tests {
         };
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Test iteration timeout", &context_builder).await;
+        let result = agent_loop.run("Test iteration timeout", &mut context_builder).await;
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "Should succeed with partial results: {:?}", result);
@@ -2523,10 +2685,10 @@ mod tests {
         };
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Test tool timeout", &context_builder).await;
+        let result = agent_loop.run("Test tool timeout", &mut context_builder).await;
         let elapsed = start.elapsed();
 
         assert!(result.is_ok(), "Should succeed with tool timeout error: {:?}", result);
@@ -2627,9 +2789,9 @@ mod tests {
         let config = RuntimeConfig::default();
         let budget = test_budget();
         let (mut agent_loop, _) = AgentLoop::new(config, manifest, provider, tools, budget, None, None);
-        let context_builder = ContextBuilder::new("System".to_string());
+        let mut context_builder = ContextBuilder::new("System".to_string());
 
-        let result = agent_loop.run("Test partial permission", &context_builder).await;
+        let result = agent_loop.run("Test partial permission", &mut context_builder).await;
         assert!(result.is_ok(), "Should succeed even with one tool permission denied: {:?}", result);
 
         // Verify echo result appears (it was executed) and shell has permission denied

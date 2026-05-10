@@ -114,6 +114,7 @@ impl Cli {
                         .with_target(false)
                         .with_thread_ids(false)
                         .with_file(false)
+                        .compact()
                 )
                 .init();
             return Some(reload_handle);
@@ -128,7 +129,8 @@ impl Cli {
             .with_target(false)
             .with_thread_ids(false)
             .with_file(false)
-            .with_ansi(cfg!(not(windows))); // Enable ANSI on non-Windows, disable on Windows
+            .with_ansi(cfg!(not(windows))) // Enable ANSI on non-Windows, disable on Windows
+            .compact();
 
         let file_layer = tracing_subscriber::fmt::layer()
             .with_writer(file_appender)
@@ -451,6 +453,8 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                 c.update_gateway_model_capabilities(caps);
             }
             c.update_max_output_tokens_limit(gateway_max_output_tokens_limit);
+            // Initialize Grafeo memory store at agent workspace
+            c.init_memory_store(work_dir_path);
         }
 
         let session_manager_config = SessionManagerConfig {
@@ -672,9 +676,15 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             None
         };
 
+        // Extract memory query receiver before passing client to the loop.
+        // This avoids &mut self conflicts when tokio::select! polls both
+        // recv_message() and the memory query channel.
+        let memory_query_rx = client.take_memory_query_rx();
+
         let result = run_gateway_loop(
             &mut session_manager,
             &mut client,
+            memory_query_rx,
             config.work_dir.clone(),
             socket_path.clone(),
             agent_id.clone(),
@@ -704,12 +714,15 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             conversation_session,
         );
 
+        // Initialize Grafeo memory store at agent workspace
+        agent_loop.init_memory_store(work_dir_path);
+
         if let Some(caps) = gateway_model_capabilities {
             agent_loop.update_gateway_model_capabilities(caps);
         }
         agent_loop.update_max_output_tokens_limit(gateway_max_output_tokens_limit);
 
-        run_chat_loop(&mut agent_loop, &context_builder).await
+        run_chat_loop(&mut agent_loop, &mut context_builder).await
     }
 }
 
@@ -877,7 +890,7 @@ fn resolve_api_key(manifest: &rollball_core::AgentManifest) -> Option<String> {
 /// Run interactive stdin chat loop
 async fn run_chat_loop(
     agent_loop: &mut crate::agent::loop_::AgentLoop,
-    context_builder: &crate::agent::context::ContextBuilder,
+    context_builder: &mut crate::agent::context::ContextBuilder,
 ) -> Result<()> {
     use std::io::{self, BufRead, Write};
 
@@ -930,6 +943,7 @@ async fn run_chat_loop(
 async fn run_gateway_loop(
     session_manager: &mut SessionManager,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
+    mut memory_query_rx: Option<tokio::sync::mpsc::UnboundedReceiver<(u64, rollball_core::proto::server_message::Payload)>>,
     work_dir: String,
     _socket_path: String,
     agent_id_for_reconnect: String,
@@ -938,8 +952,6 @@ async fn run_gateway_loop(
     skill_registry: crate::skills::parser::SkillRegistry,
     initial_session_id: String,
 ) -> Result<()> {
-    use rollball_core::protocol::GatewayResponse;
-
     // Retrieve the provider name for budget queries
     let budget_provider = session_manager.provider_name();
 
@@ -950,297 +962,384 @@ async fn run_gateway_loop(
 
     tracing::info!("Gateway message loop started (pure routing mode)");
 
-    // Main message loop — receive messages from Gateway and route them
+    // Main message loop — receive messages from Gateway and route them.
+    // Also polls the memory query channel for HTTP→Runtime memory API requests.
     loop {
-        match grpc_client.recv_message().await {
-            Ok(Some(response)) => {
-                tracing::debug!("Received Gateway message: {:?}", response);
+        if let Some(ref mut mq_rx) = memory_query_rx {
+            tokio::select! {
+                recv_result = grpc_client.recv_message() => {
+                    match process_gateway_recv(
+                        recv_result,
+                        session_manager,
+                        grpc_client,
+                        &work_dir,
+                        &agent_id_for_reconnect,
+                        &version_for_reconnect,
+                        &mut current_session_id,
+                        &skill_registry,
+                        &budget_provider,
+                        &log_reload_handle,
+                    ).await {
+                        LoopAction::Continue => continue,
+                        LoopAction::Break => break,
+                    }
+                }
+                query_opt = mq_rx.recv() => {
+                    match query_opt {
+                        Some((request_id, payload)) => {
+                            // Spawn to a separate task so Grafeo queries don't block
+                            // the select! loop from processing Gateway messages (session
+                            // refresh, etc.). The task holds cloned Arc/Sender handles.
+                            let store_opt = session_manager.memory_store().cloned();
+                            let outbound = grpc_client.outbound_sender();
+                            tokio::spawn(spawn_memory_query_handler(
+                                store_opt,
+                                outbound,
+                                request_id,
+                                payload,
+                            ));
+                        }
+                        None => {
+                            tracing::warn!("Memory query channel closed unexpectedly");
+                            memory_query_rx = None;
+                        }
+                    }
+                }
+            }
+        } else {
+            match process_gateway_recv(
+                grpc_client.recv_message().await,
+                session_manager,
+                grpc_client,
+                &work_dir,
+                &agent_id_for_reconnect,
+                &version_for_reconnect,
+                &mut current_session_id,
+                &skill_registry,
+                &budget_provider,
+                &log_reload_handle,
+            ).await {
+                LoopAction::Continue => continue,
+                LoopAction::Break => break,
+            }
+        }
+    }
 
-                match response {
-                    GatewayResponse::IntentReceived { from, action, params, command } => {
-                        tracing::info!("Received intent from {}: {}", from, action);
+    tracing::info!("Gateway message loop ended");
+    Ok(())
+}
 
-                        // Determine target session: explicit session_id param > current_session_id
-                        let target_session_id = params.get("session_id")
+// ── Loop control ────────────────────────────────────────────────────────────
+
+/// Return value for process_gateway_recv to control loop flow.
+enum LoopAction {
+    Continue,
+    Break,
+}
+
+// ── Gateway message processor ───────────────────────────────────────────────
+
+/// Process a single recv_message() result from the Gateway gRPC connection.
+/// Returns LoopAction::Continue to keep looping, LoopAction::Break to exit.
+#[allow(clippy::too_many_arguments)]
+async fn process_gateway_recv(
+    recv_result: std::result::Result<Option<rollball_core::protocol::GatewayResponse>, rollball_core::error::RollballError>,
+    session_manager: &mut SessionManager,
+    grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
+    work_dir: &str,
+    agent_id_for_reconnect: &str,
+    version_for_reconnect: &str,
+    current_session_id: &mut String,
+    skill_registry: &crate::skills::parser::SkillRegistry,
+    budget_provider: &str,
+    log_reload_handle: &Option<LogReloadHandle>,
+) -> LoopAction {
+    use rollball_core::protocol::GatewayResponse;
+
+    match recv_result {
+        Ok(Some(response)) => {
+            tracing::debug!("Received Gateway message: {:?}", response);
+
+            match response {
+                GatewayResponse::IntentReceived { from, action, params, command } => {
+                    tracing::info!("Received intent from {}: {}", from, action);
+
+                    // Determine target session: explicit session_id param > current_session_id
+                    let target_session_id = params.get("session_id")
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| current_session_id.clone());
+
+                    // Handle model_switch: broadcast to all sessions
+                    if action == "model_switch" {
+                        if let Some(model) = params.get("model").and_then(|v| v.as_str()) {
+                            let provider = params.get("provider").and_then(|v| v.as_str());
+                            save_agent_model(work_dir, model, provider);
+                            session_manager.broadcast(SessionMessage::ModelSwitch {
+                                model: model.to_string(),
+                            });
+                            tracing::info!(
+                                model = %model,
+                                provider = ?provider,
+                                "Model switched via model_switch message (broadcast to all sessions)"
+                            );
+                        } else {
+                            tracing::warn!(
+                                "model_switch message missing 'model' field, ignoring"
+                            );
+                        }
+                        return LoopAction::Continue;
+                    }
+
+                    // Handle interrupt: route to target session
+                    if action == "interrupt" {
+                        let reason = params.get("reason")
                             .and_then(|v| v.as_str())
-                            .filter(|s| !s.is_empty())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| current_session_id.clone());
+                            .unwrap_or("unknown")
+                            .to_string();
+                        tracing::info!(reason = %reason, session_id = %target_session_id, "Routing interrupt to session");
+                        if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::Interrupt { reason }) {
+                            tracing::warn!("Failed to route interrupt: {}", e);
+                        }
+                        return LoopAction::Continue;
+                    }
 
-                        // [Budget check moved after session management actions — see below]
+                    if action == "continue_execution" {
+                        let reason = params.get("reason")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("user_requested")
+                            .to_string();
+                        tracing::info!(reason = %reason, session_id = %target_session_id, "Routing continue_execution to session");
+                        if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::ContinueExecution) {
+                            tracing::warn!("Failed to route continue signal: {}", e);
+                        }
+                        return LoopAction::Continue;
+                    }
 
-                        // Handle model_switch: broadcast to all sessions
-                        if action == "model_switch" {
-                            if let Some(model) = params.get("model").and_then(|v| v.as_str()) {
-                                let provider = params.get("provider").and_then(|v| v.as_str());
-                                save_agent_model(&work_dir, model, provider);
-                                session_manager.broadcast(SessionMessage::ModelSwitch {
-                                    model: model.to_string(),
-                                });
-                                tracing::info!(
-                                    model = %model,
-                                    provider = ?provider,
-                                    "Model switched via model_switch message (broadcast to all sessions)"
-                                );
-                            } else {
-                                tracing::warn!(
-                                    "model_switch message missing 'model' field, ignoring"
-                                );
+                    // S1.14: Session query actions from Gateway HTTP API
+                    if action == "list_sessions" {
+                        handle_list_sessions(work_dir, grpc_client, &params).await;
+                        return LoopAction::Continue;
+                    }
+                    if action == "get_session_messages" {
+                        handle_get_session_messages(work_dir, grpc_client, &params).await;
+                        return LoopAction::Continue;
+                    }
+                    if action == "create_session" {
+                        let request_id = params.get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let new_session_id = crate::conversation::generate_session_id();
+                        match crate::conversation::ConversationSession::new(
+                            std::path::Path::new(work_dir),
+                            &new_session_id,
+                            agent_id_for_reconnect,
+                        ) {
+                            Ok(new_session) => {
+                                if let Err(e) = session_manager.create_session_with_id_and_conversation(
+                                    new_session_id.clone(),
+                                    Some(new_session),
+                                ).await {
+                                    tracing::error!("Failed to create session: {}", e);
+                                    let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
+                                    send_session_response(grpc_client, &request_id, data).await;
+                                } else {
+                                    *current_session_id = new_session_id.clone();
+                                    tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
+                                    let data = serde_json::json!({ "session_id": new_session_id });
+                                    send_session_response(grpc_client, &request_id, data).await;
+                                }
                             }
-                            continue;
-                        }
-
-                        // Handle interrupt: route to target session
-                        if action == "interrupt" {
-                            let reason = params.get("reason")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown")
-                                .to_string();
-                            tracing::info!(reason = %reason, session_id = %target_session_id, "Routing interrupt to session");
-                            if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::Interrupt { reason }) {
-                                tracing::warn!("Failed to route interrupt: {}", e);
+                            Err(e) => {
+                                tracing::error!("Failed to create new session: {}", e);
+                                let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
+                                send_session_response(grpc_client, &request_id, data).await;
                             }
-                            continue;
                         }
-
-                        if action == "continue_execution" {
-                            let reason = params.get("reason")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("user_requested")
-                                .to_string();
-                            tracing::info!(reason = %reason, session_id = %target_session_id, "Routing continue_execution to session");
-                            if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::ContinueExecution) {
-                                tracing::warn!("Failed to route continue signal: {}", e);
+                        return LoopAction::Continue;
+                    }
+                    if action == "get_current_session_id" {
+                        handle_get_current_session_id(grpc_client, &params, current_session_id).await;
+                        return LoopAction::Continue;
+                    }
+                    if action == "activate_session" {
+                        let request_id = params.get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
                             }
-                            continue;
+                        };
+                        // In multi-session mode, activation updates current_session_id for routing
+                        *current_session_id = session_id.clone();
+                        let data = serde_json::json!({
+                            "session_id": session_id,
+                            "activated": true,
+                        });
+                        send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+                    if action == "update_session_title" {
+                        let request_id = params.get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let title = match params.get("title").and_then(|v| v.as_str()) {
+                            Some(t) if !t.trim().is_empty() => t.trim().to_string(),
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty title parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+                        if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::UpdateSessionTitle { title: title.clone() }) {
+                            tracing::warn!("Failed to route update_session_title: {}", e);
+                            let data = serde_json::json!({ "error": format!("Session not found: {}", target_session_id) });
+                            send_session_response(grpc_client, &request_id, data).await;
+                        } else {
+                            let data = serde_json::json!({
+                                "session_id": target_session_id,
+                                "title": title,
+                                "updated": true,
+                            });
+                            send_session_response(grpc_client, &request_id, data).await;
+                        }
+                        return LoopAction::Continue;
+                    }
+                    if action == "delete_session" {
+                        let request_id = params.get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+
+                        // Delete the JSONL file
+                        let conversations_dir = std::path::Path::new(work_dir).join("conversations");
+                        let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
+                        if file_path.exists() {
+                            if let Err(e) = std::fs::remove_file(&file_path) {
+                                tracing::error!(session_id = %session_id, error = %e, "Failed to delete session file");
+                                let data = serde_json::json!({ "error": format!("Failed to delete session: {}", e) });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                            tracing::info!(session_id = %session_id, "Deleted session JSONL file");
                         }
 
-                        // S1.14: Session query actions from Gateway HTTP API
-                        if action == "list_sessions" {
-                            handle_list_sessions(&work_dir, grpc_client, &params).await;
-                            continue;
+                        // Destroy the session task
+                        let is_current = *current_session_id == session_id;
+                        if let Err(e) = session_manager.destroy_session(&session_id).await {
+                            tracing::warn!("Failed to destroy session {}: {}", session_id, e);
                         }
-                        if action == "get_session_messages" {
-                            handle_get_session_messages(&work_dir, grpc_client, &params).await;
-                            continue;
-                        }
-                        if action == "create_session" {
-                            let request_id = params.get("request_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
+
+                        // If the deleted session was current, create a replacement
+                        if is_current {
                             let new_session_id = crate::conversation::generate_session_id();
                             match crate::conversation::ConversationSession::new(
-                                std::path::Path::new(&work_dir),
+                                std::path::Path::new(work_dir),
                                 &new_session_id,
-                                &agent_id_for_reconnect,
+                                agent_id_for_reconnect,
                             ) {
                                 Ok(new_session) => {
                                     if let Err(e) = session_manager.create_session_with_id_and_conversation(
                                         new_session_id.clone(),
                                         Some(new_session),
                                     ).await {
-                                        tracing::error!("Failed to create session: {}", e);
-                                        let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
-                                        send_session_response(grpc_client, &request_id, data).await;
+                                        tracing::error!("Failed to create replacement session: {}", e);
                                     } else {
-                                        current_session_id = new_session_id.clone();
-                                        tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
-                                        let data = serde_json::json!({ "session_id": new_session_id });
-                                        send_session_response(grpc_client, &request_id, data).await;
+                                        *current_session_id = new_session_id.clone();
+                                        tracing::info!(new_session_id = %new_session_id, "Switched to new session after deletion");
                                     }
                                 }
                                 Err(e) => {
-                                    tracing::error!("Failed to create new session: {}", e);
-                                    let data = serde_json::json!({ "error": format!("Failed to create session: {}", e) });
-                                    send_session_response(grpc_client, &request_id, data).await;
+                                    tracing::error!("Failed to create replacement session: {}", e);
                                 }
                             }
-                            continue;
                         }
-                        if action == "get_current_session_id" {
-                            handle_get_current_session_id(grpc_client, &params, &current_session_id).await;
-                            continue;
-                        }
-                        if action == "activate_session" {
-                            let request_id = params.get("request_id")
+
+                        let data = serde_json::json!({
+                            "deleted": true,
+                            "session_id": session_id,
+                            "new_session_id": if is_current { current_session_id.clone() } else { String::new() },
+                        });
+                        send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+
+                    // Budget pre-check: skip processing if budget is exhausted.
+                    if let Ok((remaining_tokens, _)) = grpc_client.query_budget(budget_provider).await
+                        && remaining_tokens == 0
+                    {
+                        tracing::warn!(
+                            "Budget exhausted for provider={}, skipping message from {}",
+                            budget_provider, from
+                        );
+                        let error_params = serde_json::json!({
+                            "content": "Budget exhausted — cannot process this message",
+                            "message_id": params.get("message_id")
                                 .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
-                                Some(sid) if !sid.is_empty() => sid.to_string(),
-                                _ => {
-                                    let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    continue;
-                                }
-                            };
-                            // In multi-session mode, activation updates current_session_id for routing
-                            current_session_id = session_id.clone();
-                            let data = serde_json::json!({
-                                "session_id": session_id,
-                                "activated": true,
-                            });
-                            send_session_response(grpc_client, &request_id, data).await;
-                            continue;
-                        }
-                        if action == "update_session_title" {
-                            let request_id = params.get("request_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let title = match params.get("title").and_then(|v| v.as_str()) {
-                                Some(t) if !t.trim().is_empty() => t.trim().to_string(),
-                                _ => {
-                                    let data = serde_json::json!({ "error": "Missing or empty title parameter" });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    continue;
-                                }
-                            };
-                            if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::UpdateSessionTitle { title: title.clone() }) {
-                                tracing::warn!("Failed to route update_session_title: {}", e);
-                                let data = serde_json::json!({ "error": format!("Session not found: {}", target_session_id) });
-                                send_session_response(grpc_client, &request_id, data).await;
-                            } else {
-                                let data = serde_json::json!({
-                                    "session_id": target_session_id,
-                                    "title": title,
-                                    "updated": true,
-                                });
-                                send_session_response(grpc_client, &request_id, data).await;
-                            }
-                            continue;
-                        }
-                        if action == "delete_session" {
-                            let request_id = params.get("request_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("")
-                                .to_string();
-                            let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
-                                Some(sid) if !sid.is_empty() => sid.to_string(),
-                                _ => {
-                                    let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    continue;
-                                }
-                            };
+                                .unwrap_or("unknown"),
+                        });
+                        let _ = grpc_client.send_intent(&from, "agent_error", error_params, false).await;
+                        return LoopAction::Continue;
+                    }
 
-                            // Delete the JSONL file
-                            let conversations_dir = std::path::Path::new(&work_dir).join("conversations");
-                            let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
-                            if file_path.exists() {
-                                if let Err(e) = std::fs::remove_file(&file_path) {
-                                    tracing::error!(session_id = %session_id, error = %e, "Failed to delete session file");
-                                    let data = serde_json::json!({ "error": format!("Failed to delete session: {}", e) });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    continue;
-                                }
-                                tracing::info!(session_id = %session_id, "Deleted session JSONL file");
-                            }
+                    // Extract message content from params
+                    let mut content = params.get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
 
-                            // Destroy the session task
-                            let is_current = current_session_id == session_id;
-                            if let Err(e) = session_manager.destroy_session(&session_id).await {
-                                tracing::warn!("Failed to destroy session {}: {}", session_id, e);
-                            }
-
-                            // If the deleted session was current, create a replacement
-                            if is_current {
-                                let new_session_id = crate::conversation::generate_session_id();
-                                match crate::conversation::ConversationSession::new(
-                                    std::path::Path::new(&work_dir),
-                                    &new_session_id,
-                                    &agent_id_for_reconnect,
-                                ) {
-                                    Ok(new_session) => {
-                                        if let Err(e) = session_manager.create_session_with_id_and_conversation(
-                                            new_session_id.clone(),
-                                            Some(new_session),
-                                        ).await {
-                                            tracing::error!("Failed to create replacement session: {}", e);
-                                        } else {
-                                            current_session_id = new_session_id.clone();
-                                            tracing::info!(new_session_id = %new_session_id, "Switched to new session after deletion");
-                                        }
-                                    }
-                                    Err(e) => {
-                                        tracing::error!("Failed to create replacement session: {}", e);
-                                    }
-                                }
-                            }
-
-                            let data = serde_json::json!({
-                                "deleted": true,
-                                "session_id": session_id,
-                                "new_session_id": if is_current { current_session_id.clone() } else { String::new() },
-                            });
-                            send_session_response(grpc_client, &request_id, data).await;
-                            continue;
-                        }
-
-                        // Budget pre-check: skip processing if budget is exhausted.
-                        // Only reachable for regular chat messages — session management
-                        // actions (list/get/create/activate/delete/update sessions) are
-                        // handled above and skip this check via `continue`.
-                        if let Ok((remaining_tokens, _)) = grpc_client.query_budget(&budget_provider).await
-                            && remaining_tokens == 0
-                        {
-                            tracing::warn!(
-                                "Budget exhausted for provider={}, skipping message from {}",
-                                budget_provider, from
+                    // If a command is specified, inject the skill instructions into the user message.
+                    if let Some(skill_name) = command {
+                        if let Some(skill) = skill_registry.get(&skill_name) {
+                            tracing::info!(
+                                skill = %skill_name,
+                                "Injecting skill instructions into user message"
                             );
-                            let error_params = serde_json::json!({
-                                "content": "Budget exhausted — cannot process this message",
-                                "message_id": params.get("message_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("unknown"),
-                            });
-                            let _ = grpc_client.send_intent(&from, "agent_error", error_params, false).await;
-                            continue;
-                        }
-                        // If budget query fails (e.g. provider not tracked), proceed anyway
-
-                        // Extract message content from params
-                        let mut content = params.get("content")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-
-                        // If a command is specified, inject the skill instructions into the user message.
-                        if let Some(skill_name) = command {
-                            if let Some(skill) = skill_registry.get(&skill_name) {
-                                tracing::info!(
-                                    skill = %skill_name,
-                                    "Injecting skill instructions into user message"
-                                );
-                                content = format!("{}\n\n{}", skill.instructions, content);
-                            } else {
-                                tracing::warn!(
-                                    skill = %skill_name,
-                                    "Command skill not found in registry"
-                                );
-                            }
-                        }
-
-                        let message_id = params.get("message_id")
-                            .and_then(|v| v.as_str())
-                            .map(|s| s.to_string())
-                            .unwrap_or_else(|| format!("msg-{}", chrono::Utc::now().timestamp_millis()));
-
-                        // Pure routing: send to session's inbound channel, immediately return
-                        if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::ChatMessage {
-                            content,
-                            message_id: message_id.clone(),
-                        }) {
-                            tracing::error!("Failed to route message to session {}: {}", target_session_id, e);
-                            let error_params = serde_json::json!({
-                                "content": format!("Session not found: {}", target_session_id),
-                                "message_id": message_id,
-                            });
-                            let _ = grpc_client.send_intent(&from, "agent_error", error_params, false).await;
+                            content = format!("{}\n\n{}", skill.instructions, content);
+                        } else {
+                            tracing::warn!(
+                                skill = %skill_name,
+                                "Command skill not found in registry"
+                            );
                         }
                     }
-                    GatewayResponse::LLMConfigDelivery { provider, model, api_key, base_url, models: available_models, model_capabilities, max_output_tokens_limit, protocol_type, .. } => {
+
+                    let message_id = params.get("message_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("msg-{}", chrono::Utc::now().timestamp_millis()));
+
+                    // Pure routing: send to session's inbound channel, immediately return
+                    if let Err(e) = session_manager.send_to_session(&target_session_id, SessionMessage::ChatMessage {
+                        content,
+                        message_id: message_id.clone(),
+                    }) {
+                        tracing::error!("Failed to route message to session {}: {}", target_session_id, e);
+                        let error_params = serde_json::json!({
+                            "content": format!("Session not found: {}", target_session_id),
+                            "message_id": message_id,
+                        });
+                        let _ = grpc_client.send_intent(&from, "agent_error", error_params, false).await;
+                    }
+                    return LoopAction::Continue;
+                }
+                GatewayResponse::LLMConfigDelivery { provider, model, api_key, base_url, models: available_models, model_capabilities, max_output_tokens_limit, protocol_type, .. } => {
                         tracing::info!(
                             provider = %provider,
                             model = ?model,
@@ -1278,6 +1377,7 @@ async fn run_gateway_loop(
                                 limit: max_output_tokens_limit,
                             });
                         }
+                        return LoopAction::Continue;
                     }
                     GatewayResponse::WorkspaceContextUpdate {
                         context_text,
@@ -1290,6 +1390,7 @@ async fn run_gateway_loop(
                             "Received WorkspaceContextUpdate from Gateway — broadcasting to all sessions"
                         );
                         session_manager.broadcast(SessionMessage::UpdateWorkspaceContext { context_text });
+                        return LoopAction::Continue;
                     }
                     GatewayResponse::LogLevelUpdate { log_level } => {
                         tracing::info!(
@@ -1315,40 +1416,402 @@ async fn run_gateway_loop(
                                 "No reload handle available — cannot update log level dynamically"
                             );
                         }
+                        return LoopAction::Continue;
                     }
                     _ => {
                         tracing::debug!("Ignoring non-IntentReceived Gateway message");
+                        return LoopAction::Continue;
                     }
                 }
             }
             Ok(None) => {
-                tracing::info!("Gateway connection closed, attempting reconnect...");
-                // Try to reconnect with exponential backoff
-                match try_reconnect_gateway(
-                    &agent_id_for_reconnect,
-                    &version_for_reconnect,
-                    grpc_client,
-                ).await {
-                    Ok(()) => {
-                        tracing::info!("Reconnected to Gateway successfully");
-                        continue;
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to reconnect to Gateway: {}", e);
-                        break;
-                    }
+            tracing::info!("Gateway connection closed, attempting reconnect...");
+            // Try to reconnect with exponential backoff
+            match try_reconnect_gateway(
+                agent_id_for_reconnect,
+                version_for_reconnect,
+                grpc_client,
+            ).await {
+                Ok(()) => {
+                    tracing::info!("Reconnected to Gateway successfully");
+                    return LoopAction::Continue;
+                }
+                Err(e) => {
+                    tracing::error!("Failed to reconnect to Gateway: {}", e);
+                    return LoopAction::Break;
                 }
             }
-            Err(e) => {
-                tracing::error!("Gateway recv error: {}", e);
-                // Don't break on transient errors — try to continue
-                tokio::time::sleep(std::time::Duration::from_millis(GATEWAY_RECV_RETRY_INTERVAL_MS)).await;
-            }
+        }
+        Err(e) => {
+            tracing::error!("Gateway recv error: {}", e);
+            // Don't break on transient errors — try to continue
+            tokio::time::sleep(std::time::Duration::from_millis(GATEWAY_RECV_RETRY_INTERVAL_MS)).await;
+            return LoopAction::Continue;
         }
     }
+}
 
-    tracing::info!("Gateway message loop ended");
-    Ok(())
+// ── Memory query handler ────────────────────────────────────────────────────
+
+/// Handle a memory API query from Gateway (via gRPC, not IntentReceived).
+///
+/// Gateway HTTP handlers proxy memory requests to the Runtime through the
+/// gRPC bidirectional stream using request_id correlation. This handler
+/// calls GrafeoStore methods and sends the proto response back.
+/// Spawned as a tokio task to handle a memory query without blocking the main
+/// select! loop. Takes owned data (Arc, Sender) so it can run independently.
+async fn spawn_memory_query_handler(
+    memory_store: Option<Arc<rollball_grafeo::grafeo::GrafeoStore>>,
+    outbound: tokio::sync::mpsc::Sender<rollball_core::proto::ClientMessage>,
+    request_id: u64,
+    payload: rollball_core::proto::server_message::Payload,
+) {
+    use rollball_core::proto;
+    use rollball_core::proto::server_message::Payload as ServerPayload;
+
+    tracing::info!(
+        request_id,
+        payload_type = ?std::mem::discriminant(&payload),
+        memory_store = memory_store.is_some(),
+        "Memory query handler spawned"
+    );
+
+    let response_payload = match payload {
+        ServerPayload::MemoryNodesQuery(q) => {
+            handle_memory_nodes_query(memory_store.as_ref(), q)
+        }
+        ServerPayload::MemoryStatsQuery(_) => {
+            handle_memory_stats_query(memory_store.as_ref())
+        }
+        ServerPayload::MemoryDeleteQuery(q) => {
+            handle_memory_delete_query(memory_store.as_ref(), q)
+        }
+        ServerPayload::MemoryConsolidateQuery(q) => {
+            handle_memory_consolidate_query(memory_store.as_ref(), q)
+        }
+        _ => {
+            tracing::warn!("Unexpected payload in memory query handler");
+            return;
+        }
+    };
+
+    let client_msg = proto::ClientMessage {
+        request_id,
+        payload: Some(response_payload),
+    };
+
+    if outbound.send(client_msg).await.is_err() {
+        tracing::warn!(
+            request_id,
+            "Failed to send memory query response to Gateway"
+        );
+    }
+}
+
+/// Handle MemoryNodesQuery — list nodes with pagination, filtering, search.
+fn handle_memory_nodes_query(
+    memory_store: Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>>,
+    query: rollball_core::proto::MemoryNodesQuery,
+) -> rollball_core::proto::client_message::Payload {
+    use rollball_core::proto;
+    use rollball_core::proto::client_message::Payload as ClientPayload;
+
+    let store = match memory_store {
+        Some(s) => s,
+        None => {
+            tracing::warn!("MemoryNodesQuery: no Grafeo store available");
+            return ClientPayload::MemoryNodesResult(proto::MemoryNodesResult {
+                total: 0,
+                page: query.page,
+                size: query.size,
+                nodes: vec![],
+            });
+        }
+    };
+
+    let graph = store.db().graph_store();
+
+    // Collect nodes from all memory labels
+    let labels = ["Episodic", "Knowledge", "Procedural", "Autobiographical"];
+    let mut all_entries: Vec<proto::MemoryNodeEntry> = Vec::new();
+
+    for label in &labels {
+        // Filter by type if specified
+        if !query.r#type.is_empty() && query.r#type != *label {
+            continue;
+        }
+
+        let node_ids = graph.nodes_by_label(label);
+        let label_node_count = node_ids.len();
+        let mut matched = 0usize;
+        for id in node_ids {
+            if let Some(n) = store.db().get_node(id) {
+                let content = extract_node_content(label, &n);
+
+                // Keyword filter
+                if !query.keyword.is_empty()
+                    && !content.to_lowercase().contains(&query.keyword.to_lowercase())
+                {
+                    continue;
+                }
+
+                let created_at = n
+                    .get_property("created_at")
+                    .and_then(|v| v.as_timestamp())
+                    .map(|ts| ts.as_secs())
+                    .unwrap_or(0) as i64;
+
+                let last_accessed_at = n
+                    .get_property("last_accessed_at")
+                    .and_then(|v| v.as_timestamp())
+                    .map(|ts| ts.as_secs())
+                    .unwrap_or(created_at) as i64;
+
+                let access_count = n
+                    .get_property("access_count")
+                    .and_then(|v| v.as_int64())
+                    .unwrap_or(0) as u32;
+
+                let confidence = n
+                    .get_property("confidence")
+                    .and_then(|v| v.as_float64())
+                    .unwrap_or(0.0);
+
+                let decay_score = n
+                    .get_property("decay_score")
+                    .and_then(|v| v.as_float64())
+                    .unwrap_or(1.0);
+
+                let status = n
+                    .get_property("status")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Active")
+                    .to_string();
+
+                all_entries.push(proto::MemoryNodeEntry {
+                    node_id: id.0,
+                    node_type: label.to_string(),
+                    content,
+                    confidence,
+                    decay_score,
+                    created_at,
+                    last_accessed_at,
+                    access_count,
+                    status,
+                });
+                matched += 1;
+            }
+        }
+        tracing::info!(
+            label,
+            total_in_label = label_node_count,
+            matched,
+            "MemoryNodesQuery: label scan"
+        );
+    }
+
+    let total = all_entries.len() as u64;
+    let page = query.page.max(1);
+    let size = query.size.max(1).min(100) as usize;
+    let start = ((page - 1) as usize) * size;
+    let nodes: Vec<_> = if start < all_entries.len() {
+        all_entries.into_iter().skip(start).take(size).collect()
+    } else {
+        vec![]
+    };
+
+    tracing::info!(
+        total,
+        page,
+        returned = nodes.len(),
+        "MemoryNodesQuery: final result"
+    );
+
+    ClientPayload::MemoryNodesResult(proto::MemoryNodesResult {
+        total,
+        page,
+        size: size as u32,
+        nodes,
+    })
+}
+
+/// Extract a human-readable content string from a Grafeo node.
+fn extract_node_content(label: &str, n: &grafeo_core::graph::lpg::Node) -> String {
+    match label {
+        "Episodic" => {
+            let role = n.get_property("role").and_then(|v| v.as_str()).unwrap_or("");
+            let content = n.get_property("content").and_then(|v| v.as_str()).unwrap_or("");
+            format!("[{}] {}", role, content)
+        }
+        "Knowledge" => {
+            let subject = n.get_property("subject").and_then(|v| v.as_str()).unwrap_or("");
+            let predicate = n.get_property("predicate").and_then(|v| v.as_str()).unwrap_or("");
+            let object = n.get_property("object").and_then(|v| v.as_str()).unwrap_or("");
+            format!("{} {} {}", subject, predicate, object)
+        }
+        "Procedural" => {
+            let name = n.get_property("name").and_then(|v| v.as_str()).unwrap_or("");
+            let action = n.get_property("action_pattern").and_then(|v| v.as_str()).unwrap_or("");
+            format!("When {}: {}", name, action)
+        }
+        "Autobiographical" => {
+            let key = n.get_property("key").and_then(|v| v.as_str()).unwrap_or("");
+            let value = n.get_property("value").and_then(|v| v.as_str()).unwrap_or("");
+            format!("{}: {}", key, value)
+        }
+        _ => "Unknown".to_string(),
+    }
+}
+
+/// Handle MemoryStatsQuery — get memory statistics.
+fn handle_memory_stats_query(
+    memory_store: Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>>,
+) -> rollball_core::proto::client_message::Payload {
+    use rollball_core::proto;
+    use rollball_core::proto::client_message::Payload as ClientPayload;
+    use std::collections::HashMap;
+
+    let store = match memory_store {
+        Some(s) => s,
+        None => {
+            return ClientPayload::MemoryStatsResult(proto::MemoryStatsResult {
+                total_nodes: 0,
+                storage_bytes: 0,
+                by_type: HashMap::new(),
+                by_status: HashMap::new(),
+                avg_decay_score: 0.0,
+                index_health: "no_store".to_string(),
+            });
+        }
+    };
+
+    match rollball_grafeo::stats::collect_stats(store) {
+        Ok(stats) => {
+            let total_nodes: u64 = stats.label_counts.values().sum::<usize>() as u64;
+
+            let by_type: HashMap<String, u64> = stats
+                .label_counts
+                .into_iter()
+                .map(|(k, v)| (k, v as u64))
+                .collect();
+
+            let mut by_status = HashMap::new();
+            by_status.insert("dormant".to_string(), stats.dormant_count as u64);
+            by_status.insert("purged".to_string(), stats.purged_count as u64);
+
+            let avg_decay_score = 0.0; // Not tracked in current stats
+            let index_health = "healthy".to_string();
+
+            ClientPayload::MemoryStatsResult(proto::MemoryStatsResult {
+                total_nodes,
+                storage_bytes: 0, // Not tracked in current stats
+                by_type,
+                by_status,
+                avg_decay_score,
+                index_health,
+            })
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "Failed to collect memory stats");
+            ClientPayload::MemoryStatsResult(proto::MemoryStatsResult {
+                total_nodes: 0,
+                storage_bytes: 0,
+                by_type: HashMap::new(),
+                by_status: HashMap::new(),
+                avg_decay_score: 0.0,
+                index_health: format!("error: {}", e),
+            })
+        }
+    }
+}
+
+/// Handle MemoryDeleteQuery — delete a memory node by ID.
+fn handle_memory_delete_query(
+    memory_store: Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>>,
+    query: rollball_core::proto::MemoryDeleteQuery,
+) -> rollball_core::proto::client_message::Payload {
+    use rollball_core::proto;
+    use rollball_core::proto::client_message::Payload as ClientPayload;
+
+    let store = match memory_store {
+        Some(s) => s,
+        None => {
+            return ClientPayload::MemoryDeleteResult(proto::MemoryDeleteResult {
+                node_id: query.node_id,
+                deleted: false,
+                message: "Memory store not available".to_string(),
+            });
+        }
+    };
+
+    let node_id = grafeo_common::types::NodeId(query.node_id);
+    match store.delete_node(node_id) {
+        Ok(deleted) => ClientPayload::MemoryDeleteResult(proto::MemoryDeleteResult {
+            node_id: query.node_id,
+            deleted,
+            message: if deleted {
+                "Node deleted".to_string()
+            } else {
+                "Node not found".to_string()
+            },
+        }),
+        Err(e) => ClientPayload::MemoryDeleteResult(proto::MemoryDeleteResult {
+            node_id: query.node_id,
+            deleted: false,
+            message: format!("Error: {}", e),
+        }),
+    }
+}
+
+/// Handle MemoryConsolidateQuery — trigger memory consolidation.
+fn handle_memory_consolidate_query(
+    memory_store: Option<&Arc<rollball_grafeo::grafeo::GrafeoStore>>,
+    query: rollball_core::proto::MemoryConsolidateQuery,
+) -> rollball_core::proto::client_message::Payload {
+    use rollball_core::proto;
+    use rollball_core::proto::client_message::Payload as ClientPayload;
+
+    let store = match memory_store {
+        Some(s) => s,
+        None => {
+            return ClientPayload::MemoryConsolidateResult(proto::MemoryConsolidateResult {
+                started: false,
+                duration_ms: 0,
+                episodes_consolidated: 0,
+                knowledge_nodes_generated: 0,
+                message: "Memory store not available".to_string(),
+            });
+        }
+    };
+
+    let config = rollball_grafeo::consolidation::OfflineConsolidationConfig {
+        batch_size: 50,
+        min_pending_age_hours: if query.force { 0 } else { 1 },
+    };
+
+    let start = std::time::Instant::now();
+    match store.run_offline_consolidation(&config) {
+        Ok(result) => {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            ClientPayload::MemoryConsolidateResult(proto::MemoryConsolidateResult {
+                started: true,
+                duration_ms,
+                episodes_consolidated: result.upgraded as u64,
+                knowledge_nodes_generated: 0, // Phase 2 consolidation doesn't generate new nodes
+                message: format!(
+                    "Upgraded: {}, Kept pending: {}, Marked dormant: {}",
+                    result.upgraded, result.kept_pending, result.marked_dormant
+                ),
+            })
+        }
+        Err(e) => ClientPayload::MemoryConsolidateResult(proto::MemoryConsolidateResult {
+            started: false,
+            duration_ms: 0,
+            episodes_consolidated: 0,
+            knowledge_nodes_generated: 0,
+            message: format!("Consolidation error: {}", e),
+        }),
+    }
 }
 
 // ── S1.14: Session query handlers ─────────────────────────────────────────────

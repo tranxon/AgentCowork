@@ -176,7 +176,62 @@ impl Cli {
     }
 }
 
-/// Initialize tracing subscriber with reload support and file logging.
+/// A writer wrapper that converts LF (\n) to CRLF (\r\n) on Windows.
+///
+/// Rust's `io::Stderr` and `File` do not perform newline conversion
+/// (unlike `println!` which uses `io::Stdout`'s OS-level handling).
+/// This causes log output to appear as a single line in Windows terminals
+/// and Notepad. On Unix (Linux/macOS), this wrapper is a transparent
+/// pass-through since \n is the native line ending.
+struct CrlfWriter<W: std::io::Write> {
+    inner: W,
+}
+
+impl<W: std::io::Write> std::io::Write for CrlfWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // On non-Windows platforms, pass through unchanged.
+        // \n is the native line ending on Unix (Linux/macOS).
+        if cfg!(not(windows)) {
+            return self.inner.write(buf);
+        }
+
+        // On Windows: scan for \n bytes and insert \r before each.
+        let mut start = 0;
+        for (i, &b) in buf.iter().enumerate() {
+            if b == b'\n' {
+                if i > start {
+                    self.inner.write_all(&buf[start..i])?;
+                }
+                self.inner.write_all(b"\r\n")?;
+                start = i + 1;
+            }
+        }
+        if start < buf.len() {
+            self.inner.write_all(&buf[start..])?;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// `MakeWriter` implementation that produces `CrlfWriter<io::Stderr>`.
+///
+/// This is used as the writer for the stderr tracing layer to ensure
+/// proper CRLF line endings on all platforms.
+struct CrlfStderr;
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CrlfStderr {
+    type Writer = CrlfWriter<std::io::Stderr>;
+
+    fn make_writer(&self) -> Self::Writer {
+        CrlfWriter {
+            inner: std::io::stderr(),
+        }
+    }
+}
 ///
 /// Logs are written to stderr AND to `~/.config/rollball-gateway/logs/gateway.log`.
 ///
@@ -202,7 +257,12 @@ fn init_tracing(level: &str) -> Option<crate::LogReloadHandle> {
         let (filter, handle) = reload::Layer::new(env_filter);
         tracing_subscriber::registry()
             .with(filter)
-            .with(tracing_subscriber::fmt::layer().with_target(false))
+            .with(
+                tracing_subscriber::fmt::layer()
+                    .with_writer(CrlfStderr)
+                    .with_target(false)
+                    .compact()
+            )
             .init();
         return Some(handle);
     }
@@ -211,14 +271,17 @@ fn init_tracing(level: &str) -> Option<crate::LogReloadHandle> {
     let file_appender = tracing_appender::rolling::never(&log_dir, "gateway.log");
     let (filter, handle) = reload::Layer::new(env_filter);
 
-    // Stderr layer (for terminal output, no colors)
+    // Stderr layer (for terminal output, compact format, no colors)
     let stderr_layer = tracing_subscriber::fmt::layer()
+        .with_writer(CrlfStderr)
         .with_target(false)
         .with_thread_ids(false)
         .with_file(false)
-        .with_ansi(false);
+        .with_ansi(false)
+        .compact();
 
-    // File layer (for user inspection)
+    // File layer (file_appender implements MakeWriter, writes \n line endings
+    // which most modern editors handle; for Notepad, use a proper text editor)
     let file_layer = tracing_subscriber::fmt::layer()
         .with_writer(file_appender)
         .with_target(true)

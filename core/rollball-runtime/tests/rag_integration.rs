@@ -842,7 +842,7 @@ async fn test_rag_client_mock_server_empty_results() {
 // configured, and behaves identically to Phase 3 when rag_client is None.
 
 use rollball_grafeo::grafeo::GrafeoStore;
-use rollball_memory::{HintType, MemoryQuery};
+use rollball_memory::{HintType, MemoryQuery, MemoryStore};
 use rollball_runtime::memory::{MemoryManager, MemoryManagerConfig, ConversationRecord};
 use chrono::Utc;
 
@@ -992,4 +992,147 @@ async fn test_memory_manager_no_rag_identical_to_phase3() {
     // Same as Phase 3: only Grafeo results, no RAG overhead
     assert!(!result.memories.is_empty());
     assert!(result.memories.iter().all(|m| m.source != "rag"));
+}
+
+// =============================================================================
+// Diagnostic: end-to-end write → read verification (multi-turn conversation)
+// =============================================================================
+
+/// Simulates the exact production path: MemoryManager.record() + retrieve().
+/// Verifies that:
+/// 1. Nodes are created with the correct content format
+/// 2. BM25 text search finds nodes by semantic content
+/// 3. Multiple turns accumulate and are all searchable
+/// 4. The `content` field matches what record_turn_to_memory writes
+#[tokio::test]
+async fn test_diagnostic_memory_write_read_loop() {
+    let store = GrafeoStore::new_in_memory().unwrap();
+    let manager = MemoryManager::new(MemoryManagerConfig::default());
+
+    // Check initial stats
+    let stats = store.stats().unwrap();
+    eprintln!("[DIAG] Initial node_count: {}", stats.episode_count);
+    assert_eq!(stats.episode_count, 0, "Fresh store should have 0 nodes");
+
+    // ── Turn 1 ──
+    let record_1 = ConversationRecord {
+        session_id: "diag-session".to_string(),
+        turn_index: 0,
+        user_message: "I live in Beijing with my cat named Luna".to_string(),
+        assistant_response: "Got it! You live in Beijing and have a cat Luna.".to_string(),
+        retrieved_memory_ids: vec![],
+        timestamp: Utc::now(),
+    };
+    manager.record(&store, &record_1).unwrap();
+
+    let stats = store.stats().unwrap();
+    eprintln!("[DIAG] After turn 1 — episode_count: {}", stats.episode_count);
+    assert!(stats.episode_count >= 1, "Turn 1 should create at least 1 episodic node");
+
+    // Search for turn 1 content (English)
+    let r1 = manager.retrieve(&store, &memory_query("Beijing")).await.unwrap();
+    eprintln!(
+        "[DIAG] Turn 1 search 'Beijing' → {} results (sources: {:?})",
+        r1.memories.len(),
+        r1.memories.iter().map(|m| m.source.as_str()).collect::<Vec<_>>()
+    );
+    for m in &r1.memories {
+        eprintln!("  node_id={} score={:.4} label={} content={:.80}...", m.node_id, m.score, m.label, m.content);
+    }
+    assert!(!r1.memories.is_empty(), "Should find 'Beijing' via BM25 text search");
+    assert!(r1.memories[0].content.contains("Beijing"), "Content should contain the searched term");
+
+    // Search for 'cat'
+    let r1b = manager.retrieve(&store, &memory_query("cat Luna")).await.unwrap();
+    eprintln!("[DIAG] Turn 1 search 'cat Luna' → {} results", r1b.memories.len());
+    assert!(!r1b.memories.is_empty(), "Should find 'cat Luna' via BM25");
+
+    // ── Test Chinese text (CRITICAL: BM25 may not tokenize CJK) ──
+    let cn_store = GrafeoStore::new_in_memory().unwrap();
+    let cn_record = ConversationRecord {
+        session_id: "cn-test".to_string(),
+        turn_index: 0,
+        user_message: "我叫张三，住在北京朝阳区".to_string(),
+        assistant_response: "你好张三！记住了。".to_string(),
+        retrieved_memory_ids: vec![],
+        timestamp: Utc::now(),
+    };
+    manager.record(&cn_store, &cn_record).unwrap();
+    let cn_stats = cn_store.stats().unwrap();
+    eprintln!("[DIAG] Chinese store node_count: {}", cn_stats.episode_count);
+
+    let cn_result = manager.retrieve(&cn_store, &memory_query("张三")).await.unwrap();
+    eprintln!("[DIAG] Chinese search '张三' → {} results", cn_result.memories.len());
+    if cn_result.memories.is_empty() {
+        eprintln!("[DIAG] ⚠️ BM25 returned 0 results for Chinese text!");
+        eprintln!("[DIAG] Root cause: grafeo-engine BM25 tokenizer likely uses whitespace splitting");
+        eprintln!("[DIAG] Chinese characters have no spaces between words → no tokens → no matches");
+        eprintln!("[DIAG] Fix: need a CJK-aware tokenizer (jieba-rs / tantivy-jieba) or use embedding search");
+    } else {
+        for m in &cn_result.memories {
+            eprintln!("  node_id={} score={:.4} label={} content={:.80}...", m.node_id, m.score, m.label, m.content);
+        }
+    }
+
+    // ── Turn 2 (different topic) ──
+    let record_2 = ConversationRecord {
+        session_id: "diag-session".to_string(),
+        turn_index: 1,
+        user_message: "I love spicy food, especially Sichuan hot pot".to_string(),
+        assistant_response: "Sichuan cuisine is great! Hot pot is a classic.".to_string(),
+        retrieved_memory_ids: vec![],
+        timestamp: Utc::now(),
+    };
+    manager.record(&store, &record_2).unwrap();
+
+    let stats = store.stats().unwrap();
+    eprintln!("[DIAG] After turn 2 — episode_count: {}", stats.episode_count);
+    assert!(stats.episode_count >= 2, "Turn 2 should add another node");
+
+    // Search for turn 1 content (should still be findable)
+    let r2 = manager.retrieve(&store, &memory_query("Beijing cat")).await.unwrap();
+    eprintln!("[DIAG] Turn 2 search 'Beijing cat' → {} results", r2.memories.len());
+    assert!(!r2.memories.is_empty(), "Turn 1 memory should still be retrievable after turn 2");
+
+    // Search for turn 2 content
+    let r2b = manager.retrieve(&store, &memory_query("hot pot")).await.unwrap();
+    eprintln!("[DIAG] Turn 2 search 'hot pot' → {} results", r2b.memories.len());
+    assert!(!r2b.memories.is_empty(), "Should find turn 2 content 'hot pot'");
+
+    // ── Turn 3 ──
+    let record_3 = ConversationRecord {
+        session_id: "diag-session".to_string(),
+        turn_index: 2,
+        user_message: "My phone number is 555-1234".to_string(),
+        assistant_response: "Phone number recorded.".to_string(),
+        retrieved_memory_ids: vec![],
+        timestamp: Utc::now(),
+    };
+    manager.record(&store, &record_3).unwrap();
+
+    let stats = store.stats().unwrap();
+    eprintln!("[DIAG] After turn 3 — episode_count: {}", stats.episode_count);
+    assert!(stats.episode_count >= 3, "Turn 3 should add another node");
+
+    // Cross-topic search: should find all 3 turns
+    let r3 = manager.retrieve(&store, &memory_query("phone number")).await.unwrap();
+    eprintln!("[DIAG] Turn 3 search 'phone number' → {} results", r3.memories.len());
+    assert!(!r3.memories.is_empty(), "Should find 'phone number' from turn 3");
+
+    // Search with limit=1 to verify top result ranking
+    let mut limited_query = memory_query("hot pot Sichuan");
+    limited_query.limit = 1;
+    let r4 = manager.retrieve(&store, &limited_query).await.unwrap();
+    eprintln!("[DIAG] Limited search 'hot pot Sichuan' → {} results", r4.memories.len());
+    assert_eq!(r4.memories.len(), 1, "limit=1 should return exactly 1 result");
+
+    // Search for something NOT in the store
+    let r5 = manager.retrieve(&store, &memory_query("quantum computer")).await.unwrap();
+    eprintln!("[DIAG] Search 'quantum computer' (unrelated) → {} results", r5.memories.len());
+    // BM25 may return low-score results; the key is that they should be low-score
+    // and abstention is NOT enabled, so we may get 0 or some low-score results.
+    // This is expected behavior for BM25 without abstention.
+
+    eprintln!("[DIAG] ✅ All diagnostic checks passed!");
+    eprintln!("[DIAG] Total episodic nodes written: {}", stats.episode_count);
 }
