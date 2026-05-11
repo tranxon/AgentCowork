@@ -87,14 +87,49 @@ export function AgentSetupTab() {
 
   return (
     <div className="flex-1 overflow-y-auto p-3">
-      {/* Avatar preview */}
+      {/* Avatar preview — click to open icon picker */}
       <div className="mb-4 flex items-center gap-3">
-        <UserAvatar
-          displayName={agentName}
-          avatarType="icon"
-          avatarIcon={profile.avatarIconId ?? undefined}
-          size={48}
-        />
+        <div className="relative">
+          <button
+            onClick={() => setIconOpen(!iconOpen)}
+            className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
+            title="Choose icon"
+          >
+            <UserAvatar
+              displayName={agentName}
+              avatarType="icon"
+              avatarIcon={profile.avatarIconId ?? undefined}
+              size={48}
+            />
+          </button>
+          {iconOpen && (
+            <div className="absolute left-0 z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+              <div className="grid grid-cols-4 gap-1">
+                {BUILTIN_ICON_IDS.map((iconId) => (
+                  <button
+                    key={iconId}
+                    onClick={() => {
+                      setProfile(selectedAgentId, { avatarIconId: iconId });
+                      setIconOpen(false);
+                    }}
+                    className={`flex items-center justify-center rounded-md p-1 transition-colors ${
+                      profile.avatarIconId === iconId
+                        ? "bg-zinc-200 dark:bg-zinc-600"
+                        : "hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    <img
+                      src={BUILTIN_ICONS[iconId] ?? ""}
+                      alt={iconId}
+                      draggable={false}
+                      className="h-10 w-10 rounded-full object-cover"
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <div>
           <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
             {agentName}
@@ -119,59 +154,6 @@ export function AgentSetupTab() {
           placeholder={selectedAgent.name ?? "Agent name"}
           className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
         />
-      </div>
-
-      {/* Avatar Icon */}
-      <div className="mb-3 space-y-1">
-        <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Avatar Icon
-        </label>
-        <div className="relative">
-          <button
-            onClick={() => setIconOpen(!iconOpen)}
-            className="flex w-full items-center gap-2 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 hover:bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:hover:bg-zinc-700"
-          >
-            <img
-              src={
-                BUILTIN_ICONS[profile.avatarIconId ?? "icon-20"] ??
-                BUILTIN_ICONS["icon-20"] ??
-                ""
-              }
-              alt={profile.avatarIconId ?? "icon-20"}
-              draggable={false}
-              className="h-5 w-5 shrink-0 rounded-full object-cover"
-            />
-            <span className="flex-1" />
-            <span className="shrink-0 text-[10px] text-zinc-400">{iconOpen ? "\u25B2" : "\u25BC"}</span>
-          </button>
-          {iconOpen && (
-            <div className="absolute z-50 mt-1 w-full rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
-              <div className="grid grid-cols-4 gap-1">
-                {BUILTIN_ICON_IDS.map((iconId) => (
-                  <button
-                    key={iconId}
-                    onClick={() => {
-                      setProfile(selectedAgentId, { avatarIconId: iconId });
-                      setIconOpen(false);
-                    }}
-                    className={`flex items-center justify-center rounded-md p-1 transition-colors ${
-                      profile.avatarIconId === iconId
-                        ? "bg-zinc-200 dark:bg-zinc-600"
-                        : "hover:bg-zinc-100 dark:hover:bg-zinc-700"
-                    }`}
-                  >
-                    <img
-                      src={BUILTIN_ICONS[iconId] ?? ""}
-                      alt={iconId}
-                      draggable={false}
-                      className="h-7 w-7 rounded-full object-cover"
-                    />
-                  </button>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
       </div>
 
       {/* Max Output Tokens */}

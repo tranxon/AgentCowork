@@ -34,7 +34,7 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
       >
         <UserAvatar
           displayName={profile.displayName}
-          size={32}
+          size={40}
           className="shrink-0"
         />
       </button>

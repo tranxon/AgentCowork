@@ -28,14 +28,50 @@ const PALETTES: { id: ColorPalette; label: string }[] = [
 export function ProfileTab() {
   const { profile, setProfile, resetProfile } = useUserProfileStore();
   const [nameValue, setNameValue] = useState(profile.displayName);
+  const [iconOpen, setIconOpen] = useState(false);
 
   return (
     <div className="max-w-lg space-y-6">
       <h2 className="text-sm font-medium">Your Profile</h2>
 
-      {/* Live avatar preview */}
+      {/* Live avatar preview — click to open icon picker */}
       <div className="flex items-center gap-4">
-        <UserAvatar size={64} />
+        <div className="relative">
+          <button
+            onClick={() => setIconOpen(!iconOpen)}
+            className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
+            title="Choose icon"
+          >
+            <UserAvatar size={64} />
+          </button>
+          {iconOpen && (
+            <div className="absolute left-0 z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+              <div className="grid grid-cols-4 gap-1">
+                {BUILTIN_ICON_IDS.map((iconId) => (
+                  <button
+                    key={iconId}
+                    onClick={() => {
+                      setProfile({ avatarIcon: iconId });
+                      setIconOpen(false);
+                    }}
+                    className={`flex items-center justify-center rounded-md p-1 transition-colors ${
+                      profile.avatarIcon === iconId
+                        ? "bg-zinc-200 dark:bg-zinc-600"
+                        : "hover:bg-zinc-100 dark:hover:bg-zinc-700"
+                    }`}
+                  >
+                    <img
+                      src={BUILTIN_ICONS[iconId] ?? ""}
+                      alt={iconId}
+                      draggable={false}
+                      className="h-10 w-10 rounded-full object-cover"
+                    />
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
         <div>
           <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
             {profile.displayName}
@@ -143,35 +179,6 @@ export function ProfileTab() {
             </div>
           </div>
         </>
-      )}
-
-      {/* Built-in icon selection */}
-      {profile.avatarType === "icon" && (
-        <div className="space-y-1.5">
-          <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            Choose Icon ({BUILTIN_ICON_IDS.length} available)
-          </label>
-          <div className="grid grid-cols-4 gap-2">
-            {BUILTIN_ICON_IDS.map((iconId) => (
-              <button
-                key={iconId}
-                onClick={() => setProfile({ avatarIcon: iconId })}
-                className={`flex items-center justify-center rounded-lg border p-2 transition-colors ${
-                  profile.avatarIcon === iconId
-                    ? "border-zinc-800 bg-zinc-100 dark:border-zinc-200 dark:bg-zinc-700"
-                    : "border-zinc-200 bg-white hover:bg-zinc-50 dark:border-zinc-600 dark:bg-zinc-800 dark:hover:bg-zinc-700"
-                }`}
-              >
-                <img
-                  src={BUILTIN_ICONS[iconId] ?? ""}
-                  alt={iconId}
-                  draggable={false}
-                  className="h-9 w-9 rounded-full object-cover ring-1 ring-zinc-300/60 dark:ring-zinc-600/60"
-                />
-              </button>
-            ))}
-          </div>
-        </div>
       )}
 
       {/* Reset button */}
