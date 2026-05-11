@@ -198,7 +198,7 @@ export function AgentList({ width }: AgentListProps) {
             </button>
             {/* Add menu dropdown */}
             {addMenuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-44 rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+              <div className="absolute right-0 top-full z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
                 <button
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
                 >

@@ -936,7 +936,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
           </div>
           <UserAvatar
             displayName={liveUserName}
-            size={28}
+            size={40}
             className="shrink-0 mt-1"
           />
         </div>
@@ -954,7 +954,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             agentId={agentId}
             displayName={liveAgentName}
             iconId={agentIconId}
-            size={28}
+            size={40}
             className="shrink-0 mt-1"
           />
           <div className="min-w-0 flex-1">
@@ -991,7 +991,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             agentId={agentId}
             displayName={liveAgentName}
             iconId={agentIconId}
-            size={28}
+            size={40}
             className="shrink-0 mt-1"
           />
           <div className="min-w-0 flex-1">
