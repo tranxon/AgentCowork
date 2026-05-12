@@ -24,6 +24,9 @@ pub struct ContextBuilder {
     /// Retrieved memory context (from Grafeo) for injection into system prompt.
     /// Set by AgentLoop before each build via `set_retrieved_memory()`.
     retrieved_memory: Option<String>,
+    /// Skill instructions override (for debug patching and runtime config).
+    /// Injected into system prompt after identity and before memory sections.
+    skill_instructions: Option<String>,
 }
 
 impl ContextBuilder {
@@ -36,6 +39,7 @@ impl ContextBuilder {
             tool_definitions: None,
             override_model: None,
             retrieved_memory: None,
+            skill_instructions: None,
         }
     }
 
@@ -113,6 +117,82 @@ impl ContextBuilder {
         }
     }
 
+    /// Set the base system prompt (for debug patching).
+    pub fn set_system_prompt(&mut self, prompt: String) {
+        tracing::info!(
+            old_len = self.system_prompt.len(),
+            new_len = prompt.len(),
+            "ContextBuilder system prompt updated via debug patch"
+        );
+        self.system_prompt = prompt;
+    }
+
+    /// Set tool definitions (for debug patching).
+    pub fn set_tool_definitions(&mut self, tools: Vec<serde_json::Value>) {
+        tracing::info!(
+            tool_count = tools.len(),
+            "ContextBuilder tool definitions updated via debug patch"
+        );
+        self.tool_definitions = Some(tools);
+    }
+
+    /// Set identity context in-place (for debug patching).
+    pub fn set_identity_context(&mut self, identity: String) {
+        tracing::info!(
+            old_len = self.identity_context.as_ref().map(|s| s.len()).unwrap_or(0),
+            new_len = identity.len(),
+            "ContextBuilder identity context updated via debug patch"
+        );
+        self.identity_context = Some(identity);
+    }
+
+    /// Set skill instructions (for debug patching).
+    pub fn set_skill_instructions(&mut self, instructions: String) {
+        tracing::info!(
+            len = instructions.len(),
+            "ContextBuilder skill instructions updated via debug patch"
+        );
+        self.skill_instructions = Some(instructions);
+    }
+
+    /// Set retrieved memory text in-place (for debug patching).
+    /// Note: this differs from `set_retrieved_memory` in that it doesn't
+    /// skip empty strings (allows clearing the memory section).
+    pub fn set_retrieved_memory_patch(&mut self, memory_text: String) {
+        if memory_text.is_empty() {
+            tracing::debug!("ContextBuilder retrieved memory cleared via debug patch");
+            self.retrieved_memory = None;
+        } else {
+            tracing::debug!(
+                len = memory_text.len(),
+                "ContextBuilder retrieved memory updated via debug patch"
+            );
+            self.retrieved_memory = Some(memory_text);
+        }
+    }
+
+    /// Apply a debug PatchSet to the context builder.
+    ///
+    /// Only non-None fields in the patch are applied; existing fields
+    /// that are not patched remain unchanged.
+    pub fn apply_patches(&mut self, patches: &crate::debug::protocol::PatchSet) {
+        if let Some(ref prompt) = patches.system_prompt {
+            self.set_system_prompt(prompt.clone());
+        }
+        if let Some(ref tools) = patches.tool_definitions {
+            self.set_tool_definitions(tools.clone());
+        }
+        if let Some(ref skills) = patches.skill_instructions {
+            self.set_skill_instructions(skills.clone());
+        }
+        if let Some(ref memory) = patches.retrieved_memory {
+            self.set_retrieved_memory_patch(memory.to_string());
+        }
+        if let Some(ref identity) = patches.identity_context {
+            self.set_identity_context(identity.to_string());
+        }
+    }
+
     /// Clear retrieved memory context.
     ///
     /// Must be called at the start of each `run()` invocation to prevent
@@ -123,6 +203,28 @@ impl ContextBuilder {
             tracing::debug!("ContextBuilder retrieved memory context cleared (stale prevention)");
             self.retrieved_memory = None;
         }
+    }
+
+    // ── Section accessors for debug ContextSnapshot ──
+
+    /// Get the base system prompt (before identity/memory/workspace injection).
+    pub fn system_prompt(&self) -> &str {
+        &self.system_prompt
+    }
+
+    /// Get the identity context text, if set.
+    pub fn identity_context(&self) -> Option<&str> {
+        self.identity_context.as_deref()
+    }
+
+    /// Get the tool definitions as JSON values, if set.
+    pub fn tool_definitions(&self) -> Option<&[serde_json::Value]> {
+        self.tool_definitions.as_deref()
+    }
+
+    /// Get the retrieved memory text, if set.
+    pub fn retrieved_memory(&self) -> Option<&str> {
+        self.retrieved_memory.as_deref()
     }
 
     /// Build the complete ChatRequest for the LLM
@@ -151,6 +253,11 @@ impl ContextBuilder {
         // 2.5 Retrieved memory context from Grafeo (long-term memory)
         if let Some(ref memory) = self.retrieved_memory {
             system_content.push_str(&format!("\n\n## Relevant Memories\n{memory}"));
+        }
+
+        // 2.6 Skill instructions (debug patching or runtime config)
+        if let Some(ref skills) = self.skill_instructions {
+            system_content.push_str(&format!("\n\n## Skill Instructions\n{skills}"));
         }
 
         // 3. Environment platform info (runtime detection)

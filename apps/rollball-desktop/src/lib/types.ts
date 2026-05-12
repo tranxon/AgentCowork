@@ -22,6 +22,7 @@ export interface AgentInfo {
   avatar?: string;
   version: string;
   running: boolean;
+  dev_mode: boolean;
 }
 
 /** Agent detail response */
@@ -121,6 +122,47 @@ export interface GatewayConfig {
 /** Generic message response */
 export interface MessageResponse {
   message: string;
+}
+
+// ── Clone types ───────────────────────────────────────────────────────
+
+/** Clone mode */
+export type CloneMode = "skeleton" | "full";
+
+/** Clone response from Gateway */
+export interface CloneResponse {
+  agent_id: string;
+  install_path: string;
+}
+
+// ── Publish types ─────────────────────────────────────────────────────
+
+/** A single check item from publish prepare */
+export interface CheckItem {
+  field: string;
+  status: string;
+  message?: string;
+}
+
+/** Publish prepare response */
+export interface PreparePublishResponse {
+  checks: CheckItem[];
+  warnings: string[];
+  errors: string[];
+  cleaned: boolean;
+}
+
+/** Publish build response */
+export interface BuildPublishResponse {
+  output_path: string;
+  signed: boolean;
+  file_size: number;
+}
+
+/** Export package response */
+export interface ExportPackageResponse {
+  status: string;
+  output_path: string;
 }
 
 /** Send message response */

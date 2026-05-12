@@ -2,7 +2,7 @@
 
 use tauri::State;
 
-use crate::gateway_client::{AgentDetailResponse, AgentListEntry, GenericMessageResponse};
+use crate::gateway_client::{AgentDetailResponse, AgentListEntry, CloneResponse, GenericMessageResponse};
 use crate::state::AppState;
 
 /// List all installed agents
@@ -65,9 +65,10 @@ pub async fn uninstall_agent(
 pub async fn start_agent(
     state: State<'_, AppState>,
     agent_id: String,
+    dev_mode: Option<bool>,
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
-    client.start_agent(&agent_id).await.map_err(|e| e.to_string())
+    client.start_agent(&agent_id, dev_mode.unwrap_or(false)).await.map_err(|e| e.to_string())
 }
 
 /// Stop an agent
@@ -78,4 +79,19 @@ pub async fn stop_agent(
 ) -> Result<GenericMessageResponse, String> {
     let client = state.gateway.read().await;
     client.stop_agent(&agent_id).await.map_err(|e| e.to_string())
+}
+
+/// Clone an agent (skeleton or full mode)
+#[tauri::command]
+pub async fn clone_agent(
+    state: State<'_, AppState>,
+    agent_id: String,
+    new_agent_id: String,
+    mode: Option<String>,
+) -> Result<CloneResponse, String> {
+    let client = state.gateway.read().await;
+    client
+        .clone_agent(&agent_id, &new_agent_id, &mode.unwrap_or_else(|| "skeleton".to_string()))
+        .await
+        .map_err(|e| e.to_string())
 }

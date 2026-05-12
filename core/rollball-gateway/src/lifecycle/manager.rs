@@ -32,6 +32,7 @@ impl LifecycleManager {
         &mut self,
         agent_id: &str,
         state: &mut GatewayState,
+        dev_mode: bool,
     ) -> Result<(), GatewayError> {
         // Check if already running
         if state.is_running(agent_id) {
@@ -73,6 +74,7 @@ impl LifecycleManager {
             &info.install_path,
             &workspace,
             &self.gateway_grpc_endpoint,
+            dev_mode,
         ).await?;
 
         let pid = child.id();
@@ -83,6 +85,7 @@ impl LifecycleManager {
             started_at: chrono::Utc::now(),
             workspace: workspace.to_string_lossy().to_string(),
             connected: false,
+            dev_mode,
         });
 
         tracing::info!("Started agent: {} (PID: {})", agent_id, pid);
@@ -112,7 +115,7 @@ impl LifecycleManager {
         }
 
         tracing::info!("Auto-starting System Agent ({})", SYSTEM_AGENT_ID);
-        self.start_agent(SYSTEM_AGENT_ID, state).await
+        self.start_agent(SYSTEM_AGENT_ID, state, false).await
     }
 
     /// Query identity_deps for an agent manifest.
@@ -264,7 +267,7 @@ mod tests {
         let mut mgr = LifecycleManager::new(300, "http://127.0.0.1:19877".to_string());
         let dir = temp_vault_dir("start");
         let mut state = GatewayState::new(&dir);
-        let result = mgr.start_agent("com.test.unknown", &mut state).await;
+        let result = mgr.start_agent("com.test.unknown", &mut state, false).await;
         assert!(result.is_err());
     }
 

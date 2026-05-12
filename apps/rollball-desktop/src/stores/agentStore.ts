@@ -15,7 +15,7 @@ interface AgentStore {
   selectAgent: (id: string | null) => void;
   installAgent: (packagePath: string) => Promise<void>;
   uninstallAgent: (agentId: string) => Promise<void>;
-  startAgent: (agentId: string) => Promise<void>;
+  startAgent: (agentId: string, devMode?: boolean) => Promise<void>;
   stopAgent: (agentId: string) => Promise<void>;
   getAgentDetail: (agentId: string) => Promise<AgentDetail>;
 }
@@ -83,9 +83,9 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     }
   },
 
-  startAgent: async (agentId) => {
+  startAgent: async (agentId, devMode) => {
     try {
-      await invoke("start_agent", { agentId });
+      await invoke("start_agent", { agentId, devMode: devMode ?? false });
       await get().fetchAgents();
     } catch (e) {
       set({ error: String(e) });

@@ -14,6 +14,7 @@ use crate::agent::context::ContextBuilder;
 use crate::agent::inbound::InboundMessage;
 use crate::agent::loop_::{AgentLoop, ChunkEvent};
 use crate::agent::session_state::SessionState;
+use crate::debug::controller::DebugController;
 
 /// Messages that can be sent to a SessionTask.
 #[derive(Debug, Clone)]
@@ -88,6 +89,10 @@ pub(crate) struct SessionTask {
     identity_context: Option<String>,
     /// Model override from Gateway (takes precedence over manifest's suggested_model)
     override_model: Option<String>,
+    /// Debug controller (shared across sessions, only in DevMode).
+    /// Used to consume rewind_target / pending_patches / re_execute_pending
+    /// before each agent_loop.run() invocation.
+    debug_ctrl: Option<Arc<tokio::sync::Mutex<DebugController>>>,
 }
 
 impl SessionTask {
@@ -114,6 +119,10 @@ impl SessionTask {
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
+        // Extract debug_ctrl from the original core BEFORE clone_for_session —
+        // both the AgentLoop (via clone_for_session) and SessionTask hold an
+        // Arc to the same DebugController.
+        let debug_ctrl = core.debug_ctrl().cloned();
         let core_for_session = core.clone_for_session(chunk_tx.clone());
         let (agent_loop, agent_inbound_tx) =
             AgentLoop::from_core_and_session(core_for_session, session);
@@ -128,53 +137,74 @@ impl SessionTask {
             tool_definitions,
             identity_context,
             override_model,
+            debug_ctrl,
         };
         (task, agent_inbound_tx)
     }
 
     /// Run the session task, processing messages until Stop or channel close.
-    pub async fn run(mut self) {
-        let mut agent_loop = self.agent_loop;
-        let agent_inbound_tx = self.agent_inbound_tx;
+    pub async fn run(self) {
+        let Self {
+            mut agent_loop,
+            agent_inbound_tx,
+            debug_ctrl,
+            session_id,
+            chunk_tx,
+            mut inbound_rx,
+            system_prompt,
+            tool_definitions,
+            identity_context,
+            override_model,
+        } = self;
 
         // Build ContextBuilder with complete tool definitions and identity
         // from SessionManagerConfig, instead of building simplified ones from manifest.
-        let mut context_builder = ContextBuilder::new(self.system_prompt.clone())
-            .with_identity(self.identity_context.clone())
-            .with_tools(self.tool_definitions.clone());
+        let mut context_builder = ContextBuilder::new(system_prompt.clone())
+            .with_identity(identity_context.clone())
+            .with_tools(tool_definitions.clone());
 
         // Apply Gateway-resolved model override so the first message uses
         // the correct model (not the manifest's suggested_model fallback).
-        if let Some(ref model) = self.override_model {
+        if let Some(ref model) = override_model {
             context_builder = context_builder.with_override_model(model.clone());
         }
 
         loop {
-            let msg = self.inbound_rx.recv().await;
+            let msg = inbound_rx.recv().await;
             match msg {
                 Some(SessionMessage::ChatMessage { content, message_id }) => {
                     if content.trim().is_empty() {
                         tracing::warn!(
-                            session_id = %self.session_id,
+                            session_id = %session_id,
                             "SessionTask received empty chat message, ignoring"
                         );
                         continue;
                     }
+
+                    // ── Debug mode: apply rewind/patches before running agent loop ──
+                    apply_debug_rewind_and_patches(
+                        &debug_ctrl,
+                        &session_id,
+                        &mut agent_loop,
+                        &mut context_builder,
+                    )
+                    .await;
+
                     match agent_loop.run(&content, &mut context_builder).await {
                         Ok(response) => {
                             tracing::info!(
-                                session_id = %self.session_id,
+                                session_id = %session_id,
                                 response_len = response.len(),
                                 "SessionTask processed chat message"
                             );
-                            if let Some(ref tx) = self.chunk_tx {
+                            if let Some(ref tx) = chunk_tx {
                                 let event = ChunkEvent::Done {
                                     content: response,
                                     message_id,
                                 };
                                 if tx.send(event).await.is_err() {
                                     tracing::warn!(
-                                        session_id = %self.session_id,
+                                        session_id = %session_id,
                                         "Failed to send Done chunk event"
                                     );
                                 }
@@ -182,18 +212,18 @@ impl SessionTask {
                         }
                         Err(e) => {
                             tracing::error!(
-                                session_id = %self.session_id,
+                                session_id = %session_id,
                                 error = %e,
                                 "SessionTask agent loop error"
                             );
-                            if let Some(ref tx) = self.chunk_tx {
+                            if let Some(ref tx) = chunk_tx {
                                 let event = ChunkEvent::Error {
                                     message: format!("Error: {}", e),
                                     message_id,
                                 };
                                 if tx.send(event).await.is_err() {
                                     tracing::warn!(
-                                        session_id = %self.session_id,
+                                        session_id = %session_id,
                                         "Failed to send Error chunk event"
                                     );
                                 }
@@ -203,7 +233,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::ContinueExecution) => {
                     tracing::debug!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         "SessionTask: ContinueExecution received"
                     );
                     let _ = agent_inbound_tx.send(crate::agent::inbound::InboundMessage::ContinueExecution {
@@ -212,7 +242,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::ModelSwitch { model }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         model = %model,
                         "SessionTask: model switch requested"
                     );
@@ -220,7 +250,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         provider = %provider_name,
                         model = %model,
                         "SessionTask: updating provider"
@@ -235,7 +265,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::UpdateCapabilities { caps }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         model = ?caps.name,
                         "SessionTask: updating model capabilities"
                     );
@@ -243,7 +273,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::UpdateMaxOutputTokens { limit }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         limit = %limit,
                         "SessionTask: updating max output tokens limit"
                     );
@@ -256,7 +286,7 @@ impl SessionTask {
                     system_prompt_override,
                 }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         max_output_tokens = ?max_output_tokens,
                         max_iterations = ?max_iterations,
                         temperature = ?temperature,
@@ -271,14 +301,14 @@ impl SessionTask {
                 }
                 Some(SessionMessage::UpdateWorkspaceContext { context_text }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         "SessionTask: updating workspace context"
                     );
                     context_builder.set_workspace_context(context_text);
                 }
                 Some(SessionMessage::UpdateSessionTitle { title }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         title = %title,
                         "SessionTask: updating session title"
                     );
@@ -286,7 +316,7 @@ impl SessionTask {
                 }
                 Some(SessionMessage::Interrupt { reason }) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         reason = %reason,
                         "SessionTask: forwarding interrupt signal"
                     );
@@ -294,14 +324,14 @@ impl SessionTask {
                 }
                 Some(SessionMessage::Stop) => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         "SessionTask: Stop received, shutting down"
                     );
                     break;
                 }
                 None => {
                     tracing::info!(
-                        session_id = %self.session_id,
+                        session_id = %session_id,
                         "SessionTask: inbound channel closed, shutting down"
                     );
                     break;
@@ -312,10 +342,78 @@ impl SessionTask {
         // Graceful shutdown: attempt to close session with distillation
         if let Err(e) = agent_loop.close_session_with_distillation().await {
             tracing::warn!(
-                session_id = %self.session_id,
+                session_id = %session_id,
                 error = %e,
                 "SessionTask: failed to close session with distillation (non-fatal)"
             );
         }
+    }
+}
+
+/// Apply any pending debug controller operations (rewind, patches) before
+/// the next agent loop invocation.
+///
+/// This is called before each `agent_loop.run()` when DevMode is active.
+/// It consumes `rewind_target` (truncates history) and applies pending
+/// `PatchSet` to the `ContextBuilder`. The `re_execute_pending` flag is
+/// consumed for logging purposes only — execution proceeds naturally
+/// when the agent loop sees `Running` state.
+async fn apply_debug_rewind_and_patches(
+    debug_ctrl: &Option<Arc<tokio::sync::Mutex<DebugController>>>,
+    session_id: &str,
+    agent_loop: &mut AgentLoop,
+    context_builder: &mut ContextBuilder,
+) {
+    let Some(debug_ctrl) = debug_ctrl else {
+        return; // Production mode, no debug controller
+    };
+
+    let mut ctrl = debug_ctrl.lock().await;
+
+    // ── Handle rewind ──
+    if let Some(target_iter) = ctrl.take_rewind_target() {
+        // Find the message_count from the conversation snapshot at the target iteration
+        let msg_count = ctrl
+            .conversation_snapshots
+            .iter()
+            .find(|s| s.iteration == target_iter)
+            .map(|s| s.message_count);
+
+        if let Some(count) = msg_count {
+            agent_loop.session.history.truncate_to(count);
+            tracing::info!(
+                session_id = %session_id,
+                target_iteration = target_iter,
+                messages_trimmed_to = count,
+                "Debug rewind: history truncated"
+            );
+        } else {
+            tracing::warn!(
+                session_id = %session_id,
+                target_iteration = target_iter,
+                "Debug rewind: no snapshot found for target iteration, history unchanged"
+            );
+        }
+
+        // Reset iteration counter to the target so the agent loop
+        // resumes from the correct point
+        ctrl.iteration = target_iter;
+    }
+
+    // ── Apply pending patches ──
+    if let Some(ref patches) = ctrl.pending_patches {
+        context_builder.apply_patches(patches);
+        tracing::info!(
+            session_id = %session_id,
+            "Debug: pending patches applied to context builder"
+        );
+    }
+
+    // ── Consume re-execute pending flag ──
+    if ctrl.take_re_execute_pending() {
+        tracing::info!(
+            session_id = %session_id,
+            "Debug: re-execute flag consumed, agent will process next message with updated context"
+        );
     }
 }

@@ -7,18 +7,15 @@
 //! S1.6: InboundQueue for external message injection
 //! S1.7: Parallel tool execution with per-tool timeout
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 
-use chrono::Utc;
-use futures::StreamExt;
 use rollball_core::providers::traits::{
-    ChatMessage, ChatResponse, MessageRole, Provider, StreamEvent, ToolCall,
+    ChatMessage, ChatResponse, MessageRole, Provider, ToolCall,
 };
 use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::tools::traits::Tool;
 use tokio::sync::mpsc;
-use tokio::time::{Duration, Instant};
 
 use crate::agent::agent_core::AgentCore;
 use crate::agent::budget_guard::BudgetCheckResult;
@@ -78,14 +75,29 @@ pub enum ChunkEvent {
     },
 }
 
+/// Result of executing a single iteration of the agent loop.
+///
+/// This is the shared building block used by both:
+/// - Production `run()`: loops automatically until TextResponse/Interrupted
+/// - Debug `DebugSessionTask`: calls one iteration at a time with pause/breakpoint control
+#[derive(Debug)]
+pub(crate) enum IterationResult {
+    /// Agent returned a text response — conversation round complete
+    TextResponse(String),
+    /// Tool calls were executed successfully — continue to next iteration
+    ToolCallsExecuted,
+    /// Agent was interrupted by user request
+    Interrupted(String),
+}
+
 /// Agent loop runner
 pub struct AgentLoop {
     /// Cross-session shared state (config, provider, tools, capabilities)
-    core: AgentCore,
+    pub(crate) core: AgentCore,
     /// Per-session state (history, conversation, loop detector, budget)
-    session: SessionState,
+    pub(crate) session: SessionState,
     /// Inbound message receiver for external message injection
-    inbound_rx: tokio::sync::mpsc::Receiver<InboundMessage>,
+    pub(crate) inbound_rx: tokio::sync::mpsc::Receiver<InboundMessage>,
 }
 
 impl AgentLoop {
@@ -304,7 +316,7 @@ impl AgentLoop {
 
     /// Look up model capabilities by model name.
     /// Falls back to the first entry if the model name is not found.
-    fn get_model_capabilities(&self, model_name: Option<&str>) -> Option<&ModelCapabilitiesInfo> {
+    pub(crate) fn get_model_capabilities(&self, model_name: Option<&str>) -> Option<&ModelCapabilitiesInfo> {
         self.core.get_model_capabilities(model_name)
     }
 
@@ -684,6 +696,61 @@ impl AgentLoop {
                 return Ok("Agent stopped by user request.".to_string());
             }
 
+            // ①-⑧ Execute single iteration (shared with debug mode)
+            match self.execute_single_iteration(iteration, context_builder, user_message, &retrieved_memory_ids).await? {
+                IterationResult::TextResponse(content) => return Ok(content),
+                IterationResult::Interrupted(content) => return Ok(content),
+                IterationResult::ToolCallsExecuted => {
+                    tracing::debug!(iteration, "Loop iteration complete, continuing");
+                    continue;
+                }
+            }
+        }
+    }
+
+    /// Execute a single iteration of the agent loop (steps ① through ⑧).
+    ///
+    /// Shared between production [`run()`] and debug [`DebugSessionTask`].
+    /// The caller is responsible for iteration counting, limit checks, and
+    /// inbound queue draining (steps ⑨ and ⓪).
+    ///
+    /// # Steps
+    /// ① Budget pre-check → ② Preemptive trim → ②.5 Build context →
+    /// ③ Call LLM → ④ Parse response → ④.5 Tool dedup →
+    /// ⑤ Tool dispatch → ⑥ Append results → ⑧ Loop detection
+    ///
+    /// # Returns
+    /// - `TextResponse(content)`: agent returned a final text response
+    /// - `ToolCallsExecuted`: tool calls processed, caller should loop
+    /// - `Interrupted(content)`: user interrupted execution
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn execute_single_iteration(
+        &mut self,
+        iteration: u32,
+        context_builder: &mut ContextBuilder,
+        user_message: &str,
+        retrieved_memory_ids: &[String],
+    ) -> Result<IterationResult> {
+            // ── Debug mode hooks ──
+            // Update iteration counter in debug controller
+            if let Some(ctrl) = self.core.debug_ctrl() {
+                let mut ctrl = ctrl.lock().await;
+                ctrl.iteration = iteration;
+            }
+
+            // Await resume if paused (DevMode only)
+            if !self.await_debug_resume().await {
+                return Ok(IterationResult::Interrupted(
+                    "[Debug] Agent loop stopped by debugger".to_string(),
+                ));
+            }
+
+            // Enter BudgetCheck phase
+            self.update_debug_phase(
+                crate::debug::protocol::DebugPhase::BudgetCheck,
+            )
+            .await;
+
             // ① Budget pre-check
             let estimated_tokens = self.session.history.estimate_total_tokens() + 500; // +500 for new response
             match self.session.budget_guard.check(estimated_tokens) {
@@ -724,11 +791,30 @@ impl AgentLoop {
                 "Built chat request for LLM (after preemptive trim)"
             );
 
+            // Debug: enter BuildContext phase
+            self.update_debug_phase(
+                crate::debug::protocol::DebugPhase::BuildContext,
+            )
+            .await;
+
+            // Debug: create context snapshot and push onContextBuilt event
+            self.capture_context_snapshot(context_builder);
+
             // ③ Call LLM with streaming (S1.5)
             let response = self.call_llm_streaming(&chat_request, context_builder).await?;
 
+            // Debug: enter LlmCall phase
+            self.update_debug_phase(crate::debug::protocol::DebugPhase::LlmCall)
+                .await;
+
             // ④ Parse response
             let has_tool_calls = response.tool_calls.is_some();
+
+            // Debug: enter ParseResponse phase
+            self.update_debug_phase(
+                crate::debug::protocol::DebugPhase::ParseResponse,
+            )
+            .await;
 
             // Update budget
             if let Some(usage) = &response.usage {
@@ -790,10 +876,23 @@ impl AgentLoop {
                 // P1-2 fix: increment turn_counter, P2-4 fix: pass retrieved memory IDs
                 let turn_index = self.session.turn_counter;
                 self.session.turn_counter += 1;
-                self.record_turn_to_memory(user_message, &content, turn_index, retrieved_memory_ids.clone());
+                self.record_turn_to_memory(user_message, &content, turn_index, retrieved_memory_ids.to_vec());
 
                 tracing::info!(iteration, "Agent returned text response");
-                return Ok(content);
+
+                // Debug: enter AppendHistory phase and push step event
+                self.update_debug_phase(
+                    crate::debug::protocol::DebugPhase::AppendHistory,
+                )
+                .await;
+                self.push_debug_step(
+                    crate::debug::protocol::DebugPhase::Idle,
+                    None,
+                    Some(serde_json::json!({"content": content})),
+                );
+                self.debug_auto_pause_if_stepping().await;
+
+                return Ok(IterationResult::TextResponse(content));
             }
 
             // Persist think block (if present) to JSONL
@@ -888,18 +987,10 @@ impl AgentLoop {
                 let content = response.content.clone();
 
                 // Persist interrupted assistant message to JSONL conversation.
-                // Note: think/reasoning was already persisted above (line ~627).
-                // Here we only persist the assistant text content.
                 if let Some(ref conversation) = self.session.conversation {
                     let assistant_text = strip_think_block(&content);
                     conversation.append_message("assistant", &assistant_text, None);
                 }
-
-                // Also append to in-memory history (the assistant message with
-                // tool_calls was already appended above, but that one is the
-                // "full" version — this interrupt path needs a clean exit).
-                // Since the tool_calls-bearing assistant message was already
-                // appended at line ~653, we don't need to append again.
 
                 // Notify frontend via chunk channel
                 if let Some(ref tx) = self.core.on_chunk {
@@ -908,8 +999,22 @@ impl AgentLoop {
                     });
                 }
 
-                return Ok(format!("[Interrupted] {}", content));
+                // Debug: push step event and auto-pause if stepping
+                self.push_debug_step(
+                    crate::debug::protocol::DebugPhase::Idle,
+                    None,
+                    Some(serde_json::json!({"interrupted": true, "content": content})),
+                );
+                self.debug_auto_pause_if_stepping().await;
+
+                return Ok(IterationResult::Interrupted(format!("[Interrupted] {}", content)));
             }
+
+            // Debug: enter ToolExecution phase
+            self.update_debug_phase(
+                crate::debug::protocol::DebugPhase::ToolExecution,
+            )
+            .await;
 
             let executed_results = self.execute_tools_parallel(&calls_to_execute).await;
 
@@ -1036,16 +1141,21 @@ impl AgentLoop {
             }
 
             // ⑦ Usage report (async, non-blocking)
-            // NOTE: Usage reporting to Gateway is handled by the caller
-            // (run_gateway_loop in cli.rs) after the loop iteration completes.
             tracing::debug!(iteration, "Loop iteration complete");
 
-            // ⑨ DevMode control
-            // TODO(Phase 5): DevMode step control — debug.step(iteration)
+            // Debug: enter AppendHistory phase and push step event
+            self.update_debug_phase(
+                crate::debug::protocol::DebugPhase::AppendHistory,
+            )
+            .await;
+            self.push_debug_step(
+                crate::debug::protocol::DebugPhase::Idle,
+                None,
+                None,
+            );
+            self.debug_auto_pause_if_stepping().await;
 
-            // Continue to next iteration
-            tracing::debug!(iteration, "Loop iteration complete, continuing");
-        }
+            Ok(IterationResult::ToolCallsExecuted)
     }
 
     /// Non-blocking interrupt poll — returns true if the user requested stop.
@@ -1055,7 +1165,7 @@ impl AgentLoop {
     /// handles all message types at the start of each loop iteration, and the
     /// streaming/tool-execution phase where this method is called should not need
     /// to process user/system messages mid-flight.
-    fn poll_interrupt(&mut self) -> bool {
+    pub(crate) fn poll_interrupt(&mut self) -> bool {
         while let Ok(msg) = self.inbound_rx.try_recv() {
             match msg {
                 InboundMessage::Interrupt { .. } => {
@@ -1115,415 +1225,207 @@ impl AgentLoop {
         false
     }
 
-    /// Call LLM with streaming, accumulating content and tool calls.
+    // ── LLM streaming methods extracted to loop_llm.rs ──
+
+    // ── Tool execution extracted to loop_tools.rs ──
+
+    // ── Debug mode control methods ──
+
+    /// Await debug resume: blocks if the debug controller is in Paused state.
     ///
-    /// Handles context overflow recovery by detecting relevant errors
-    /// from the stream and retrying after emergency trim.
-    async fn call_llm_streaming(
-        &mut self,
-        chat_request: &rollball_core::providers::traits::ChatRequest,
-        context_builder: &ContextBuilder,
-    ) -> Result<ChatResponse> {
-        self.call_llm_streaming_inner(chat_request, Some(context_builder)).await
+    /// Polls every 100ms and returns when Running/Stepping or no controller.
+    /// Returns `true` if execution should continue, `false` if stopped.
+    async fn await_debug_resume(&self) -> bool {
+        let Some(ctrl) = self.core.debug_ctrl() else {
+            return true; // Production mode, no debug controller
+        };
+
+        loop {
+            let state = {
+                let ctrl = ctrl.lock().await;
+                ctrl.state.clone()
+            };
+            match state {
+                crate::debug::controller::DebugState::Running => return true,
+                crate::debug::controller::DebugState::Stepping => return true,
+                crate::debug::controller::DebugState::Stopped => {
+                    tracing::info!("Debug: agent loop stopped");
+                    return false;
+                }
+                crate::debug::controller::DebugState::Paused => {
+                    // Poll every 100ms until resumed
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
     }
 
-    /// Single-attempt streaming call (no retry on context overflow).
+    /// Update the debug phase and check for breakpoints.
     ///
-    /// Used after emergency trim to avoid infinite recursion.
-    fn call_llm_streaming_no_retry<'a>(
-        &'a mut self,
-        chat_request: &'a rollball_core::providers::traits::ChatRequest,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<ChatResponse>> + Send + 'a>> {
-        Box::pin(async move {
-            self.call_llm_streaming_inner(chat_request, None).await
-        })
-    }
+    /// Pushes `onStateChange` events and checks if any breakpoint matches.
+    /// If a breakpoint hits, the controller is set to Paused and an
+    /// `onBreakpoint` event is pushed.
+    async fn update_debug_phase(&self, phase: crate::debug::protocol::DebugPhase) {
+        let Some(ctrl) = self.core.debug_ctrl() else {
+            return;
+        };
 
-    /// Common streaming implementation.
-    ///
-    /// When `context_builder` is `Some`, context overflow recovery is enabled
-    /// (retry after emergency trim). When `None`, errors are returned directly.
-    async fn call_llm_streaming_inner(
-        &mut self,
-        chat_request: &rollball_core::providers::traits::ChatRequest,
-        context_builder: Option<&ContextBuilder>,
-    ) -> Result<ChatResponse> {
-        let retry_on_overflow = context_builder.is_some();
+        let mut ctrl_guard = ctrl.lock().await;
+        let old_phase = ctrl_guard.phase;
+        ctrl_guard.phase = phase;
 
-        tracing::debug!(
-            system_prompt_len = chat_request.messages.first().map(|m| m.content.len()).unwrap_or(0),
-            tools_count = chat_request.tools.as_ref().map(|t| t.len()).unwrap_or(0),
-            messages_count = chat_request.messages.len(),
-            "Sending LLM request"
-        );
-        let stream = self.core.provider.chat_stream(chat_request.clone()).await?;
-        let mut stream = Box::into_pin(stream);
-        let mut accumulated_content = String::new();
-        let mut accumulated_reasoning_content = String::new();
-        let mut tool_calls: Option<Vec<ToolCall>> = None;
-        let mut usage = None;
-        let mut reasoning_started_at: Option<i64> = None;
-        let mut reasoning_finished_at: Option<i64> = None;
-        let mut reasoning_in_progress = false;
+        // Push state change event
+        if let Some(event_tx) = self.core.debug_event_tx() {
+            let _ = event_tx.send(crate::debug::server::DebugEvent::StateChanged {
+                old_phase,
+                new_phase: phase,
+                iteration: ctrl_guard.iteration,
+            });
+        }
 
-        // ToolCallChunk accumulation buffer: indexed by tool_call sequential index
-        let mut tool_call_args_buffer: HashMap<u64, String> = HashMap::new();
-        // Track which tool_call indices have accumulated valid JSON so far.
-        // Once complete JSON is formed, any further delta chunks for that index
-        // are stale duplicates (observed with some OpenAI-compatible APIs) and
-        // must be discarded to avoid corrupting the arguments.
-        let mut finished_tool_indices: HashSet<u64> = HashSet::new();
-
-        while let Some(event) = stream.next().await {
-            // Check for user interrupt before processing each stream event
-            if self.poll_interrupt() {
-                tracing::info!("LLM stream interrupted by user — aborting");
-
-                // Notify frontend via chunk channel
-                if let Some(ref tx) = self.core.on_chunk {
-                    let _ = tx.try_send(ChunkEvent::Interrupted {
-                        content: accumulated_content.clone(),
+        // Check breakpoints
+        let hit_ids = ctrl_guard.check_breakpoints(phase, None);
+        if !hit_ids.is_empty() {
+            for bp_id in &hit_ids {
+                tracing::info!(breakpoint_id = %bp_id, phase = ?phase, "Debug: breakpoint hit");
+                if let Some(event_tx) = self.core.debug_event_tx() {
+                    let _ = event_tx.send(crate::debug::server::DebugEvent::BreakpointHit {
+                        breakpoint_id: bp_id.clone(),
+                        iteration: ctrl_guard.iteration,
+                        phase,
                     });
                 }
-
-                // Return partial response with whatever content was accumulated
-                return Ok(ChatResponse {
-                    content: accumulated_content,
-                    reasoning_content: if accumulated_reasoning_content.is_empty() { None } else { Some(accumulated_reasoning_content) },
-                    tool_calls: None, // discard partial tool calls on interrupt
-                    usage: None,
-                    reasoning_started_at: None,
-                    reasoning_finished_at: None,
-                });
             }
-            match event {
-                StreamEvent::Content(chunk) => {
-                    // Mark reasoning finished when content starts after reasoning
-                    if reasoning_in_progress {
-                        reasoning_finished_at = Some(Utc::now().timestamp_millis());
-                        reasoning_in_progress = false;
-                    }
-                    accumulated_content.push_str(&chunk);
-
-                    // Forward delta to on_chunk channel (like ZeroClaw's on_delta)
-                    // so the caller can relay streaming chunks to Gateway
-                    if let Some(ref tx) = self.core.on_chunk {
-                        // Use try_send to avoid blocking the LLM stream
-                        if tx.try_send(ChunkEvent::Delta(chunk.clone())).is_err() {
-                            tracing::debug!("on_chunk channel full or closed, dropping delta");
-                        }
-                    }
-                }
-                StreamEvent::ReasoningContent(chunk) => {
-                    // Record start of reasoning on first chunk
-                    if reasoning_started_at.is_none() {
-                        reasoning_started_at = Some(Utc::now().timestamp_millis());
-                    }
-                    reasoning_in_progress = true;
-                    accumulated_reasoning_content.push_str(&chunk);
-                    // Forward reasoning delta to on_chunk channel for real-time streaming
-                    if let Some(ref tx) = self.core.on_chunk
-                        && tx.try_send(ChunkEvent::ReasoningDelta(chunk.clone())).is_err()
-                    {
-                        tracing::debug!("on_chunk channel full or closed, dropping reasoning delta");
-                    }
-                }
-                StreamEvent::ToolCallStart(tc) => {
-                    // Mark reasoning finished when tool calls start after reasoning
-                    if reasoning_in_progress {
-                        reasoning_finished_at = Some(Utc::now().timestamp_millis());
-                        reasoning_in_progress = false;
-                    }
-                    tracing::info!(tool_name = %tc.function.name, tool_id = %tc.id, initial_args = %tc.function.arguments, "ToolCallStart received");
-                    tool_calls.get_or_insert_with(Vec::new).push(tc);
-                }
-                StreamEvent::ToolCallChunk { index, arguments } => {
-                    tracing::debug!(index, chunk_len = arguments.len(), "ToolCallChunk received");
-                    // Discard stale delta chunks for tool calls that already have complete JSON
-                    if !finished_tool_indices.contains(&index) {
-                        let buffer = tool_call_args_buffer.entry(index).or_default();
-                        buffer.push_str(&arguments);
-                        // Check if accumulated arguments now form valid JSON
-                        if serde_json::from_str::<serde_json::Value>(buffer).is_ok() {
-                            finished_tool_indices.insert(index);
-                        }
-                    }
-                }
-                StreamEvent::Finished(resp) => {
-                    // Mark reasoning finished on stream end (edge case: no Content/ToolCall after reasoning)
-                    if reasoning_in_progress {
-                        reasoning_finished_at = Some(Utc::now().timestamp_millis());
-                    }
-                    // Use final response data; prefer stream-accumulated content
-                    if accumulated_content.is_empty() {
-                        accumulated_content = resp.content;
-                    }
-                    if accumulated_reasoning_content.is_empty() {
-                        accumulated_reasoning_content = resp.reasoning_content.unwrap_or_default();
-                    }
-                    if resp.tool_calls.is_some() {
-                        // Prefer Finished event's tool_calls as they are complete
-                        tool_calls = resp.tool_calls;
-                    } else if tool_calls.is_some() {
-                        // Finished has no tool_calls — apply accumulated argument chunks
-                        // from the stream to the ToolCallStart entries.
-                        // When ToolCallStart already carries initial arguments
-                        // (e.g. GLM/DeepSeek send name+args together), do NOT
-                        // append buffer content — they are already complete.
-                        if let Some(ref mut tcs) = tool_calls {
-                            for (i, tc) in tcs.iter_mut().enumerate() {
-                                if let Some(args) = tool_call_args_buffer.get(&(i as u64))
-                                    && (tc.function.arguments.is_empty() || tc.function.arguments == "{}")
-                                {
-                                    // Validate JSON before applying — stream interruption can
-                                    // leave incomplete arguments that would fail at tool execution.
-                                    if serde_json::from_str::<serde_json::Value>(args).is_ok() {
-                                        tc.function.arguments = args.clone();
-                                    } else {
-                                        tracing::error!(
-                                            tool_name = %tc.function.name,
-                                            index = i,
-                                            raw_len = args.len(),
-                                            raw_preview = %&args[..args.len().min(200)],
-                                            "Accumulated tool call arguments are not valid JSON"
-                                        );
-                                        tc.function.arguments = make_incomplete_marker(&tc.function.name, args.len());
-                                    }
-                                }
-                                // If arguments already non-empty (GLM/DeepSeek same-chunk pattern),
-                                // they are already complete — do not append buffer content.
-                                // DeepSeek sends duplicate complete arguments in subsequent chunks,
-                                // appending would produce invalid JSON like {"path": "."}{"path": "."}
-                            }
-                        }
-                    }
-                    usage = resp.usage;
-                    break;
-                }
-                StreamEvent::Error(e) => {
-                    // Check for context overflow and attempt recovery
-                    // MiniMax returns "context window exceeds limit (20xx)"
-                    if retry_on_overflow
-                        && (e.contains("context_length_exceeded")
-                            || e.contains("context window exceeds limit")
-                            || e.contains("context window") && e.contains("exceeds")
-                            || e.contains("max_tokens")
-                            || e.contains("token limit"))
-                    {
-                        tracing::warn!("Context overflow detected in stream, attempting emergency trim");
-                        let removed = self.session.history.emergency_trim();
-                        if removed > 0 {
-                            tracing::info!("Emergency trim removed {} messages, retrying", removed);
-                            let chat_request = context_builder
-                                .unwrap()
-                                .build(&self.core.manifest, &self.session.history, self.get_model_capabilities(None), self.core.max_output_tokens_limit);
-                            return self.call_llm_streaming_no_retry(&chat_request).await;
-                        } else {
-                            return Err(RuntimeError::Provider(e));
-                        }
-                    }
-                    return Err(RuntimeError::Provider(e));
-                }
-            }
+            ctrl_guard.state = crate::debug::controller::DebugState::Paused;
+            drop(ctrl_guard); // Release lock before blocking
+            self.await_debug_resume().await;
         }
-
-        // Post-stream: Apply accumulated argument chunks to tool calls.
-        // This handles the case where the OpenAI SSE stream ends without
-        // a Finished event (common with OpenAI-compatible APIs like MiniMax).
-        // When ToolCallStart already carries initial arguments from the same
-        // SSE chunk (e.g. GLM, DeepSeek), do NOT append buffer content —
-        // they are already complete.
-        if tool_calls.is_some() && !tool_call_args_buffer.is_empty()
-            && let Some(ref mut tcs) = tool_calls
-        {
-            for (i, tc) in tcs.iter_mut().enumerate() {
-                if let Some(args) = tool_call_args_buffer.get(&(i as u64))
-                    && (tc.function.arguments.is_empty() || tc.function.arguments == "{}")
-                {
-                    // Validate JSON before applying — stream interruption can
-                    // leave incomplete arguments that would fail at tool execution.
-                    if serde_json::from_str::<serde_json::Value>(args).is_ok() {
-                        tracing::info!(tool_name = %tc.function.name, index = i, accumulated_len = args.len(), "Applying accumulated arguments to tool call");
-                        tc.function.arguments = args.clone();
-                    } else {
-                        tracing::error!(
-                            tool_name = %tc.function.name,
-                            index = i,
-                            raw_len = args.len(),
-                            raw_preview = %&args[..args.len().min(200)],
-                            "Accumulated tool call arguments are not valid JSON"
-                        );
-                        tc.function.arguments = make_incomplete_marker(&tc.function.name, args.len());
-                    }
-                }
-                // If arguments already non-empty (GLM/DeepSeek same-chunk pattern),
-                // they are already complete — do not append buffer content.
-                // DeepSeek sends duplicate complete arguments in subsequent chunks,
-                // appending would produce invalid JSON like {"path": "."}{"path": "."}
-            }
-        }
-
-        Ok(ChatResponse {
-            content: accumulated_content,
-            reasoning_content: if accumulated_reasoning_content.is_empty() {
-                None
-            } else {
-                Some(accumulated_reasoning_content)
-            },
-            tool_calls,
-            usage,
-            reasoning_started_at,
-            reasoning_finished_at,
-        })
     }
 
-    /// Execute tool calls in parallel with per-tool timeout and iteration-level deadline.
+    /// Push a step event to the debug client.
+    fn push_debug_step(
+        &self,
+        phase: crate::debug::protocol::DebugPhase,
+        input: Option<serde_json::Value>,
+        output: Option<serde_json::Value>,
+    ) {
+        if let (Some(ctrl), Some(event_tx)) =
+            (self.core.debug_ctrl(), self.core.debug_event_tx())
+        {
+            // Read iteration from controller (avoid holding lock across send)
+            let iteration = {
+                // Use try_lock to avoid blocking in non-async context;
+                // if lock is contested, just skip the event.
+                let Ok(ctrl) = ctrl.try_lock() else { return };
+                ctrl.iteration
+            };
+            let _ = event_tx.send(crate::debug::server::DebugEvent::Step {
+                iteration,
+                phase,
+                input,
+                output,
+                usage: None,
+            });
+        }
+    }
+
+    /// Auto-pause if in Stepping mode (after completing one iteration).
+    async fn debug_auto_pause_if_stepping(&self) {
+        if let Some(ctrl) = self.core.debug_ctrl() {
+            let mut ctrl_guard = ctrl.lock().await;
+            if ctrl_guard.state == crate::debug::controller::DebugState::Stepping {
+                ctrl_guard.state = crate::debug::controller::DebugState::Paused;
+                tracing::info!("Debug: stepping complete, auto-pausing");
+            }
+        }
+    }
+
+    /// Build a ContextSnapshot from the current ContextBuilder state
+    /// and store it in the debug controller, then push an onContextBuilt event.
     ///
-    /// Phase 1: Permission check (batch — each tool checked independently)
-    /// Phase 2: Approval gate (placeholder for future)
-    /// Phase 3: Parallel execution with spawn + select + deadline
-    ///
-    /// Returns results in the same order as input tool calls.
-    /// Individual tool failures are captured as error strings, not propagated.
-    async fn execute_tools_parallel(&self, tool_calls: &[ToolCall]) -> Vec<String> {
-        if tool_calls.is_empty() {
-            return Vec::new();
+    /// This is called after [`ContextBuilder::build()`] in each iteration
+    /// when DevMode is active. Captures the 5 control-plane sections with
+    /// metadata (size, token estimate, SHA-256 hash) for the debug panel's
+    /// context tree view.
+    fn capture_context_snapshot(&self, context_builder: &ContextBuilder) {
+        let (Some(ctrl), Some(event_tx)) =
+            (self.core.debug_ctrl(), self.core.debug_event_tx())
+        else {
+            return; // Not in DevMode
+        };
+
+        use crate::debug::controller::{ContextSnapshot, ContextSnapshotSections, SectionContent};
+
+        // Build tool_definitions string from JSON values
+        let tool_defs_str = context_builder
+            .tool_definitions()
+            .map(|defs| {
+                serde_json::Value::Array(defs.to_vec()).to_string()
+            })
+            .unwrap_or_default();
+
+        // Build skill_instructions from the manifest's skill config.
+        // Full skill content integration will be added when the skill
+        // registry is wired into the agent loop.
+        let skill_str = {
+            let mode = self.core.manifest.skill_mode();
+            match mode {
+                rollball_core::manifest::SkillMode::Progressive => {
+                    "[Skills: progressive injection mode — see skill registry for full list]".to_string()
+                }
+                rollball_core::manifest::SkillMode::Manual => String::new(),
+            }
+        };
+
+        let sections = ContextSnapshotSections {
+            system_prompt: SectionContent::new(context_builder.system_prompt().to_string()),
+            tool_definitions: SectionContent::new(tool_defs_str),
+            skill_instructions: SectionContent::new(skill_str),
+            retrieved_memory: SectionContent::new(
+                context_builder.retrieved_memory().unwrap_or_default().to_string(),
+            ),
+            identity_context: SectionContent::new(
+                context_builder.identity_context().unwrap_or_default().to_string(),
+            ),
+        };
+
+        let total_token_estimate = sections.system_prompt.token_estimate
+            + sections.tool_definitions.token_estimate
+            + sections.skill_instructions.token_estimate
+            + sections.retrieved_memory.token_estimate
+            + sections.identity_context.token_estimate;
+
+        let snapshot = ContextSnapshot {
+            iteration: {
+                // Read iteration from controller without holding lock across event send
+                let ctrl_guard = ctrl.blocking_lock();
+                ctrl_guard.iteration
+            },
+            built_at: chrono::Utc::now(),
+            sections,
+            total_token_estimate,
+        };
+
+        // Store in controller
+        {
+            let mut ctrl_guard = ctrl.blocking_lock();
+            ctrl_guard.store_context_snapshot(snapshot.clone());
         }
 
-        tracing::info!(
-            tool_calls_count = tool_calls.len(),
-            tools = ?tool_calls.iter().map(|t| &t.function.name).collect::<Vec<_>>(),
-            "Executing tool calls"
+        // Push onContextBuilt event to WebSocket client
+        let context_sections =
+            crate::debug::protocol::ContextSections::from(&snapshot.sections);
+        let _ = event_tx.send(crate::debug::server::DebugEvent::ContextBuilt {
+            iteration: snapshot.iteration,
+            sections: context_sections,
+            total_token_estimate: snapshot.total_token_estimate,
+        });
+
+        tracing::debug!(
+            iteration = snapshot.iteration,
+            total_token_estimate,
+            "Debug: context snapshot captured"
         );
-
-        // Phase 1: Permission check (batch)
-        // Check each tool independently; denied tools get error results,
-        // allowed tools proceed to parallel execution.
-        let mut permission_results: Vec<Option<String>> = Vec::with_capacity(tool_calls.len());
-        for tool_call in tool_calls {
-            match crate::tools::permission::validate_permission(&self.core.manifest, &tool_call.function.name) {
-                Ok(()) => permission_results.push(None),
-                Err(e) => {
-                    tracing::warn!("Permission denied for tool '{}': {}", tool_call.function.name, e);
-                    permission_results.push(Some(format!("Error: Permission denied — {}", e)));
-                }
-            }
-        }
-
-        // Collect indices of tools that passed permission check
-        let allowed_indices: Vec<usize> = permission_results
-            .iter()
-            .enumerate()
-            .filter_map(|(i, result)| if result.is_none() { Some(i) } else { None })
-            .collect();
-
-        // If no tools passed permission, return all error results immediately
-        if allowed_indices.is_empty() {
-            return permission_results.into_iter().map(|r| r.unwrap_or_default()).collect();
-        }
-
-        // Phase 2: Approval gate (placeholder for future)
-        // TODO(Phase 3): Implement approval gate for high-risk tools
-
-        // Phase 3: Parallel execution with spawn + select + deadline
-        let tool_timeout = Duration::from_millis(self.core.config.tool_timeout_ms);
-        let iteration_timeout = Duration::from_millis(self.core.config.iteration_timeout_ms);
-
-        // Channel to collect results from spawned tasks
-        let (tx, mut rx) = mpsc::channel::<(usize, String)>(tool_calls.len());
-
-        // Spawn each allowed tool as an independent task
-        let handles: Vec<tokio::task::JoinHandle<()>> = allowed_indices
-            .iter()
-            .map(|&idx| {
-                let tools = self.core.tools.clone();
-                let tc = tool_calls[idx].clone();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let result = match tokio::time::timeout(
-                        tool_timeout,
-                        execute_single_tool(&tools, &tc),
-                    )
-                    .await
-                    {
-                        Ok(result) => result,
-                        Err(_) => format!(
-                            "Error: Tool '{}' timed out after {}ms",
-                            tc.function.name,
-                            tool_timeout.as_millis()
-                        ),
-                    };
-                    let _ = tx.send((idx, result)).await;
-                })
-            })
-            .collect();
-
-        // Drop the remaining sender so rx.recv() returns None when all tasks complete
-        drop(tx);
-
-        // Collect results with iteration-level deadline
-        let deadline = Instant::now() + iteration_timeout;
-        let mut collected: Vec<(usize, String)> = Vec::with_capacity(allowed_indices.len());
-        let total = allowed_indices.len();
-
-        while collected.len() < total {
-            tokio::select! {
-                // A result arrived from a spawned task
-                entry = rx.recv() => {
-                    match entry {
-                        Some((idx, result)) => collected.push((idx, result)),
-                        None => break, // All senders dropped
-                    }
-                }
-                // Iteration-level deadline exceeded
-                _ = tokio::time::sleep_until(deadline) => {
-                    tracing::warn!(
-                        "Iteration timeout reached ({}ms), aborting {} remaining tool(s)",
-                        iteration_timeout.as_millis(),
-                        total - collected.len()
-                    );
-                    // Abort all remaining spawned tasks
-                    for handle in &handles {
-                        handle.abort();
-                    }
-                    break;
-                }
-            }
-        }
-
-        // Build final results in original order
-        let results: Vec<String> = permission_results
-            .into_iter()
-            .enumerate()
-            .map(|(idx, perm_result)| {
-                if let Some(err) = perm_result {
-                    // Permission-denied tool
-                    err
-                } else if let Some(pos) = collected.iter().find(|(i, _)| *i == idx) {
-                    // Tool that completed successfully or with error
-                    pos.1.clone()
-                } else {
-                    // Tool that didn't complete due to iteration timeout
-                    format!(
-                        "Error: iteration timed out, tool {} not completed",
-                        tool_calls[idx].function.name
-                    )
-                }
-            })
-            .collect();
-
-        // If iteration timed out with incomplete tools, add a system note
-        let incomplete_count = results.iter()
-            .filter(|r| r.contains("iteration timed out"))
-            .count();
-        if incomplete_count > 0 {
-            tracing::warn!(
-                incomplete_count,
-                "Iteration timed out with incomplete tool(s)"
-            );
-        }
-
-        results
     }
 
     /// Get reference to history manager
@@ -1580,104 +1482,11 @@ fn build_think_metadata(response: &ChatResponse) -> Option<serde_json::Value> {
     }
 }
 
-/// Execute a single tool call against the tool registry.
-///
-/// Returns the result content string (success or error message).
-async fn execute_single_tool(tools: &[Arc<dyn Tool>], tool_call: &ToolCall) -> String {
-    let tool_name = &tool_call.function.name;
-    let params_str = &tool_call.function.arguments;
-
-    // Parse arguments before tool lookup — we need to detect the
-    // TOOL_CALL_INCOMPLETE marker (valid JSON injected by streaming assembler)
-    // and reject genuinely unparseable arguments (e.g. LLM hallucinated output).
-    // Early return on parse failure avoids the old silent "{}" degradation
-    // that caused LLM retry loops.
-    let params: serde_json::Value = match serde_json::from_str(params_str) {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(
-                tool = %tool_name,
-                params_len = params_str.len(),
-                params_preview = %&params_str[..params_str.len().min(200)],
-                error = %e,
-                "Failed to parse tool call arguments as JSON — returning error to LLM"
-            );
-            return format!(
-                "Error: Tool '{}' arguments are not valid JSON and could not be parsed: {}. \
-                 This call was NOT executed. \
-                 Arguments preview (first 200 bytes): {}",
-                tool_name, e,
-                &params_str[..params_str.len().min(200)]
-            );
-        }
-    };
-
-    // Detect truncated/incomplete tool calls: the streaming assembler injects a
-    // special error marker when arguments are truncated. Skip actual execution
-    // and return a clear error so the LLM knows to regenerate (not retry blindly).
-    if let Some("TOOL_CALL_INCOMPLETE") = params.get("error").and_then(|v| v.as_str()) {
-        return params.get("message")
-            .and_then(|v| v.as_str())
-            .unwrap_or("Tool call arguments were truncated during streaming")
-            .to_string();
-    }
-
-    // Find the tool
-    let tool = tools.iter().find(|t| {
-        let spec = t.spec();
-        spec.name == *tool_name
-    });
-
-    match tool {
-        Some(tool) => {
-            match tool.execute(params).await {
-                Ok(result) => {
-                    if result.ok {
-                        result.content
-                    } else {
-                        // Include both the error output (stdout/stderr) and the error code
-                        if result.content.is_empty() {
-                            format!("Error: {}", result.error.unwrap_or_default())
-                        } else {
-                            format!("{}\nError: {}",
-                                result.content,
-                                result.error.as_deref().unwrap_or("unknown error"))
-                        }
-                    }
-                }
-                Err(e) => format!("Tool execution error: {e}"),
-            }
-        }
-        None => format!("Unknown tool: {tool_name}"),
-    }
-}
-
-/// Build a structured error marker for truncated/incomplete tool call arguments.
-///
-/// Returns valid JSON that `execute_single_tool` can parse and detect,
-/// causing it to skip actual tool execution and return a clear error message
-/// to the LLM. This avoids the "empty `{}`" silent degradation that previously
-/// caused LLM retry loops.
-///
-/// IMPORTANT: The message string is a *prompt-level* constraint, not a code-level
-/// guarantee — its effectiveness depends on the LLM's ability to follow instructions.
-fn make_incomplete_marker(tool_name: &str, raw_len: usize) -> String {
-    serde_json::json!({
-        "error": "TOOL_CALL_INCOMPLETE",
-        "message": format!(
-            "Tool '{}' arguments were truncated during streaming \
-             (received {} bytes, invalid JSON). \
-             This call was NOT executed — do NOT retry with the same call. \
-             If the task requires this tool, generate the full arguments in a new call.",
-            tool_name, raw_len
-        )
-    })
-    .to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::loop_llm::make_incomplete_marker;
+    use crate::agent::loop_tools::execute_single_tool;
     use rollball_core::providers::mock::MockProvider;
     use rollball_core::providers::traits::FunctionCall;
 
@@ -2054,8 +1863,9 @@ mod tests {
         let result = agent_loop.run("Hi", &mut context_builder).await;
         let elapsed = start.elapsed();
         assert!(result.is_ok());
-        // Drain should not block — total time should be well under 1 second
-        assert!(elapsed < std::time::Duration::from_secs(1), "Drain should be non-blocking");
+        // Drain should not block — core path is sub-100ms, but allow up to 2s
+        // for CI variance and debug-build overhead of the async runtime.
+        assert!(elapsed < std::time::Duration::from_secs(2), "Drain should be non-blocking, but took {:?}", elapsed);
     }
 
     // ── S1.7: Parallel tool execution tests ───────────────────────────

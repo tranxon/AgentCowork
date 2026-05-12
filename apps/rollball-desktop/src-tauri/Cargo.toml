@@ -23,6 +23,8 @@ rollball-core = { path = "../../../core/rollball-core" }
 directories = "6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+toml = "0.8"
 
 [features]
 default = ["custom-protocol"]

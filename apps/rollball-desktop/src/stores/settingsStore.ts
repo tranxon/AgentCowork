@@ -62,7 +62,7 @@ function getPersistedLogLevel(): string {
   return "info";
 }
 
-/** Read persisted content width from localStorage, fallback to 80 */
+/** Read persisted content width from localStorage, fallback to 90 */
 function getPersistedContentWidth(): number {
   try {
     const stored = localStorage.getItem(STORAGE_KEY_CONTENT_WIDTH);
@@ -71,7 +71,7 @@ function getPersistedContentWidth(): number {
       if (!isNaN(val) && val >= 40 && val <= 100) return val;
     }
   } catch {}
-  return 80;
+  return 90;
 }
 
 interface SettingsStore {

@@ -8,7 +8,7 @@ import { needsApiKey, keyPlaceholder } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
 import { DEFAULT_GATEWAY_URL, getGatewayUrl } from "../../lib/config";
 import { Star } from "lucide-react";
-import { inputReadonly, inputBase, selectBase } from "../../lib/ui-styles";
+import { inputReadonly, selectBase } from "../../lib/ui-styles";
 import { ProfileTab } from "./ProfileTab";
 
 type SettingsTab = "gateway" | "providers" | "appearance" | "general" | "profile";
@@ -1249,7 +1249,7 @@ function AppearanceTab() {
       </div>
 
       <button
-        onClick={() => { setTheme("system"); setFontSize(1.0); setContentWidth(80); }}
+        onClick={() => { setTheme("system"); setFontSize(1.0); setContentWidth(90); }}
         className="text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300"
       >
         Reset to defaults

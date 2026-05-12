@@ -4,6 +4,7 @@
 //! - GET    /api/agents           — list all agents with status
 //! - GET    /api/agents/:id       — get agent detail
 //! - POST   /api/agents/install  — install a .agent package
+//! - POST   /api/agents/:id/clone — clone an agent (skeleton or full)
 //! - DELETE /api/agents/:id       — uninstall an agent
 //! - POST   /api/agents/:id/start — start an agent
 //! - POST   /api/agents/:id/stop  — stop a running agent
@@ -28,6 +29,7 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/api/agents", get(list_agents))
         .route("/api/agents/{id}", get(get_agent_detail).delete(uninstall_agent))
         .route("/api/agents/install", post(install_agent))
+        .route("/api/agents/{id}/clone", post(clone_agent))
         .route("/api/agents/{id}/start", post(start_agent))
         .route("/api/agents/{id}/stop", post(stop_agent))
         .route("/api/agents/{id}/model", get(get_agent_model))
@@ -47,6 +49,8 @@ pub struct AgentListResponse {
     pub version: String,
     pub running: bool,
     pub connected: bool,
+    /// Whether the agent is running in developer mode (Debug Protocol enabled)
+    pub dev_mode: bool,
 }
 
 /// Agent detail response
@@ -141,6 +145,7 @@ pub async fn list_agents(
                 version: info.version.clone(),
                 running: actually_running,
                 connected,
+                dev_mode: running_info.map(|r| r.dev_mode).unwrap_or(false),
             }
         })
         .collect();
@@ -286,6 +291,91 @@ pub async fn install_agent(
     }
 }
 
+/// Clone mode: skeleton or full
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CloneModeParam {
+    Skeleton,
+    Full,
+}
+
+/// Clone request body
+#[derive(Debug, Deserialize)]
+pub struct CloneRequest {
+    /// New agent ID for the cloned agent
+    pub new_agent_id: String,
+    /// Clone mode: "skeleton" or "full"
+    #[serde(default = "default_clone_mode")]
+    pub mode: CloneModeParam,
+}
+
+fn default_clone_mode() -> CloneModeParam {
+    CloneModeParam::Skeleton
+}
+
+/// Clone response
+#[derive(Debug, Serialize)]
+pub struct CloneResponse {
+    pub agent_id: String,
+    pub install_path: String,
+}
+
+/// `POST /api/agents/:id/clone` — clone an agent
+pub async fn clone_agent(
+    State(state): State<AppState>,
+    Path(agent_id): Path<String>,
+    Json(req): Json<CloneRequest>,
+) -> Result<(StatusCode, Json<CloneResponse>), (StatusCode, Json<ApiError>)> {
+    // Validate new_agent_id is different from source
+    if req.new_agent_id == agent_id {
+        return Err(ApiError::bad_request(
+            "new_agent_id must be different from source agent_id",
+        ));
+    }
+
+    // Determine packages dir and dev_mode from Gateway config
+    let packages_dir = {
+        let gw = state.gateway_state.read().await;
+        gw.config
+            .as_ref()
+            .map(|c| std::path::PathBuf::from(&c.packages_dir))
+            .unwrap_or_else(|| std::path::PathBuf::from("./packages"))
+    };
+
+    let new_agent_id = req.new_agent_id.clone();
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut gw = state.gateway_state.blocking_write();
+        let clone_mode = match req.mode {
+            CloneModeParam::Skeleton => {
+                crate::package_manager::clone::CloneMode::Skeleton
+            }
+            CloneModeParam::Full => crate::package_manager::clone::CloneMode::Full,
+        };
+
+        crate::package_manager::clone::clone_agent(
+            &agent_id,
+            &new_agent_id,
+            clone_mode,
+            &packages_dir,
+            &mut gw,
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(info)) => Ok((
+            StatusCode::CREATED,
+            Json(CloneResponse {
+                agent_id: info.agent_id,
+                install_path: info.install_path,
+            }),
+        )),
+        Ok(Err(e)) => Err(ApiError::bad_request(&format!("Clone failed: {}", e))),
+        Err(e) => Err(ApiError::internal(&format!("Clone task failed: {}", e))),
+    }
+}
+
 /// `DELETE /api/agents/:id` — uninstall an agent
 ///
 /// P1-9 fix: Uses spawn_blocking because uninstall_package performs
@@ -334,10 +424,25 @@ pub async fn uninstall_agent(
     }
 }
 
+/// Start agent request body
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct StartAgentRequest {
+    /// Start in developer mode (enables Debug Protocol WebSocket)
+    pub dev_mode: bool,
+}
+
+impl Default for StartAgentRequest {
+    fn default() -> Self {
+        Self { dev_mode: false }
+    }
+}
+
 /// `POST /api/agents/:id/start` — start an agent
 pub async fn start_agent(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    Json(req): Json<StartAgentRequest>,
 ) -> Result<Json<MessageResponse>, (StatusCode, Json<ApiError>)> {
     let mut gw = state.gateway_state.write().await;
 
@@ -353,11 +458,12 @@ pub async fn start_agent(
     let grpc_addr = crate::grpc::server::default_grpc_addr();
     let gateway_grpc_endpoint = format!("http://{}", grpc_addr);
     let mut lifecycle = crate::lifecycle::manager::LifecycleManager::new(idle_timeout, gateway_grpc_endpoint);
-    lifecycle.start_agent(&agent_id, &mut gw).await
+    lifecycle.start_agent(&agent_id, &mut gw, req.dev_mode).await
         .map_err(|e| ApiError::internal(&format!("Start failed: {}", e)))?;
 
+    let mode_label = if req.dev_mode { " (dev mode)" } else { "" };
     Ok(Json(MessageResponse {
-        message: format!("Agent started: {}", agent_id),
+        message: format!("Agent started: {}{}", agent_id, mode_label),
     }))
 }
 
@@ -676,6 +782,7 @@ mod tests {
             version: "1.0.0".to_string(),
             running: false,
             connected: false,
+            dev_mode: false,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("com.example.weather"));

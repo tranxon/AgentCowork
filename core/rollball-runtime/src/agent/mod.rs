@@ -3,6 +3,8 @@
 pub mod agent_core;
 pub mod session_state;
 pub mod loop_;
+pub mod loop_llm;
+pub mod loop_tools;
 pub mod context;
 pub mod history;
 pub mod loop_detector;

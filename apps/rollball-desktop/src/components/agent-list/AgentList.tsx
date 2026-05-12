@@ -3,12 +3,16 @@ import { useAgentStore } from "../../stores/agentStore";
 import { useToast } from "../common/ToastProvider";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { AgentDetailDialog } from "./AgentDetailDialog";
+import { CloneDialog } from "./CloneDialog";
+import { PublishWizard } from "./PublishWizard";
+import { CreateWizard } from "./CreateWizard";
 import { AgentAvatar } from "../common/AgentAvatar";
 import { cn } from "../../lib/utils";
-import { Play, Square, Trash2, Info, Copy, Plus, Search, Users } from "lucide-react";
+import { Play, Square, Trash2, Info, Copy, Plus, Search, Package, Sparkles, Bug } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useAgentProfileStore } from "../../stores/agentProfileStore";
+import type { CloneResponse } from "../../lib/types";
 
 interface AgentListProps {
   width?: number;
@@ -47,6 +51,15 @@ export function AgentList({ width }: AgentListProps) {
 
   // Agent detail dialog state
   const [detailAgentId, setDetailAgentId] = useState<string | null>(null);
+
+  // Clone dialog state
+  const [cloneSource, setCloneSource] = useState<{ agentId: string; agentName: string } | null>(null);
+
+  // Publish wizard state
+  const [publishTarget, setPublishTarget] = useState<{ agentId: string; agentName: string } | null>(null);
+
+  // Create wizard state
+  const [showCreateWizard, setShowCreateWizard] = useState(false);
 
   useEffect(() => {
     fetchAgents();
@@ -108,6 +121,27 @@ export function AgentList({ width }: AgentListProps) {
       addToast({ type: "success", message: "Agent started" });
     } catch (e) {
       addToast({ type: "error", message: `Failed to start agent: ${String(e)}` });
+    }
+    setContextMenu(null);
+  };
+
+  const handleDebugStart = async (agentId: string) => {
+    try {
+      await startAgent(agentId, true);
+      addToast({ type: "success", message: "Agent started in debug mode" });
+    } catch (e) {
+      addToast({ type: "error", message: `Failed to start debug agent: ${String(e)}` });
+    }
+    setContextMenu(null);
+  };
+
+  const handleRestartDebug = async (agentId: string) => {
+    try {
+      await stopAgent(agentId);
+      await startAgent(agentId, true);
+      addToast({ type: "success", message: "Agent restarted in debug mode" });
+    } catch (e) {
+      addToast({ type: "error", message: `Failed to restart in debug: ${String(e)}` });
     }
     setContextMenu(null);
   };
@@ -174,7 +208,7 @@ export function AgentList({ width }: AgentListProps) {
       className="flex flex-col bg-[#EEEEF0] dark:bg-[#2F2F30]"
       style={{ width: width ?? 240 }}
     >
-      {/* Header - 联系人搜索风格 */}
+      {/* Header */}
       <div className="bg-[#EEEEF0] px-3 py-2 dark:bg-[#2F2F30]">
         <div className="flex items-center gap-2">
           {/* Search input */}
@@ -200,10 +234,14 @@ export function AgentList({ width }: AgentListProps) {
             {addMenuOpen && (
               <div className="absolute right-0 top-full z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
                 <button
+                  onClick={() => {
+                    setAddMenuOpen(false);
+                    setShowCreateWizard(true);
+                  }}
                   className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
                 >
-                  <Users className="h-3.5 w-3.5" />
-                  Create Team
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Create Agent
                 </button>
                 <button
                   onClick={() => {
@@ -222,9 +260,8 @@ export function AgentList({ width }: AgentListProps) {
         </div>
       </div>
 
-      {/* Agent list - 联系人列表风格 */}
+      {/* Agent list */}
       <div className="flex-1 overflow-y-auto bg-[#EEEEF0] dark:bg-[#2F2F30]" role="list" aria-label="Agent list">
-        {/* 分隔线 - 搜索框与 Agent 列表之间 */}
         <div className="border-t border-[#C8C8C8]/40 dark:border-zinc-600/40" />
 
         {loading && agents.length === 0 && (
@@ -244,7 +281,6 @@ export function AgentList({ width }: AgentListProps) {
                 selectedAgentId === agent.agent_id
                   ? "bg-[#D8D9DC] dark:bg-[#3D3D3F]"
                   : "hover:bg-[#E2E3E6] dark:hover:bg-[#38383A]",
-                // 分割线，最后一项不加
                 index < filteredAgents.length - 1 && "border-b border-[#C8C8C8]/40 dark:border-zinc-600/40"
               )}
               onClick={() => selectAgent(agent.agent_id)}
@@ -265,8 +301,9 @@ export function AgentList({ width }: AgentListProps) {
               <div className="min-w-0 flex-1">
                 {/* Top row: name */}
                 <div className="flex items-center justify-between gap-2">
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex items-center gap-1.5">
                     <span className="truncate font-medium text-zinc-900 dark:text-zinc-100" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>{agentProfiles[agent.agent_id]?.displayName ?? agent.display_name ?? agent.name}</span>
+
                   </div>
                 </div>
                 {/* Bottom row: current session title */}
@@ -295,20 +332,36 @@ export function AgentList({ width }: AgentListProps) {
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           {contextAgent && !contextAgent.running && (
-            <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-              onClick={() => handleStart(contextMenu.agentId)}
-            >
-              <Play className="h-3.5 w-3.5" /> Start
-            </button>
+            <>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                onClick={() => handleStart(contextMenu.agentId)}
+              >
+                <Play className="h-3.5 w-3.5" /> Start
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                onClick={() => handleDebugStart(contextMenu.agentId)}
+              >
+                <Bug className="h-3.5 w-3.5" /> Start in Debug
+              </button>
+            </>
           )}
           {contextAgent && contextAgent.running && (
-            <button
-              className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-              onClick={() => handleStop(contextMenu.agentId)}
-            >
-              <Square className="h-3.5 w-3.5" /> Stop
-            </button>
+            <>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                onClick={() => handleStop(contextMenu.agentId)}
+              >
+                <Square className="h-3.5 w-3.5" /> Stop
+              </button>
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                onClick={() => handleRestartDebug(contextMenu.agentId)}
+              >
+                <Bug className="h-3.5 w-3.5" /> Restart in Debug
+              </button>
+            </>
           )}
           <button
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
@@ -320,12 +373,34 @@ export function AgentList({ width }: AgentListProps) {
             <Info className="h-3.5 w-3.5" /> Details
           </button>
           <button
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-400 transition-colors hover:bg-zinc-50 dark:hover:bg-zinc-700/50"
-            disabled
-            title="Available in S4"
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+            onClick={() => {
+              if (contextAgent) {
+                setCloneSource({
+                  agentId: contextAgent.agent_id,
+                  agentName: contextAgent.display_name ?? contextAgent.name,
+                });
+                setContextMenu(null);
+              }
+            }}
           >
             <Copy className="h-3.5 w-3.5" /> Clone
           </button>
+          <button
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+            onClick={() => {
+              if (contextAgent) {
+                setPublishTarget({
+                  agentId: contextAgent.agent_id,
+                  agentName: contextAgent.display_name ?? contextAgent.name,
+                });
+                setContextMenu(null);
+              }
+            }}
+          >
+            <Package className="h-3.5 w-3.5" /> Publish
+          </button>
+
           <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
           <button
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
@@ -352,6 +427,42 @@ export function AgentList({ width }: AgentListProps) {
         open={!!detailAgentId}
         agentId={detailAgentId}
         onClose={() => setDetailAgentId(null)}
+      />
+
+      {/* Clone dialog */}
+      <CloneDialog
+        open={!!cloneSource}
+        agentId={cloneSource?.agentId ?? ""}
+        agentName={cloneSource?.agentName ?? ""}
+        onCloned={(result: CloneResponse) => {
+          setCloneSource(null);
+          addToast({ type: "success", message: `Agent cloned: ${result.agent_id}` });
+          void fetchAgents().then(() => {
+            selectAgent(result.agent_id);
+          });
+        }}
+        onClose={() => setCloneSource(null)}
+      />
+
+      {/* Publish wizard */}
+      <PublishWizard
+        open={!!publishTarget}
+        agentId={publishTarget?.agentId ?? ""}
+        agentName={publishTarget?.agentName ?? ""}
+        onClose={() => setPublishTarget(null)}
+      />
+
+      {/* Create wizard */}
+      <CreateWizard
+        open={showCreateWizard}
+        onCreated={(agentId) => {
+          setShowCreateWizard(false);
+          addToast({ type: "success", message: `Agent created: ${agentId}` });
+          void fetchAgents().then(() => {
+            selectAgent(agentId);
+          });
+        }}
+        onClose={() => setShowCreateWizard(false)}
       />
     </div>
   );

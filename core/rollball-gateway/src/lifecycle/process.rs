@@ -29,6 +29,7 @@ pub async fn spawn_agent_process(
     install_path: &str,
     workspace: &Path,
     gateway_grpc_endpoint: &str,
+    dev_mode: bool,
 ) -> Result<AgentChild, GatewayError> {
     // Locate the rollball-runtime binary (sibling of current executable)
     let runtime_bin = std::env::current_exe()
@@ -68,6 +69,11 @@ pub async fn spawn_agent_process(
         .arg("info")
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
+
+    // Developer mode: pass --dev-mode flag to enable Debug Protocol WebSocket
+    if dev_mode {
+        cmd.arg("--dev-mode");
+    }
 
     // On Unix, create a new process group so we can kill the entire group later
     #[cfg(unix)]
@@ -205,6 +211,7 @@ mod tests {
             "/nonexistent/path",
             Path::new("/tmp/nonexistent-workspace"),
             "http://127.0.0.1:19877",
+            false,
         )
         .await;
         assert!(result.is_err());

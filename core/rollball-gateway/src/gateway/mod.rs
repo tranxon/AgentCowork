@@ -629,7 +629,7 @@ impl Gateway {
 
     /// Start an agent
     pub async fn start_agent(&mut self, agent_id: &str) -> Result<String, GatewayError> {
-        self.lifecycle.start_agent(agent_id, &mut self.state).await?;
+        self.lifecycle.start_agent(agent_id, &mut self.state, false).await?;
         Ok(format!("Agent started: {}", agent_id))
     }
 
@@ -691,6 +691,33 @@ impl Gateway {
                 }
             }
         }
+    }
+
+    /// Package an installed agent into .agent file (CLI command)
+    pub fn package_agent(
+        &self,
+        agent_id: &str,
+        output_dir: Option<&str>,
+        sign: bool,
+        key_dir: Option<&str>,
+    ) -> Result<String, GatewayError> {
+        let output = output_dir
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("./build"));
+        let key = key_dir.map(std::path::PathBuf::from);
+
+        let result = crate::package_manager::publish::build_package(
+            agent_id,
+            &output,
+            sign,
+            key.as_deref(),
+            &self.state,
+        )?;
+
+        Ok(format!(
+            "Package built: {} ({} bytes, signed: {})",
+            result.output_path, result.file_size, result.signed
+        ))
     }
 
     /// Ensure all required directories exist

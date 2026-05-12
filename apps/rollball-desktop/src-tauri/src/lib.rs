@@ -41,6 +41,7 @@ pub fn run() {
             commands::agent::uninstall_agent,
             commands::agent::start_agent,
             commands::agent::stop_agent,
+            commands::agent::clone_agent,
             commands::chat::send_message,
             commands::vault::list_keys,
             commands::vault::add_key,
@@ -48,6 +49,10 @@ pub fn run() {
             commands::vault::update_key,
             commands::settings::get_config,
             commands::settings::update_config,
+            commands::publish::prepare_publish,
+            commands::publish::build_publish,
+            commands::publish::export_package,
+            commands::create::create_agent,
         ])
         .setup(|app| {
             tray::setup(app)?;

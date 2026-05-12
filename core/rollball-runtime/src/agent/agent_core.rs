@@ -20,6 +20,8 @@ use tokio::sync::mpsc;
 
 use crate::agent::loop_::ChunkEvent;
 use crate::config::RuntimeConfig;
+use crate::debug::controller::DebugController;
+use crate::debug::server::DebugEventSender;
 use crate::memory::{MemoryManager, MemoryManagerConfig};
 
 /// Cross-session shared state for the agent loop.
@@ -57,6 +59,13 @@ pub struct AgentCore {
     /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
     /// None if initialization failed (memory features degraded gracefully).
     pub(crate) memory_store: Option<Arc<GrafeoStore>>,
+    /// Debug controller (shared across all sessions, only in DevMode).
+    /// Provides execution control (pause/step/resume), breakpoints, and snapshots.
+    /// None in production mode.
+    pub(crate) debug_ctrl: Option<Arc<tokio::sync::Mutex<DebugController>>>,
+    /// Debug event sender (clone for each session to push events to WebSocket).
+    /// None in production mode.
+    pub(crate) debug_event_tx: Option<DebugEventSender>,
 }
 
 impl AgentCore {
@@ -80,6 +89,8 @@ impl AgentCore {
             system_prompt_override: None,
             on_chunk,
             memory_store: None,
+            debug_ctrl: None,
+            debug_event_tx: None,
         }
     }
 
@@ -273,6 +284,8 @@ impl AgentCore {
             system_prompt_override: self.system_prompt_override.clone(),
             on_chunk,
             memory_store: self.memory_store.clone(),
+            debug_ctrl: self.debug_ctrl.clone(),
+            debug_event_tx: self.debug_event_tx.clone(),
         }
     }
 
@@ -286,6 +299,26 @@ impl AgentCore {
         }
         // Fallback: return any available capabilities
         self.gateway_model_capabilities.values().next()
+    }
+
+    /// Set the debug controller and event sender (DevMode only).
+    pub fn set_debug_mode(
+        &mut self,
+        ctrl: Arc<tokio::sync::Mutex<DebugController>>,
+        event_tx: DebugEventSender,
+    ) {
+        self.debug_ctrl = Some(ctrl);
+        self.debug_event_tx = Some(event_tx);
+    }
+
+    /// Access the debug controller, if in DevMode.
+    pub fn debug_ctrl(&self) -> Option<&Arc<tokio::sync::Mutex<DebugController>>> {
+        self.debug_ctrl.as_ref()
+    }
+
+    /// Access the debug event sender, if in DevMode.
+    pub fn debug_event_tx(&self) -> Option<&DebugEventSender> {
+        self.debug_event_tx.as_ref()
     }
 
     /// Get the context window budget for history trimming.

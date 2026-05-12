@@ -2,6 +2,8 @@
 
 pub mod agent;
 pub mod chat;
+pub mod create;
 pub mod gateway;
+pub mod publish;
 pub mod settings;
 pub mod vault;

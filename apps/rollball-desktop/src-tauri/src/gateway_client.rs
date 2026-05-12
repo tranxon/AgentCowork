@@ -141,10 +141,12 @@ impl GatewayClient {
     }
 
     /// `POST /api/agents/:id/start`
-    pub async fn start_agent(&self, agent_id: &str) -> Result<GenericMessageResponse> {
+    pub async fn start_agent(&self, agent_id: &str, dev_mode: bool) -> Result<GenericMessageResponse> {
+        let body = serde_json::json!({ "dev_mode": dev_mode });
         let resp = self
             .client
             .post(format!("{}/api/agents/{}/start", self.base_url, agent_id))
+            .json(&body)
             .send()
             .await?;
         parse_gateway_response(resp).await
@@ -155,6 +157,72 @@ impl GatewayClient {
         let resp = self
             .client
             .post(format!("{}/api/agents/{}/stop", self.base_url, agent_id))
+            .send()
+            .await?;
+        parse_gateway_response(resp).await
+    }
+
+    // ── Clone ──────────────────────────────────────────────────────────
+
+    /// `POST /api/agents/:id/clone`
+    pub async fn clone_agent(
+        &self,
+        agent_id: &str,
+        new_agent_id: &str,
+        mode: &str,
+    ) -> Result<CloneResponse> {
+        let body = serde_json::json!({
+            "new_agent_id": new_agent_id,
+            "mode": mode,
+        });
+        let resp = self
+            .client
+            .post(format!("{}/api/agents/{}/clone", self.base_url, agent_id))
+            .json(&body)
+            .send()
+            .await?;
+        parse_gateway_response(resp).await
+    }
+
+    // ── Publish ────────────────────────────────────────────────────────
+
+    /// `POST /api/agents/:id/publish/prepare`
+    pub async fn prepare_publish(&self, agent_id: &str, clean: bool) -> Result<PreparePublishResponse> {
+        let body = serde_json::json!({ "clean": clean });
+        let resp = self
+            .client
+            .post(format!("{}/api/agents/{}/publish/prepare", self.base_url, agent_id))
+            .json(&body)
+            .send()
+            .await?;
+        parse_gateway_response(resp).await
+    }
+
+    /// `POST /api/agents/:id/publish/build`
+    pub async fn build_publish(
+        &self,
+        agent_id: &str,
+        sign: bool,
+        key_dir: Option<&str>,
+    ) -> Result<BuildPublishResponse> {
+        let mut body = serde_json::json!({ "sign": sign });
+        if let Some(dir) = key_dir {
+            body["key_dir"] = serde_json::Value::String(dir.to_string());
+        }
+        let resp = self
+            .client
+            .post(format!("{}/api/agents/{}/publish/build", self.base_url, agent_id))
+            .json(&body)
+            .send()
+            .await?;
+        parse_gateway_response(resp).await
+    }
+
+    /// `POST /api/agents/:id/publish/export`
+    pub async fn export_package(&self, agent_id: &str) -> Result<ExportPackageResponse> {
+        let resp = self
+            .client
+            .post(format!("{}/api/agents/{}/publish/export", self.base_url, agent_id))
             .send()
             .await?;
         parse_gateway_response(resp).await
@@ -390,6 +458,7 @@ pub struct AgentListEntry {
     pub name: String,
     pub version: String,
     pub running: bool,
+    pub dev_mode: bool,
 }
 
 /// Agent detail response
@@ -417,6 +486,46 @@ pub struct GenericMessageResponse {
 pub struct SendMessageResponse {
     pub message_id: String,
     pub status: String,
+}
+
+/// Clone response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloneResponse {
+    pub agent_id: String,
+    pub install_path: String,
+}
+
+/// A single check item from publish prepare
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CheckItem {
+    pub field: String,
+    pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+/// Publish prepare response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PreparePublishResponse {
+    pub checks: Vec<CheckItem>,
+    pub warnings: Vec<String>,
+    pub errors: Vec<String>,
+    pub cleaned: bool,
+}
+
+/// Publish build response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BuildPublishResponse {
+    pub output_path: String,
+    pub signed: bool,
+    pub file_size: u64,
+}
+
+/// Export package response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportPackageResponse {
+    pub status: String,
+    pub output_path: String,
 }
 
 /// Vault key entry (masked, with optional base_url, default_model, models list, and model capabilities)

@@ -1,0 +1,428 @@
+import { create } from "zustand";
+
+// ── Debug Protocol types ──────────────────────────────────────────────
+
+type Phase =
+  | "BudgetCheck"
+  | "BuildContext"
+  | "LlmCall"
+  | "ParseResponse"
+  | "ToolExecution"
+  | "AppendHistory"
+  | "Idle";
+
+interface BreakpointCondition {
+  type: "on_phase" | "on_tool_call" | "on_iteration" | "on_tool_result";
+  phase?: string;
+  tool_name_pattern?: string;
+  iteration?: number;
+  is_error?: boolean;
+}
+
+interface Breakpoint {
+  breakpoint_id: string;
+  condition: BreakpointCondition;
+  enabled: boolean;
+}
+
+interface SectionMeta {
+  size_bytes: number;
+  token_estimate: number;
+  hash: string;
+}
+
+interface ContextSnapshotMeta {
+  iteration: number;
+  built_at: string;
+  sections: {
+    system_prompt: SectionMeta;
+    tool_definitions: SectionMeta;
+    skill_instructions: SectionMeta;
+    retrieved_memory: SectionMeta;
+    identity_context: SectionMeta;
+  };
+  total_token_estimate: number;
+  phase: Phase;
+}
+
+interface SectionContent {
+  content: string;
+  hash: string;
+  token_count: number;
+}
+
+// ── JSON-RPC types ─────────────────────────────────────────────────────
+
+interface JsonRpcRequest {
+  jsonrpc: "2.0";
+  id: number;
+  method: string;
+  params: Record<string, unknown>;
+}
+
+interface JsonRpcResponse {
+  jsonrpc: "2.0";
+  id: number;
+  result?: unknown;
+  error?: { code: number; message: string };
+}
+
+interface JsonRpcEvent {
+  jsonrpc: "2.0";
+  method: string;
+  params: Record<string, unknown>;
+}
+
+// ── Session-level debug info ─────────────────────────────────────────
+// Per-agent debug sessions: agent_id → DebugSessionStore
+// This allows the debug store to remain static when switching agents.
+// We multiplex the single WebSocket but keep state scoped.
+
+const DEFAULT_DEBUG_PORT = 19877;
+
+// ── Store interface ────────────────────────────────────────────────────
+
+interface DebugStore {
+  // Connection
+  socket: WebSocket | null;
+  connected: boolean;
+  connecting: boolean;
+
+  // For the currently selected agent (should match the WebSocket target)
+  debugAgentId: string | null;
+
+  // Execution state (agent-scoped)
+  iteration: number;
+  phase: Phase;
+  paused: boolean;
+  promptTokens: number;
+  completionTokens: number;
+  breakpoints: Breakpoint[];
+
+  // Context snapshots (per-iteration metadata)
+  snapshots: ContextSnapshotMeta[];
+  // Lazy-loaded section contents: key = `${iteration}:${section}`
+  sectionCache: Map<string, SectionContent>;
+
+  // Pending RPC
+  nextRequestId: number;
+  pendingRequests: Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void }>;
+
+  // Actions
+  connect: (agentId: string) => void;
+  disconnect: () => void;
+  sendRequest: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
+
+  // Debug commands
+  resume: () => Promise<void>;
+  pause: () => Promise<void>;
+  step: (granularity?: "iteration" | "phase") => Promise<void>;
+  stop: () => Promise<void>;
+  restart: () => Promise<void>;
+  getState: () => Promise<void>;
+
+  // Context commands
+  getContextSnapshot: (iteration: number) => Promise<void>;
+  getSection: (iteration: number, section: string) => Promise<SectionContent | null>;
+
+  // Context editing commands (S2.8)
+  rewind: (toIteration: number) => Promise<{ rewound_to_iteration: number; messages_trimmed_to: number }>;
+  reExecute: () => Promise<{ has_patches: boolean }>;
+  patchContext: (patches: Record<string, unknown>) => Promise<void>;
+  hasPendingPatches: boolean;
+}
+
+export const useDebugStore = create<DebugStore>((set, get) => ({
+  socket: null,
+  connected: false,
+  connecting: false,
+  debugAgentId: null,
+  iteration: 0,
+  phase: "Idle" as Phase,
+  paused: false,
+  promptTokens: 0,
+  completionTokens: 0,
+  breakpoints: [],
+  snapshots: [],
+  sectionCache: new Map(),
+  nextRequestId: 1,
+  pendingRequests: new Map(),
+
+  connect: (agentId: string) => {
+    const state = get();
+    // If already connected to this agent, no-op
+    if (state.connected && state.debugAgentId === agentId) return;
+    // If connecting to a different agent, disconnect first
+    if (state.socket) {
+      state.socket.close();
+    }
+
+    set({ connecting: true, debugAgentId: agentId });
+
+    const url = `ws://127.0.0.1:${DEFAULT_DEBUG_PORT}`;
+    const socket = new WebSocket(url);
+
+    socket.onopen = () => {
+      set({ connected: true, connecting: false });
+      // Fetch initial state
+      get().getState().catch(() => {});
+    };
+
+    socket.onmessage = (event: MessageEvent) => {
+      try {
+        const msg = JSON.parse(event.data) as JsonRpcResponse | JsonRpcEvent;
+        const store = get();
+
+        if ("id" in msg && msg.id !== undefined) {
+          // Response to a request
+          const pending = store.pendingRequests.get(msg.id);
+          if (pending) {
+            store.pendingRequests.delete(msg.id);
+            if (msg.error) {
+              pending.reject(new Error(msg.error.message));
+            } else {
+              pending.resolve(msg.result);
+            }
+          }
+        } else if ("method" in msg) {
+          // Server-pushed event
+          store._handleEvent(msg as JsonRpcEvent);
+        }
+      } catch {
+        // Ignore non-JSON messages
+      }
+    };
+
+    socket.onclose = () => {
+      set({ connected: false, connecting: false, socket: null });
+    };
+
+    socket.onerror = () => {
+      set({ connecting: false });
+    };
+
+    set({ socket });
+  },
+
+  disconnect: () => {
+    const { socket } = get();
+    if (socket) {
+      socket.close();
+    }
+    set({
+      socket: null,
+      connected: false,
+      connecting: false,
+      debugAgentId: null,
+      iteration: 0,
+      phase: "Idle" as Phase,
+      paused: false,
+      snapshots: [],
+      sectionCache: new Map(),
+      breakpoints: [],
+    });
+  },
+
+  sendRequest: (method: string, params: Record<string, unknown> = {}): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
+      const state = get();
+      if (!state.socket || !state.connected) {
+        reject(new Error("Not connected to debug WebSocket"));
+        return;
+      }
+
+      const id = state.nextRequestId;
+      set({ nextRequestId: id + 1 });
+
+      const request: JsonRpcRequest = {
+        jsonrpc: "2.0",
+        id,
+        method,
+        params,
+      };
+
+      state.pendingRequests.set(id, { resolve, reject });
+      state.socket.send(JSON.stringify(request));
+    });
+  },
+
+  // Event handler (internal, not exposed)
+  _handleEvent(event: JsonRpcEvent) {
+    switch (event.method) {
+      case "debugger.onStep":
+        set({
+          iteration: (event.params.iteration as number) ?? 0,
+          phase: (event.params.phase as Phase) ?? "Idle",
+          paused: true,
+        });
+        break;
+      case "debugger.onPaused":
+        set({ paused: true });
+        break;
+      case "debugger.onResumed":
+        set({ paused: false });
+        break;
+      case "debugger.onContextBuilt": {
+        const params = event.params as Record<string, unknown>;
+        const snapshot = params.snapshot as ContextSnapshotMeta | undefined;
+        if (snapshot) {
+          set((s) => ({
+            snapshots: [...s.snapshots, snapshot],
+          }));
+        }
+        break;
+      }
+      case "debugger.onBreakpoint": {
+        set({ paused: true });
+        break;
+      }
+    }
+  },
+
+  // ── Control commands ────────────────────────────────────────────────
+
+  resume: async () => {
+    await get().sendRequest("debugger.resume");
+    set({ paused: false });
+  },
+
+  pause: async () => {
+    await get().sendRequest("debugger.pause");
+    // Runtime sends onPaused event later
+  },
+
+  step: async (granularity = "iteration") => {
+    await get().sendRequest("debugger.step", { granularity });
+  },
+
+  stop: async () => {
+    await get().sendRequest("debugger.stop");
+  },
+
+  restart: async () => {
+    await get().sendRequest("debugger.restart");
+    set({
+      iteration: 0,
+      phase: "Idle" as Phase,
+      snapshots: [],
+      sectionCache: new Map(),
+    });
+  },
+
+  // ── State query ─────────────────────────────────────────────────────
+
+  getState: async () => {
+    const result = (await get().sendRequest("debugger.getState")) as {
+      iteration: number;
+      phase: Phase;
+      breakpoints: Breakpoint[];
+      usage: { prompt_tokens: number; completion_tokens: number };
+      paused?: boolean;
+    };
+    if (result) {
+      set({
+        iteration: result.iteration ?? 0,
+        phase: result.phase ?? "Idle",
+        breakpoints: result.breakpoints ?? [],
+        promptTokens: result.usage?.prompt_tokens ?? 0,
+        completionTokens: result.usage?.completion_tokens ?? 0,
+        paused: result.paused ?? false,
+      });
+    }
+  },
+
+  // ── Context commands ────────────────────────────────────────────────
+
+  getContextSnapshot: async (iteration: number) => {
+    const result = (await get().sendRequest("debugger.getContextSnapshot", {
+      iteration,
+    })) as ContextSnapshotMeta | undefined;
+    if (result) {
+      set((s) => {
+        const existing = s.snapshots.findIndex((sn) => sn.iteration === iteration);
+        if (existing >= 0) {
+          const updated = [...s.snapshots];
+          updated[existing] = result;
+          return { snapshots: updated };
+        }
+        return { snapshots: [...s.snapshots, result] };
+      });
+    }
+  },
+
+  getSection: async (iteration: number, section: string): Promise<SectionContent | null> => {
+    const cacheKey = `${iteration}:${section}`;
+    const cached = get().sectionCache.get(cacheKey);
+    if (cached) return cached;
+
+    try {
+      const result = (await get().sendRequest("debugger.getSection", {
+        iteration,
+        section,
+      })) as SectionContent | undefined;
+      if (result) {
+        set((s) => {
+          const updated = new Map(s.sectionCache);
+          updated.set(cacheKey, result);
+          return { sectionCache: updated };
+        });
+        return result;
+      }
+    } catch {
+      // Section fetch failed — probably not built yet
+    }
+    return null;
+  },
+
+  // ── Context editing commands (S2.8) ────────────────────────────────
+
+  hasPendingPatches: false,
+
+  patchContext: async (patches: Record<string, unknown>) => {
+    await get().sendRequest("debugger.patchContext", { patches });
+    set({ hasPendingPatches: true });
+  },
+
+  rewind: async (toIteration: number) => {
+    const result = (await get().sendRequest("debugger.rewind", {
+      to_iteration: toIteration,
+    })) as { rewound_to_iteration: number; messages_trimmed_to: number };
+    // After rewind, clear cached sections for truncated snapshots
+    set((s) => {
+      const newCache = new Map(s.sectionCache);
+      // Remove cached sections for snapshots beyond the rewind target
+      const keysToDelete: string[] = [];
+      newCache.forEach((_, key) => {
+        const iter = parseInt(key.split(":")[0], 10);
+        if (iter > toIteration) keysToDelete.push(key);
+      });
+      keysToDelete.forEach((k) => newCache.delete(k));
+      return {
+        sectionCache: newCache,
+        snapshots: s.snapshots.filter((sn) => sn.iteration <= toIteration),
+        hasPendingPatches: false, // rewind clears patches
+        iteration: toIteration,
+      };
+    });
+    return result;
+  },
+
+  reExecute: async () => {
+    const result = (await get().sendRequest("debugger.reExecute", {})) as {
+      has_patches: boolean;
+    };
+    // Re-execute consumed the flag — clear local tracking
+    set({ hasPendingPatches: false, paused: false });
+    return result;
+  },
+}));
+
+// Augment the interface for the internal _handleEvent
+declare module "zustand" {
+  interface StoreMutators<S, A> {}
+}
+
+// Extend the store type
+interface DebugStore {
+  _handleEvent: (event: JsonRpcEvent) => void;
+}

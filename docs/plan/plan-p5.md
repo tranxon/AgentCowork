@@ -42,14 +42,14 @@
 
 ## 阶段划分
 
-| 阶段 | 主题 | 任务数 | 预期测试 | 预计周期 |
-|------|------|--------|---------|---------|
-| S1 | Desktop App 骨架 + 系统托盘 + 对话持久化 | 18 | 150 | 7 周 |
-| S2 | Debug Protocol + Session Actor 重构 | 13 | 93 | 5.5~6.5 周 |
-| S3 | 开发框架高级能力 | 8 | 48 | 3~4 周 |
-| S4 | 发布工具链 | 7 | 25 | 2 周 |
-| S5 | Phase 4 遗留技术债务 + 集成验证 | 10 | 50 | 3~4 周 |
-| **合计** | | **56** | **366** | **20.5~23.5 周** |
+| 阶段 | 主题 | 任务数 | 预期测试 | 预计周期 | 状态 |
+|------|------|--------|---------|---------|------|
+| S1 | Desktop App 骨架 + 系统托盘 + 对话持久化 | 18 | 150 | 7 周 | ✅ 完成 |
+| S2 | Debug Protocol + Session Actor 重构 | 13 | 101 | 5.5~6.5 周 | ✅ 完成 |
+| ~~S3~~ | ~~开发框架高级能力~~ | ~~8~~ | ~~48~~ | ~~3~4 周~~ | ⏸️ 延后至 Phase 6 |
+| S4 | 发布工具链 | 7 | 25 | 2 周 | ✅ 完成 |
+| S5 | Phase 4 遗留技术债务 + 集成验证 | 10 | 50 | 3~4 周 | ⏳ 待开始 |
+|| **合计** | | **35** | **326** | **12.5~13.5 周** | |
 
 ---
 
@@ -410,16 +410,16 @@ Session Actor 模型下，Debug 协议自然适配：
 | S2.1 Debug Protocol Server | 新增 `rollball-runtime/src/debug/server.rs`：WebSocket 服务端（`tokio-tungstenite`，`ws://127.0.0.1:19877`）；JSON-RPC 2.0 消息解析/响应；DevMode 检测（`--dev-mode` 启动时才监听）；连接管理（单客户端，后续连接拒绝） | 8 | WebSocket 连接建立/断开、JSON-RPC 消息收发 |
 | S2.2 执行控制（Pause/Step/Resume/Stop） | 修改主循环 `loop_.rs`：引入 `DebugController`（`Arc<Mutex<DebugState>>`）；Pause 时主循环 `tokio::sync::watch` 阻塞等待 Resume；Step 执行一步后自动 Pause；Stop 终止当前对话；`onStep` 事件推送 | 10 | 执行控制命令正确响应、主循环暂停/恢复 |
 | S2.3 状态查询 + 断点 | `debugger.getState`：返回当前迭代、Phase、消息列表、快照 IDs、断点、Token 用量；`debugger.setBreakpoint`/`removeBreakpoint`/`listBreakpoints`：4 类条件（on_phase / on_tool_call / on_iteration / on_tool_result）；断点命中时 `onBreakpoint` 事件 | 10 | 状态查询返回正确、断点命中触发事件 |
-| S2.4 消息快照机制 | 新增 `debug/snapshot.rs`：`ConversationSnapshot`（iteration, message_count, cumulative_usage, timestamp）；主循环每步迭代结束自动创建快照；`debugger.rollback(target_index)`：截断 messages 到目标长度；`debugger.editMessage(index, content)`：修改指定消息 | 8 | 快照创建、回滚截断正确、消息编辑生效 |
+| S2.4 消息与上下文快照机制 | ✅ **已实现（裁剪版）**：裁减 `ConversationSnapshot`（rollback/editMessage 后续通过 HistoryManager 直接实现）；保留 `ContextSnapshot`（5 section 元数据：system_prompt / tool_definitions / skill_instructions / retrieved_memory / identity_context，含 size/token_estimate/hash）— 上下文级快照；主循环 `BuildContext` 阶段完成后自动创建上下文快照并推送 `onContextBuilt` 事件；`debugger.getContextSnapshot(iteration)`：返回指定轮次 5 section 元数据摘要（<500 字节/轮）；`debugger.getSection(iteration, section)`：懒加载 section 完整内容。<br>**实现期裁剪理由**：调试面板已明确不展示 conversation_history（左侧聊天面板已有），且 rollback/editMessage 可通过直接操作 HistoryManager 实现，无需独立快照存储层。 | 5 | 上下文快照元数据正确（5 section）、section 懒加载正确、onContextBuilt 事件推送 |
 
 ### Wave B：Gateway DevMode 集成 + Desktop 调试面板（2 周，5 项）
 
 | 任务 | 内容 | 预期测试 | 验收标准 |
 |------|------|---------|----------|
 | S2.5 Gateway DevMode 启动参数 | 修改 `lifecycle/manager.rs`：Agent 标记 `dev: true` 时，启动参数追加 `--dev-mode`；`POST /api/agents/:id/start` 识别 `dev` 标记；新增 `GET /api/agents/:id/devmode` 查询 DevMode 状态和 Debug 端口 | 4 | DevMode Agent 以正确参数启动、端口可查询 |
-| S2.6 Desktop 调试面板（基础） | 前端实现：调试控制栏（Resume / Pause / Step / Stop 按钮）；当前状态显示（迭代、Phase、Token 用量）；连接 Debug Protocol WebSocket；开发者模式 toggle 切换 | 4 | 调试面板连接成功、控制命令生效 |
+| S2.6 Desktop 调试面板（基础 + 上下文树） | 前端实现：调试控制栏（Resume / Pause / Step / Stop 按钮）；当前状态显示（迭代、Phase、Token 用量）；连接 Debug Protocol WebSocket；开发者模式 toggle 切换；**上下文树视图**：按轮次展示 5 个控制面 section（system_prompt / tool_definitions / skill_instructions / retrieved_memory / identity_context），默认折叠，点展开后通过 `getSection` 懒加载内容；section hash 对比上一轮变更高亮；section 大小/token 估算显示；**不展示** conversation_history（左侧聊天面板已有） | 6 | 调试面板连接成功、控制命令生效、上下文树按轮次展开/折叠、section 懒加载正确、hash 对比高亮 |
 | S2.7 断点面板 | 前端实现：断点列表（条件类型 + 参数 + 启用/禁用）；添加断点对话框（4 类条件）；删除断点；`onBreakpoint` 事件实时更新 | 4 | 断点 CRUD 操作正常、命中事件实时显示 |
-| S2.8 Desktop 消息编辑与回滚 | 前端实现：消息右键菜单（Edit / Rollback to here / Re-execute from here）；编辑模式（消息内容可编辑文本框）；`debugger.editMessage` / `debugger.rollback` / `debugger.reExecute` 调用 | 4 | 消息编辑、回滚、重执行功能正常 |
+| S2.8 Desktop 上下文编辑与回退 | 前端实现：消息右键菜单（Edit / Rollback to here）；上下文 section 内联编辑（点击 section 进入编辑模式，修改 system_prompt / tool_definitions / skill_instructions / retrieved_memory / identity_context）；`debugger.rewind({ to_iteration })`：回退到指定轮次起始状态并清空 patches；`debugger.patchContext({ patches })`：修补上下文 section（可多次调用增量构建）；`debugger.reExecute`：以修补后上下文重新执行当前轮次；回退/重执行后聊天面板自动刷新 | 6 | 上下文 section 编辑生效、rewind 回退正确（清除后续消息）、patchContext + reExecute 以修补后上下文生成新轮次 |
 | S2.9 记忆调试面板（开发者模式） | **Debug Protocol 扩展**：<br>• `debugger.getMemoryState`：返回当前 Grafeo 状态（节点数、边数、各层分布）<br>• `debugger.getEpisodicFragments`：返回 Episodic 片段列表（含 decay_score 实时值）<br>• `debugger.triggerConsolidation`：手动触发离线巩固，返回合并结果报告<br>• `debugger.getConflictLog`：返回冲突检测日志（Negation/Evolution 事件）<br>• `debugger.triggerForgettingScan`：手动触发遗忘扫描，返回标记为 Dormant/Purged 的节点列表<br>**Desktop UI**：<br>• Episodic 片段浏览 + decay_score 实时显示（进度条/颜色编码）<br>• 巩固过程可视化（触发时机、合并结果、生成的新节点）<br>• 冲突检测日志查看（时间线形式，支持过滤）<br>• 手动触发遗忘扫描按钮 + 扫描结果预览 | 6 | 记忆调试命令正确响应、UI 实时展示 decay_score、巩固和遗忘扫描结果准确 |
 
 > **前置依赖**：S2.9 依赖 S1.10 的 Gateway 记忆 API 已就绪；依赖 Grafeo 引擎的调试接口（`grafeo::debug` 模块）；巩固和遗忘扫描调用 `rollball-grafeo` 内部 API。
@@ -440,11 +440,19 @@ Session Actor 模型下，Debug 协议自然适配：
 
 ---
 
-## S3：开发框架高级能力（3~4 周，8 项任务）
+## S3：开发框架高级能力（3~4 周，8 项任务）⏸️ **延后至 Phase 6**
 
 Skill 热加载、Provider 动态切换、录制回放引擎。
 
-**涉及 crate**：`rollball-runtime`（扩展 `skills/` + `debug/`）
+> ⚠️ **延后决定（2026-05-09）**：S2 Debug Protocol 实现已与原始设计有较大偏离
+> （Session Actor → 直接集成、watch channel → polling、ConversationSnapshot 裁剪等），
+> S3 依赖的 `debugger.reloadSkills` / `debugger.switchProvider` / `debugger.startRecording`
+> 等命令需要在新的 Debug Protocol 架构下重新设计。且 S3.3 Grafeo Skill 经验层是独立大型任务，
+> S3.4~S3.7 录制回放引擎需求尚未明朗。
+>
+> **Phase 6 时将基于已有的 Debug Protocol 基础设施重新规划 S3。**
+>
+> **涉及 crate**：`rollball-runtime`（扩展 `skills/` + `debug/`）
 
 ### Wave A：Skill 热加载 + Provider 切换（1.5 周，3 项）
 
@@ -489,7 +497,7 @@ Agent 克隆、发布检查、打包签名、分发。
 | 子任务 | 文件 | 验收标准 |
 |--------|------|----------|
 | S4.1.1 定义 CloneRequest/CloneResponse 结构体 | `http/publish_api.rs` | `CloneRequest { new_agent_id, mode: skeleton|full }`，`CloneResponse { agent_id, install_path }` 编译通过 |
-| S4.1.2 clone_agent 核心逻辑 | `package_manager/clone.rs` | 骨架克隆：复制 manifest + prompts + config + tools + resources；完整克隆：额外复制 skills + data；新 manifest 的 agent_id 替换为 new_agent_id；dev 字段设为 true；系统 Agent（system=true）不可克隆 |
+| S4.1.2 clone_agent 核心逻辑 | `package_manager/clone.rs` | 骨架克隆：复制 manifest + prompts + config + tools + resources；完整克隆：额外复制 skills + data + **conversations/（当前 session JSONL 快照，支持"聊天到一半开启调试"场景）** + memory/private.grafeo；新 manifest 的 agent_id 替换为 new_agent_id；dev 字段设为 true；系统 Agent（system=true）不可克隆 |
 | S4.1.3 注册克隆后的 Agent | `package_manager/clone.rs` | 调用 `state.add_installed()` 注册；Capability 自动注册（复用 add_installed 逻辑） |
 | S4.1.4 HTTP route 注册 | `http/routes.rs`, `http/agents.rs` | `POST /api/agents/{id}/clone` 挂载到 router |
 | S4.1.5 单元测试 | `package_manager/clone.rs`, `http/agents.rs` | 骨架克隆正确、完整克隆正确、dev 标记设置、系统 Agent 不可克隆、重复 agent_id 报错 |
@@ -621,16 +629,16 @@ cargo tauri dev  # 启动 Desktop App，选择 weather-agent 对话
 ## 依赖关系
 
 ```
-S1（Desktop App）──┬──→ S2（Debug Protocol）──→ S3（开发框架高级）
-                   │                                │
-                   └──→ S4（发布工具链）──────────────┤
-                                                    ↓
-                                              S5（技术债务 + 集成验证）
+S1（Desktop App）──┬──→ S2（Debug Protocol）
+                   │
+                   └──→ S4（发布工具链）──→ S5（技术债务 + 集成验证）
+
+                   ┌── S3 延后至 Phase 6
 ```
 
 - S1 和 S4 可部分并行（S4 Gateway API 不依赖 Desktop UI）
 - S2 依赖 S1 的 Desktop App 骨架（调试面板需要 UI）
-- S3 依赖 S2 的 Debug Protocol 基础（热加载/录制走 Debug 命令）
+- ~~S3 依赖 S2 的 Debug Protocol 基础~~ → S3 整体延后至 Phase 6
 - S5 依赖 S1~S4 全部完成
 
 ---

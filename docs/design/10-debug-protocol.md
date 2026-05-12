@@ -141,26 +141,127 @@ params: {}
 result: { "breakpoints": [...] }
 ```
 
-### 3.4 消息编辑与回滚
+### 3.4 上下文快照与检查（Context Snapshot & Inspection）
+
+DevMode 下，Agent Runtime 在每轮迭代的 `BuildContext` 阶段完成后，自动捕获**上下文构建结果**。调试面板按轮次将其树状展开，仅展示 5 个控制面 section：
+
+| Section | 内容 | 调试用途 |
+|---------|------|---------|
+| `system_prompt` | 系统级指令 | 调试 prompt 工程 |
+| `tool_definitions` | 可用工具及参数 Schema | 验证工具注册、修复 Schema 错误 |
+| `skill_instructions` | 加载的 SKILL.md 内容 | 调试 Skill 行为 |
+| `retrieved_memory` | Grafeo 检索的记忆节点 | 验证记忆检索质量 |
+| `identity_context` | 用户身份字段 | 检查身份注入 |
+
+> **设计决策**：`conversation_history` **排除**在调试面板外。左侧聊天面板已按时间线完整展示所有消息——调试面板不需要重复展示只读的对话结果，聚焦于"控制面"即可。
 
 ```rust
-/// 编辑某条消息
+/// 获取指定轮次的上下文构建快照（仅返回元数据摘要，不含完整内容）
+method: "debugger.getContextSnapshot"
+params: {
+    "iteration": 3  // 轮次编号（0-based）
+}
+result: {
+    "iteration": 3,
+    "built_at": "2026-05-09T12:00:00Z",
+    "sections": {
+        "system_prompt":      { "size_bytes": 2048, "token_estimate": 512,  "hash": "a1b2..." },
+        "tool_definitions":   { "size_bytes": 4096, "token_estimate": 1024, "hash": "e5f6..." },
+        "skill_instructions": { "size_bytes": 1536, "token_estimate": 384,  "hash": "i9j0..." },
+        "retrieved_memory":   { "size_bytes": 3072, "token_estimate": 768,  "hash": "m3n4..." },
+        "identity_context":   { "size_bytes": 512,  "token_estimate": 128,  "hash": "q7r8..." }
+    },
+    "total_token_estimate": 2816,
+    "phase": "BuildContext"
+}
+
+/// 懒加载某个 section 的完整内容（用户在调试面板点击展开时按需拉取）
+method: "debugger.getSection"
+params: {
+    "iteration": 3,
+    "section": "tool_definitions"  // 5 个 section 名之一
+}
+result: {
+    "content": "...",               // 完整文本内容
+    "hash": "e5f6...",              // 内容完整性校验
+    "token_count": 1024
+}
+```
+
+**性能策略**：`getContextSnapshot` 仅返回元数据（<500 字节/轮）。section 内容通过 `getSection` 按需懒加载。配合前端默认折叠 + 虚拟滚动，100+ 轮对话的调试面板仍保持流畅。
+
+### 3.5 上下文编辑与回退（Context Editing & Rewind）
+
+当调试发现 tools/skills 上下文有问题时，用户可回退到指定轮次、修补上下文后重新执行：
+
+```
+调试工作流:
+  1. debugger.getContextSnapshot({ iteration: 3 })  → 检查上下文
+  2. debugger.rewind({ to_iteration: 3 })            → 回退到第 3 轮起始状态
+  3. debugger.patchContext({ patches: {...} })       → 修补上下文 section
+  4. debugger.reExecute()                            → 以修补后的上下文重新执行
+```
+
+```rust
+/// 回退到指定轮次的起始状态
+/// 清除该轮次边界之后的所有消息，允许以修改后的上下文重新执行。
+/// 同时清除所有已设置的 patchContext 补丁。
+method: "debugger.rewind"
+params: {
+    "to_iteration": 3  // 回退到第 3 轮 BuildContext 之前的状态
+}
+result: {
+    "rewound_to_iteration": 3,
+    "messages_trimmed_to": 12  // messages 数组截断后的长度
+}
+
+/// 为下一次 reExecute 修补上下文 section
+/// 补丁是临时的——仅在下次 reExecute 时生效，执行后或 rewind 后自动清除。
+/// 可多次调用以增量构建补丁。
+method: "debugger.patchContext"
+params: {
+    "patches": {
+        "system_prompt": "Updated system instructions...",    // 可选
+        "tool_definitions": [{ "name": "...", ... }],          // 可选：替换工具列表
+        "skill_instructions": "Updated skill content...",      // 可选
+        "retrieved_memory": [...],                             // 可选：覆盖检索记忆
+        "identity_context": { "field": "value" }               // 可选
+    }
+    // 每个 key 均为可选——仅传入的 section 会被修补，其余保持不变
+}
+
+/// 以修补后的上下文重新执行当前轮次
+/// 如果已通过 patchContext 设置了补丁，则在此次执行中生效。
+/// 执行完成后补丁自动清除，Runtime 恢复正常流程（或在断点/Step 模式下暂停）。
+method: "debugger.reExecute"
+params: {}
+result: {
+    "iteration": 4,  // 新轮次编号（递增）
+    "output": { ... }
+}
+```
+
+**设计约束**：
+- `rewind` 和 `patchContext` 是**分离的操作** —— rewind 不会自动触发 reExecute，必须显式编辑后再执行
+- 补丁是**临时性**的 —— 在 reExecute 完成后或 rewind 调用时自动清除
+- `patchContext` 可在 reExecute 前**多次调用**以增量构建编辑
+
+**消息级操作**（轮次内的细粒度编辑）：
+
+```rust
+/// 编辑对话历史中的某条消息
 method: "debugger.editMessage"
 params: {
     "index": 2,
     "content": { ... }  // 新的 MessageContent
 }
 
-/// 回滚到指定消息索引，清除后续消息
+/// 回滚到指定消息索引，丢弃后续消息
 method: "debugger.rollback"
 params: { "target_index": 2 }
-
-/// 从当前状态重新执行
-method: "debugger.reExecute"
-params: {}
 ```
 
-### 3.5 Skill 热加载
+### 3.6 Skill 热加载
 
 ```rust
 /// 重新加载 skills 目录
@@ -171,7 +272,7 @@ params: {
 }
 ```
 
-### 3.6 Provider 切换
+### 3.7 Provider 切换
 
 ```rust
 /// 动态切换 LLM Provider
@@ -198,7 +299,7 @@ params: {
 最终验证 → openai/gpt-4o（全功能测试）
 ```
 
-### 3.7 录制回放
+### 3.8 录制回放
 
 ```rust
 /// 开始录制当前会话
@@ -228,7 +329,7 @@ method: "debugger.stopReplay"
 params: {}
 ```
 
-### 3.8 事件通知（Runtime → Desktop App）
+### 3.9 事件通知（Runtime → Desktop App）
 
 ```rust
 /// 每步执行完推送
@@ -263,6 +364,22 @@ params: {
     "old_phase": "BuildContext",
     "new_phase": "LlmCall",
     "iteration": 4
+}
+
+/// 上下文构建完成通知
+/// 在每轮 BuildContext 阶段完成后推送，携带 5 个控制面 section 的元数据摘要。
+/// Desktop App 收到后将其追加到调试面板的上下文树中。
+event: "debugger.onContextBuilt"
+params: {
+    "iteration": 3,
+    "sections": {
+        "system_prompt":      { "size_bytes": 2048, "token_estimate": 512,  "hash": "a1b2..." },
+        "tool_definitions":   { "size_bytes": 4096, "token_estimate": 1024, "hash": "e5f6..." },
+        "skill_instructions": { "size_bytes": 1536, "token_estimate": 384,  "hash": "i9j0..." },
+        "retrieved_memory":   { "size_bytes": 3072, "token_estimate": 768,  "hash": "m3n4..." },
+        "identity_context":   { "size_bytes": 512,  "token_estimate": 128,  "hash": "q7r8..." }
+    },
+    "total_token_estimate": 2816
 }
 ```
 
@@ -346,7 +463,9 @@ Agent Runtime 的 DevMode 是生产模式的**超集**：
 |------|---------|---------|
 | Debug Protocol | 监听 `ws://127.0.0.1:19877` | 不监听 |
 | 主循环 | 受调试器控制（Pause/Step/Resume） | 自动连续执行 |
-| 快照 | 每步自动创建 ConversationSnapshot | 不快照 |
+| 上下文快照 | 每轮自动创建上下文快照（5 section） | 不创建 |
+| 上下文编辑 | 支持迭代级回退与修补（`rewind`/`patchContext`/`reExecute`） | 不支持 |
+| 消息快照 | 每步自动创建 ConversationSnapshot | 不快照 |
 | Provider 切换 | 动态可切换（`debugger.switchProvider`） | 按 manifest 固定配置 |
 | 录制 | 可录制/回放（JSONL） | 不录制 |
 | Skill 加载 | 热加载（`debugger.reloadSkills`） | 启动时一次性加载 |
@@ -396,6 +515,7 @@ Gateway:
   │   └─ full 额外复制:
   │       skills/ (完整复制)
   │       data/ (完整复制)
+  │       conversations/ (当前 session JSONL 快照)
   │       memory/private.grafeo (复制快照)
   │
   ├─ 写入新 Agent 工作区:
@@ -474,9 +594,14 @@ body: { "package_path": "...", "export_to": "/user/choosen/path" }
 | 决策 | 选择 | 理由 |
 |------|------|------|
 | 协议格式 | JSON-RPC 2.0 over WebSocket | CDP 验证的标准模式；双向通信天然支持；工具链成熟 |
+| 调试面板范围 | 仅 5 个控制面 section，排除 conversation_history | conversation_history 已在左侧聊天面板完整展示；调试面板聚焦于可编辑的"控制面"上下文 |
+| 上下文快照 | 元数据摘要 + 懒加载 | 每轮 <500 字节元数据（size/token/hash），section 内容按需拉取；配合虚拟滚动保证百轮对话的流畅性 |
+| 上下文编辑模型 | rewind + patchContext + reExecute 分离 | rewind 不自动触发执行，编辑后需显式 reExecute；补丁临时生效，执行后自动清除 |
 | 快照机制 | 记录 message_count | 极轻量，无需深拷贝；messages 是 append-only，截断即可回滚 |
 | 录制格式 | JSONL | 逐行追加写入，无需完整序列化；崩溃不丢失已录制内容；易于调试和人工审阅 |
 | DevMode 启动参数 | `--dev-mode` CLI flag | Gateway 通过启动参数控制，Runtime 侧零配置变更 |
 | DevMode 是超集 | 不改变生产逻辑 | 生产模式下代码路径完全不变；DevMode 仅在检测到 flag 后初始化调试组件 |
 | 端口默认值 | 19877 | 可配置，但默认值应避免与常见服务冲突 |
 | Agent 克隆走 Gateway API | 不走 Debug Protocol | 克隆是 Gateway 侧的文件操作，与 Agent Runtime 无关 |
+| 调试中会话的 DevMode 入口 | Agent 克隆 + 克隆体 `--dev-mode` 启动 | 不采用运行时动态切换 DevMode；克隆体隔离数据，原 Agent 不受影响 |
+| 克隆体 conversations 目录 | full 模式复制当前 session JSONL | 支持"聊天到一半开启调试"场景，克隆体恢复对话状态 |

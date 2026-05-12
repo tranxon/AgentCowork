@@ -5,8 +5,10 @@ import { TitleBar } from "./TitleBar";
 import { AgentList } from "../agent-list/AgentList";
 import { ChatPanel } from "../chat/ChatPanel";
 import { ResultsPanel } from "../results/ResultsPanel";
+import { DebugPanel } from "../debug/DebugPanel";
 import { GatewayBanner } from "./GatewayBanner";
 import { useGatewayStore } from "../../stores/gatewayStore";
+import { useAgentStore } from "../../stores/agentStore";
 import { SettingsPage } from "../settings/SettingsPage";
 import { ToolApprovalModal } from "../tools/ToolApprovalModal";
 import { PanelRightClose } from "lucide-react";
@@ -29,6 +31,11 @@ export function AppLayout() {
   });
   const gatewayStatus = useGatewayStore((s) => s.status);
   const checkHealth = useGatewayStore((s) => s.checkHealth);
+  // Determine if selected agent is in debug mode
+  const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
+  const agents = useAgentStore((s) => s.agents);
+  const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
+  const isDebugMode = selectedAgent?.dev_mode && selectedAgent?.running;
   const isResizing = useRef(false);
   const startX = useRef(0);
   const startWidth = useRef(DEFAULT_SIDEBAR_WIDTH);
@@ -124,9 +131,13 @@ export function AppLayout() {
             {/* Chat panel — elastic */}
             <ChatPanel />
 
-            {/* Results panel — 320px, collapsible */}
-            {!resultsCollapsed && <ResultsPanel onCollapse={toggleResults} />}
-            {resultsCollapsed && (
+            {/* Results panel / Debug panel — 320px, collapsible */}
+            {isDebugMode ? (
+              <DebugPanel />
+            ) : !resultsCollapsed ? (
+              <ResultsPanel onCollapse={toggleResults} />
+            ) : null}
+            {resultsCollapsed && !isDebugMode && (
               <button
                 onClick={toggleResults}
                 className="flex w-8 items-center justify-center border-l border-zinc-200 bg-zinc-50 text-zinc-400 hover:text-zinc-600 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-500 dark:hover:text-zinc-300"

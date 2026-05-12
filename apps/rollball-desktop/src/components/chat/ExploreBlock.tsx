@@ -47,7 +47,7 @@ export function ExploreBlock({ items, isStreaming }: ExploreBlockProps) {
   const stepCount = items.length;
 
   return (
-    <div className="my-1 max-w-[min(var(--content-max-width),900px)]">
+    <div className="my-1 max-w-[var(--content-max-width)]">
       {/* Header: clickable toggle */}
       <button
         onClick={() => setExpanded(!expanded)}

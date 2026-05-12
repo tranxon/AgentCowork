@@ -80,6 +80,20 @@ pub enum Commands {
         #[command(subcommand)]
         action: PermissionAction,
     },
+    /// Package an installed agent into .agent file
+    Package {
+        /// Agent ID to package
+        agent_id: String,
+        /// Output directory (default: ./build)
+        #[arg(long, env = "ROLLBALL_PACKAGE_OUTPUT")]
+        output: Option<String>,
+        /// Sign the package with developer key
+        #[arg(long)]
+        sign: bool,
+        /// Signing key directory (default: examples/.signing-keys)
+        #[arg(long, env = "ROLLBALL_PACKAGE_KEY_DIR")]
+        key_dir: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -154,6 +168,10 @@ impl Cli {
             }
             Some(Commands::Permission { action }) => {
                 let msg = gateway.handle_permission_cli(action)?;
+                println!("{}", msg);
+            }
+            Some(Commands::Package { agent_id, output, sign, key_dir }) => {
+                let msg = gateway.package_agent(&agent_id, output.as_deref(), sign, key_dir.as_deref())?;
                 println!("{}", msg);
             }
             None => {

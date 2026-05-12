@@ -78,6 +78,29 @@ impl HistoryManager {
         self.messages.is_empty()
     }
 
+    /// Truncate history to the specified number of messages.
+    ///
+    /// Keeps only the first `target_len` messages and recalculates
+    /// the token count. Used by debug rewind to roll back history
+    /// to a specific conversation snapshot.
+    pub fn truncate_to(&mut self, target_len: usize) {
+        if target_len >= self.messages.len() {
+            return;
+        }
+        self.messages.truncate(target_len);
+        // Recalculate token count
+        self.current_tokens = self
+            .messages
+            .iter()
+            .map(|m| estimate_tokens(&m.content))
+            .sum();
+        tracing::info!(
+            target_len,
+            new_token_count = self.current_tokens,
+            "History truncated for debug rewind"
+        );
+    }
+
     /// Estimate total tokens for all messages (for pre-check)
     pub fn estimate_total_tokens(&self) -> u64 {
         self.current_tokens

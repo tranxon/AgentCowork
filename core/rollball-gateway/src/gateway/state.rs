@@ -28,6 +28,8 @@ pub struct RunningAgentInfo {
     pub workspace: String,
     /// Whether the Agent has completed the gRPC AgentHello handshake
     pub connected: bool,
+    /// Whether the agent was started in developer mode (Debug Protocol enabled)
+    pub dev_mode: bool,
 }
 
 /// Shared permission store type (same as IPC server)
@@ -234,6 +236,7 @@ mod tests {
             started_at: chrono::Utc::now(),
             workspace: "/tmp/weather-workspace".to_string(),
             connected: false,
+            dev_mode: false,
         });
         assert!(state.is_running("com.example.weather"));
         

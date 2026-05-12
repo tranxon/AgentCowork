@@ -966,7 +966,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
                 <span className="rounded bg-zinc-200 px-1 py-0 text-[10px] font-medium text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">{message.senderRole}</span>
               )}
             </div>
-            <div className="w-full max-w-[min(var(--content-max-width),900px)] rounded-lg rounded-bl-sm bg-zinc-100 px-4 py-2.5 dark:bg-zinc-800 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
+            <div className="w-full max-w-[var(--content-max-width)] rounded-lg rounded-bl-sm bg-zinc-100 px-4 py-2.5 dark:bg-zinc-800 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
               {message.content && (
                 <div className="prose prose-sm prose-zinc max-w-none prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-headings:font-semibold select-text" style={fontSizeStyle}>
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
@@ -1003,7 +1003,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
                 <span className="rounded bg-zinc-200 px-1 py-0 text-[10px] font-medium text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">{message.senderRole}</span>
               )}
             </div>
-            <div className="w-full max-w-[min(var(--content-max-width),900px)] rounded-lg rounded-bl-sm bg-zinc-100 px-4 py-2.5 dark:bg-zinc-800 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
+            <div className="w-full max-w-[var(--content-max-width)] rounded-lg rounded-bl-sm bg-zinc-100 px-4 py-2.5 dark:bg-zinc-800 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
               <ThinkBlock
                 content={message.content}
                 isStreaming={isStreaming}
@@ -1034,7 +1034,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
     return (
       <div className="flex justify-start">
         <button
-          className="flex w-fit max-w-[min(var(--content-max-width),900px)] items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+          className="flex w-fit max-w-[var(--content-max-width)] items-start gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
           onClick={() => setExpanded(!expanded)}
         >
           <Wrench className="mt-0.5 h-3 w-3 shrink-0" />
@@ -1051,7 +1051,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
       <MessageContentWrapper>
         <div className="flex justify-start">
           <button
-            className="flex w-full max-w-[min(var(--content-max-width),900px)] items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            className="flex w-full max-w-[var(--content-max-width)] items-center gap-2 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 transition-colors hover:bg-zinc-100 dark:border-zinc-700 dark:bg-zinc-800/50 dark:text-zinc-400 dark:hover:bg-zinc-800"
             onClick={() => setExpanded(!expanded)}
           >
             <Wrench className="h-3 w-3 shrink-0" />
@@ -1061,7 +1061,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             {expanded ? <ChevronDown className="ml-2 h-3 w-3 shrink-0" /> : <ChevronRight className="ml-2 h-3 w-3 shrink-0" />}
           </button>
           {expanded && (
-            <pre className="mt-1 max-w-[min(var(--content-max-width),900px)] overflow-x-auto rounded-lg bg-zinc-50 p-3 text-xs text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400 select-text">
+            <pre className="mt-1 max-w-[var(--content-max-width)] overflow-x-auto rounded-lg bg-zinc-50 p-3 text-xs text-zinc-600 dark:bg-zinc-800/50 dark:text-zinc-400 select-text">
               {message.content}
             </pre>
           )}
