@@ -26,9 +26,36 @@ use rollball_core::error::RollballError;
 use rollball_core::proto;
 use rollball_core::proto::server_message::Payload as ServerPayload;
 use rollball_core::proto_bridge::GatewayRequestToProto;
-use rollball_core::protocol::{GatewayRequest, GatewayResponse, ProtocolType};
+use rollball_core::protocol::{GatewayRequest, GatewayResponse, ModelCapabilitiesInfo, ProtocolType};
 
-use crate::ipc::client::LlmConfigReceived;
+/// Configuration delivered by Gateway in the AgentHelloResult handshake.
+///
+/// Bundles LLM config, workspace context, and runtime overrides into a
+/// single atomic response so the Runtime does not need to selectively
+/// read from the shared push channel during startup.
+#[derive(Debug, Clone)]
+pub struct AgentHelloConfig {
+    // ── LLM Configuration ──
+    pub provider: Option<String>,
+    pub model: Option<String>,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub models: Vec<String>,
+    pub model_capabilities: Option<ModelCapabilitiesInfo>,
+    pub max_output_tokens_limit: u64,
+    pub protocol_type: ProtocolType,
+
+    // ── Workspace Context ──
+    pub workspace_context_text: Option<String>,
+    pub current_workspace_id: Option<String>,
+    pub current_workspace_path: Option<String>,
+
+    // ── Runtime Config Overrides ──
+    pub runtime_max_output_tokens: Option<u64>,
+    pub runtime_max_iterations: Option<u32>,
+    pub runtime_temperature: Option<f32>,
+    pub runtime_system_prompt_override: Option<String>,
+}
 
 /// Request timeout for individual RPC calls
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -103,8 +130,6 @@ impl GatewayGrpcClient {
         let (memory_query_tx, memory_query_rx) = mpsc::unbounded_channel();
         let connected = Arc::new(AtomicBool::new(true));
 
-        // Clone outbound_tx for the spawned task (for memory query responses)
-        let _outbound_tx_clone = outbound_tx.clone();
 
         // Spawn inbound receive loop.
         // When this task exits, push_tx is dropped, causing push_rx.recv() to
@@ -215,27 +240,29 @@ impl GatewayGrpcClient {
         }
     }
 
-    /// Convenience: connect and send AgentHello in one call.
+    /// Convenience: connect as "main" role and send AgentHello.
     pub async fn connect_and_register(
         endpoint: &str,
         agent_id: &str,
         version: &str,
-    ) -> Result<Self, RollballError> {
+    ) -> Result<(Self, AgentHelloConfig), RollballError> {
         Self::connect_and_register_with_role(endpoint, agent_id, version, "main").await
     }
 
     /// Convenience: connect with a specific connection role and send AgentHello.
+    ///
+    /// Returns the client and the bundled [`AgentHelloConfig`] from the handshake.
     pub async fn connect_and_register_with_role(
         endpoint: &str,
         agent_id: &str,
         version: &str,
         connection_role: &str,
-    ) -> Result<Self, RollballError> {
+    ) -> Result<(Self, AgentHelloConfig), RollballError> {
         let client = Self::connect(endpoint).await?;
-        client
+        let config = client
             .send_agent_hello(agent_id, version, connection_role)
             .await?;
-        Ok(client)
+        Ok((client, config))
     }
 
     /// Reconnect with exponential backoff and re-register with Gateway.
@@ -260,7 +287,7 @@ impl GatewayGrpcClient {
             *guard = saved_reports;
         }
 
-        self.send_agent_hello(agent_id, version, "main").await?;
+        let _config = self.send_agent_hello(agent_id, version, "main").await?;
         self.flush_pending_reports().await?;
         Ok(())
     }
@@ -365,86 +392,19 @@ impl GatewayGrpcClient {
         }
     }
 
-    /// Receive the LLM configuration from Gateway after handshake.
-    ///
-    /// Waits up to 10 seconds for a `LlmConfigDelivery` push message,
-    /// skipping other handshake messages (IdentityDelivery, CapabilityOverview).
-    /// Returns a `LlmConfigReceived` that can be used to configure the provider.
-    pub async fn recv_llm_config(
-        &mut self,
-    ) -> Result<LlmConfigReceived, RollballError> {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-
-        loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
-                return Err(RollballError::Ipc(
-                    "Timeout waiting for LLMConfigDelivery from Gateway".to_string(),
-                ));
-            }
-
-            match tokio::time::timeout(remaining, self.push_rx.recv()).await {
-                Ok(Some(msg)) => match msg.payload {
-                    Some(ServerPayload::LlmConfigDelivery(cfg)) => {
-                        tracing::info!(
-                            provider = %cfg.provider,
-                            model = %cfg.model,
-                            "Received LLMConfigDelivery via gRPC"
-                        );
-                        return Ok(LlmConfigReceived {
-                            provider: cfg.provider,
-                            model: if cfg.model.is_empty() {
-                                None
-                            } else {
-                                Some(cfg.model)
-                            },
-                            api_key: Some(cfg.api_key),
-                            base_url: if cfg.base_url.is_empty() {
-                                None
-                            } else {
-                                Some(cfg.base_url)
-                            },
-                            models: cfg.models,
-                            model_capabilities: cfg.model_capabilities.map(|c| c.into()),
-                            max_output_tokens_limit: cfg.max_output_tokens_limit,
-                            protocol_type: cfg.protocol_type.parse::<rollball_core::ProtocolType>()
-                                .unwrap_or(rollball_core::ProtocolType::OpenAI),
-                        });
-                    }
-                    Some(_) => {
-                        // Skip other handshake messages
-                        tracing::debug!("Skipping non-LLMConfig push during handshake");
-                        continue;
-                    }
-                    None => {
-                        return Err(RollballError::Ipc(
-                            "Empty push message payload during handshake".to_string(),
-                        ));
-                    }
-                },
-                Ok(None) => {
-                    return Err(RollballError::Ipc(
-                        "Connection closed while waiting for LLMConfigDelivery".to_string(),
-                    ));
-                }
-                Err(_) => {
-                    return Err(RollballError::Ipc(
-                        "Timeout waiting for LLMConfigDelivery from Gateway".to_string(),
-                    ));
-                }
-            }
-        }
-    }
-
     // ── High-level API (matching old GatewayClient surface) ────────────────
 
     /// Send AgentHello to register with the Gateway.
+    ///
+    /// Returns the bundled [`AgentHelloConfig`] containing LLM configuration,
+    /// workspace context, and runtime overrides — all delivered atomically
+    /// in the AgentHelloResult response (no separate push messages needed).
     pub async fn send_agent_hello(
         &self,
         agent_id: &str,
         version: &str,
         connection_role: &str,
-    ) -> Result<(), RollballError> {
+    ) -> Result<AgentHelloConfig, RollballError> {
         let request = GatewayRequest::AgentHello {
             agent_id: agent_id.to_string(),
             version: version.to_string(),
@@ -462,7 +422,64 @@ impl GatewayGrpcClient {
                         );
                     }
                     tracing::info!(agent_id = %agent_id, "Gateway registered agent via gRPC");
-                    Ok(())
+
+                    let config = AgentHelloConfig {
+                        provider: if result.provider.is_empty() {
+                            None
+                        } else {
+                            Some(result.provider)
+                        },
+                        model: if result.model.is_empty() {
+                            None
+                        } else {
+                            Some(result.model)
+                        },
+                        api_key: if result.api_key.is_empty() {
+                            None
+                        } else {
+                            Some(result.api_key)
+                        },
+                        base_url: if result.base_url.is_empty() {
+                            None
+                        } else {
+                            Some(result.base_url)
+                        },
+                        models: result.models,
+                        model_capabilities: result.model_capabilities.map(|c| c.into()),
+                        max_output_tokens_limit: result.max_output_tokens_limit,
+                        protocol_type: match result.protocol_type.as_str() {
+                            "anthropic" => ProtocolType::Anthropic,
+                            "ollama" => ProtocolType::Ollama,
+                            _ => ProtocolType::OpenAI,
+                        },
+                        workspace_context_text: if result.workspace_context_text.is_empty() {
+                            None
+                        } else {
+                            Some(result.workspace_context_text)
+                        },
+                        current_workspace_id: if result.current_workspace_id.is_empty() {
+                            None
+                        } else {
+                            Some(result.current_workspace_id)
+                        },
+                        current_workspace_path: if result.current_workspace_path.is_empty() {
+                            None
+                        } else {
+                            Some(result.current_workspace_path)
+                        },
+                        runtime_max_output_tokens: result.runtime_max_output_tokens,
+                        runtime_max_iterations: result.runtime_max_iterations,
+                        runtime_temperature: result.runtime_temperature,
+                        runtime_system_prompt_override: if result
+                            .runtime_system_prompt_override
+                            .is_empty()
+                        {
+                            None
+                        } else {
+                            Some(result.runtime_system_prompt_override)
+                        },
+                    };
+                    Ok(config)
                 } else {
                     Err(RollballError::Ipc(format!(
                         "AgentHello rejected: {}",
@@ -1073,21 +1090,9 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
         }
         Some(ServerPayload::RuntimeConfigUpdate(rcu)) => {
             GatewayResponse::RuntimeConfigUpdate {
-                max_output_tokens: if rcu.max_output_tokens == 0 {
-                    None
-                } else {
-                    Some(rcu.max_output_tokens)
-                },
-                max_iterations: if rcu.max_iterations == 0 {
-                    None
-                } else {
-                    Some(rcu.max_iterations)
-                },
-                temperature: if rcu.temperature == 0.0 {
-                    None
-                } else {
-                    Some(rcu.temperature)
-                },
+                max_output_tokens: rcu.max_output_tokens,
+                max_iterations: rcu.max_iterations,
+                temperature: rcu.temperature,
                 system_prompt_override: if rcu.system_prompt_override.is_empty() {
                     None
                 } else {
@@ -1103,6 +1108,41 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 None
             } else {
                 Some(r.error)
+            },
+            provider: if r.provider.is_empty() { None } else { Some(r.provider) },
+            model: if r.model.is_empty() { None } else { Some(r.model) },
+            api_key: if r.api_key.is_empty() { None } else { Some(r.api_key) },
+            base_url: if r.base_url.is_empty() { None } else { Some(r.base_url) },
+            models: r.models,
+            model_capabilities: r.model_capabilities.map(|c| c.into()),
+            max_output_tokens_limit: r.max_output_tokens_limit,
+            protocol_type: match r.protocol_type.as_str() {
+                "anthropic" => ProtocolType::Anthropic,
+                "ollama" => ProtocolType::Ollama,
+                _ => ProtocolType::OpenAI,
+            },
+            workspace_context_text: if r.workspace_context_text.is_empty() {
+                None
+            } else {
+                Some(r.workspace_context_text)
+            },
+            current_workspace_id: if r.current_workspace_id.is_empty() {
+                None
+            } else {
+                Some(r.current_workspace_id)
+            },
+            current_workspace_path: if r.current_workspace_path.is_empty() {
+                None
+            } else {
+                Some(r.current_workspace_path)
+            },
+            runtime_max_output_tokens: r.runtime_max_output_tokens,
+            runtime_max_iterations: r.runtime_max_iterations,
+            runtime_temperature: r.runtime_temperature,
+            runtime_system_prompt_override: if r.runtime_system_prompt_override.is_empty() {
+                None
+            } else {
+                Some(r.runtime_system_prompt_override)
             },
         },
         Some(ServerPayload::KeyReleaseResult(r)) => GatewayResponse::KeyReleaseResult {
@@ -1208,7 +1248,7 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
 
         None => {
             tracing::warn!("Received ServerMessage with empty payload");
-            GatewayResponse::UsageReportAck {}
+            GatewayResponse::Unknown {}
         }
 
         // Memory API query variants — handled by the agent loop via
@@ -1217,7 +1257,7 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
             tracing::warn!(
                 "Received unrecognized ServerMessage payload variant"
             );
-            GatewayResponse::UsageReportAck {}
+            GatewayResponse::Unknown {}
         }
     }
 }
@@ -1325,7 +1365,7 @@ mod tests {
             payload: None,
         };
         let resp = proto_to_gateway_response(msg);
-        assert!(matches!(resp, GatewayResponse::UsageReportAck {}));
+        assert!(matches!(resp, GatewayResponse::Unknown {}));
     }
 
     #[test]

@@ -116,7 +116,7 @@ interface DebugStore {
   pendingRequests: Map<number, { resolve: (r: unknown) => void; reject: (e: Error) => void }>;
 
   // Actions
-  connect: (agentId: string) => void;
+  connect: (agentId: string, debugPort?: number) => void;
   disconnect: () => void;
   sendRequest: (method: string, params?: Record<string, unknown>) => Promise<unknown>;
 
@@ -155,7 +155,7 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
   nextRequestId: 1,
   pendingRequests: new Map(),
 
-  connect: (agentId: string) => {
+  connect: (agentId: string, debugPort?: number) => {
     const state = get();
     // If already connected to this agent, no-op
     if (state.connected && state.debugAgentId === agentId) return;
@@ -170,6 +170,8 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
       connectRetryTimer = null;
     }
 
+    const port = debugPort ?? DEFAULT_DEBUG_PORT;
+
     // Retry state: attempts start at 0, max 10 retries with 1s delay each
     let retries = 0;
     const maxRetries = 10;
@@ -181,7 +183,7 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
 
       set({ connecting: true, debugAgentId: agentId });
 
-      const url = `ws://127.0.0.1:${DEFAULT_DEBUG_PORT}`;
+      const url = `ws://127.0.0.1:${port}`;
       const socket = new WebSocket(url);
 
       socket.onopen = () => {

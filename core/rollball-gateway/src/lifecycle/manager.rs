@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 use crate::error::GatewayError;
 use crate::gateway::state::{GatewayState, RunningAgentInfo};
-use crate::lifecycle::process::{spawn_agent_process, kill_agent_process, check_health};
+use crate::lifecycle::process::{spawn_agent_process, kill_agent_process, check_health, find_available_debug_port};
 
 /// System Agent ID — always auto-started with Gateway
 pub const SYSTEM_AGENT_ID: &str = "com.rollball.system";
@@ -68,6 +68,13 @@ impl LifecycleManager {
             );
         }
 
+        // Assign a per-agent debug port when running in dev mode
+        let debug_port = if dev_mode {
+            Some(find_available_debug_port(19878))
+        } else {
+            None
+        };
+
         // Spawn the agent process
         let child = spawn_agent_process(
             agent_id,
@@ -75,6 +82,7 @@ impl LifecycleManager {
             &workspace,
             &self.gateway_grpc_endpoint,
             dev_mode,
+            debug_port,
         ).await?;
 
         let pid = child.id();
@@ -86,6 +94,7 @@ impl LifecycleManager {
             workspace: workspace.to_string_lossy().to_string(),
             connected: false,
             dev_mode,
+            debug_port,
         });
 
         tracing::info!("Started agent: {} (PID: {})", agent_id, pid);

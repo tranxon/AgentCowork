@@ -110,7 +110,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
     if (selectedAgent?.dev_mode && selectedAgent.running) {
       // Connect when: agent switched, or agent just entered debug mode, or not yet connected
       if (agentChanged || !connected || debugAgentId !== selectedAgentId) {
-        connect(selectedAgentId);
+        connect(selectedAgentId, selectedAgent?.debug_port);
       }
       autoConnectAttempted.current = true;
     }

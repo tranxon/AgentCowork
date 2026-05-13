@@ -91,7 +91,35 @@ message GetSessionMessagesRequest { string session_id = 1; string cursor = 2; ui
 message CreateSessionRequest    {}
 message GetCurrentSessionIdRequest {}
 
-message AgentHelloResult        { bool success = 1; string error = 2; }
+message AgentHelloResult {
+  bool success = 1;
+  string error = 2;
+
+  // ── LLM Configuration (merged from LLMConfigDelivery) ──
+  // Only populated for "main" connections; empty/zero for chunk-relay.
+  string provider = 3;
+  string model = 4;
+  string api_key = 5;
+  string base_url = 6;
+  repeated string models = 7;
+  ModelCapabilitiesInfo model_capabilities = 8;
+  uint64 max_output_tokens_limit = 9;
+  string protocol_type = 10;
+
+  // ── Workspace Context (merged from WorkspaceContextUpdate) ──
+  // Empty string means no workspace configured for this agent.
+  string workspace_context_text = 11;
+  string current_workspace_id = 12;
+  string current_workspace_path = 13;
+
+  // ── Runtime Config Overrides (merged from RuntimeConfigUpdate) ──
+  // Using proto3 `optional` so 0/0.0 genuinely means "set this value to zero",
+  // while absence of the field means "no override; fall back to defaults".
+  optional uint64 runtime_max_output_tokens = 14;
+  optional uint32 runtime_max_iterations = 15;
+  optional float runtime_temperature = 16;
+  string runtime_system_prompt_override = 17;
+}
 message KeyReleaseResult        { string api_key = 1; string error = 2; }
 message IntentDelivered         { string message_id = 1; }
 message BudgetInfo              { uint64 remaining_tokens = 1; double remaining_cost_usd = 2; }
@@ -120,7 +148,7 @@ message IdentityDelivery        { repeated IdentityEntry entries = 1; }
 message WorkspaceContextUpdate  { string context_text = 1; string current_workspace_id = 2; string current_workspace_path = 3; }
 message IterationLimitPaused    { uint32 iteration = 1; uint32 max_iterations = 2; string message = 3; }
 message LogLevelUpdate           { string log_level = 1; }
-message RuntimeConfigUpdate      { uint64 max_output_tokens = 1; uint32 max_iterations = 2; float temperature = 3; string system_prompt_override = 4; }
+message RuntimeConfigUpdate      { optional uint64 max_output_tokens = 1; optional uint32 max_iterations = 2; optional float temperature = 3; string system_prompt_override = 4; }
 
 message StreamChunk             { string target = 1; string action = 2; string params_json = 3; }
 

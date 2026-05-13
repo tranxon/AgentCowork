@@ -66,6 +66,12 @@ fn git_bash_candidates() -> Vec<PathBuf> {
 ///
 /// Checks known install locations first, then falls back to PATH lookup
 /// using `where bash` (Windows equivalent of `which`).
+///
+/// **WSL filtering**: `where bash` on Windows may find WSL's bash.exe
+/// (e.g. `C:\Windows\System32\bash.exe`). This function explicitly skips
+/// WSL bash entries because they resolve to `/bin/bash` inside the WSL VM
+/// and cannot access Windows filesystem paths correctly.
+///
 /// Returns `(binary_name, full_path)` on success.
 pub fn find_git_bash() -> Option<(String, String)> {
     if std::env::consts::OS != "windows" {
@@ -81,24 +87,45 @@ pub fn find_git_bash() -> Option<(String, String)> {
         }
     }
 
-    // Fallback: check PATH using Windows "where" command
+    // Fallback: check PATH using Windows "where" command.
+    // Filter out WSL bash entries — they are NOT Git Bash.
     if let Ok(output) = std::process::Command::new("where")
         .arg("bash")
         .output()
         && output.status.success()
     {
         let stdout = String::from_utf8_lossy(&output.stdout);
-        if let Some(path_str) = stdout.lines().next() {
-            let trimmed = path_str.trim();
-            if !trimmed.is_empty() {
-                tracing::info!(path = %trimmed, "Found Git Bash via PATH (where bash)");
-                return Some(("bash".to_string(), trimmed.to_string()));
+        for line in stdout.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                continue;
             }
+            // Skip WSL bash (C:\Windows\System32\bash.exe or SysWOW64)
+            if is_wsl_bash(trimmed) {
+                tracing::debug!(
+                    path = %trimmed,
+                    "Skipping WSL bash entry from 'where bash'"
+                );
+                continue;
+            }
+            tracing::info!(path = %trimmed, "Found Git Bash via PATH (where bash)");
+            return Some(("bash".to_string(), trimmed.to_string()));
         }
     }
 
     tracing::debug!("Git Bash not found");
     None
+}
+
+/// Check whether a bash.exe path is the WSL entry point (not Git Bash).
+///
+/// WSL installs a stub `bash.exe` in the Windows system directories.
+/// Invoking this binary launches bash *inside* the WSL VM, where
+/// Windows filesystem paths (e.g. `/f/work/...`) are not accessible.
+fn is_wsl_bash(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    // WSL bash is always under System32 or SysWOW64
+    lower.contains("\\system32\\bash.exe") || lower.contains("\\syswow64\\bash.exe")
 }
 
 // ---------------------------------------------------------------------------

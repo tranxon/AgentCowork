@@ -99,6 +99,8 @@ async fn test_e2e_intent_routing_with_capabilities() {
             started_at: chrono::Utc::now(),
             workspace: "/tmp/weather-workspace".to_string(),
             connected: false,
+            dev_mode: false,
+            debug_port: None,
         });
     }
 
@@ -264,6 +266,8 @@ async fn test_e2e_intent_budget_rate_combined() {
             started_at: chrono::Utc::now(),
             workspace: "/tmp/weather-ws".to_string(),
             connected: false,
+            dev_mode: false,
+            debug_port: None,
         });
 
         // Set budget and rate limits

@@ -23,6 +23,7 @@ export interface AgentInfo {
   version: string;
   running: boolean;
   dev_mode: boolean;
+  debug_port?: number;
 }
 
 /** Agent detail response */

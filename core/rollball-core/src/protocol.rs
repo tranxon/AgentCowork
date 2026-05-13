@@ -296,12 +296,53 @@ pub enum GatewayRequest {
 #[serde(tag = "type")]
 #[allow(clippy::large_enum_variant)]
 pub enum GatewayResponse {
-    /// AgentHello response — confirms registration
+    /// AgentHello response — confirms registration and delivers all
+    /// handshake-time configuration in a single atomic message.
+    ///
+    /// Bundles LLM config, workspace context, and runtime overrides
+    /// so the Runtime does not need to selectively read from the shared
+    /// push channel during startup (eliminating the message-loss race).
     AgentHelloResult {
         /// Whether the registration was successful
         success: bool,
         /// Error message if registration failed
         error: Option<String>,
+
+        // ── LLM Configuration (only for "main" connections) ──
+        /// Provider name (e.g. "openai", "anthropic")
+        provider: Option<String>,
+        /// Selected model name
+        model: Option<String>,
+        /// Decrypted API key from Vault
+        api_key: Option<String>,
+        /// Custom base URL (if configured)
+        base_url: Option<String>,
+        /// Available models for this provider
+        models: Vec<String>,
+        /// Resolved model capabilities (context window, tool calling, etc.)
+        model_capabilities: Option<ModelCapabilitiesInfo>,
+        /// Gateway-level max output tokens limit
+        max_output_tokens_limit: u64,
+        /// Resolved protocol type (openai / anthropic / ollama)
+        protocol_type: ProtocolType,
+
+        // ── Workspace Context ──
+        /// Formatted workspace directory listing for system prompt injection
+        workspace_context_text: Option<String>,
+        /// ID of the currently-selected workspace (if any)
+        current_workspace_id: Option<String>,
+        /// Absolute path of the currently-selected workspace (if any)
+        current_workspace_path: Option<String>,
+
+        // ── Runtime Config Overrides ──
+        /// Per-agent max_output_tokens override
+        runtime_max_output_tokens: Option<u64>,
+        /// Per-agent max_iterations override
+        runtime_max_iterations: Option<u32>,
+        /// Per-agent temperature override
+        runtime_temperature: Option<f32>,
+        /// Per-agent system prompt override
+        runtime_system_prompt_override: Option<String>,
     },
     /// API key release result
     KeyReleaseResult {
@@ -533,6 +574,13 @@ pub enum GatewayResponse {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         system_prompt_override: Option<String>,
     },
+    /// Unknown or unrecognized message from Gateway.
+    ///
+    /// Returned when proto_to_gateway_response encounters an empty payload
+    /// or an unrecognized variant. This is distinct from normal business
+    /// messages so the agent loop can log and discard it without confusing
+    /// it with a legitimate UsageReportAck or other response.
+    Unknown {},
 }
 
 /// Session info DTO for IPC responses (S1.14)

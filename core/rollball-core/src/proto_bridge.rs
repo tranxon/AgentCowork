@@ -511,11 +511,54 @@ pub trait GatewayRequestToProto {
 impl GatewayResponseToProto for protocol::GatewayResponse {
     fn to_proto(&self, request_id: u64) -> proto::ServerMessage {
         let payload = match self {
-            protocol::GatewayResponse::AgentHelloResult { success, error } => {
+            protocol::GatewayResponse::AgentHelloResult {
+                success,
+                error,
+                provider,
+                model,
+                api_key,
+                base_url,
+                models,
+                model_capabilities,
+                max_output_tokens_limit,
+                protocol_type,
+                workspace_context_text,
+                current_workspace_id,
+                current_workspace_path,
+                runtime_max_output_tokens,
+                runtime_max_iterations,
+                runtime_temperature,
+                runtime_system_prompt_override,
+            } => {
                 Some(proto::server_message::Payload::AgentHelloResult(
                     proto::AgentHelloResult {
                         success: *success,
                         error: error.clone().unwrap_or_default(),
+                        provider: provider.clone().unwrap_or_default(),
+                        model: model.clone().unwrap_or_default(),
+                        api_key: api_key.clone().unwrap_or_default(),
+                        base_url: base_url.clone().unwrap_or_default(),
+                        models: models.clone(),
+                        model_capabilities: model_capabilities
+                            .as_ref()
+                            .map(|c| c.into()),
+                        max_output_tokens_limit: *max_output_tokens_limit,
+                        protocol_type: format!("{:?}", protocol_type).to_lowercase(),
+                        workspace_context_text: workspace_context_text
+                            .clone()
+                            .unwrap_or_default(),
+                        current_workspace_id: current_workspace_id
+                            .clone()
+                            .unwrap_or_default(),
+                        current_workspace_path: current_workspace_path
+                            .clone()
+                            .unwrap_or_default(),
+                        runtime_max_output_tokens: runtime_max_output_tokens.clone(),
+                        runtime_max_iterations: runtime_max_iterations.clone(),
+                        runtime_temperature: runtime_temperature.clone(),
+                        runtime_system_prompt_override: runtime_system_prompt_override
+                            .clone()
+                            .unwrap_or_default(),
                     },
                 ))
             }
@@ -739,11 +782,20 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
             } => {
                 Some(proto::server_message::Payload::RuntimeConfigUpdate(
                     proto::RuntimeConfigUpdate {
-                        max_output_tokens: max_output_tokens.unwrap_or(0),
-                        max_iterations: max_iterations.unwrap_or(0),
-                        temperature: temperature.unwrap_or(0.0),
+                        max_output_tokens: max_output_tokens.clone(),
+                        max_iterations: max_iterations.clone(),
+                        temperature: temperature.clone(),
                         system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
                     },
+                ))
+            }
+            // Unknown messages have no proto representation — they are
+            // generated on the Runtime side when incoming proto messages
+            // are malformed or unrecognized. Mapping them to UsageReportAck
+            // ensures the server can still construct a valid ServerMessage.
+            protocol::GatewayResponse::Unknown {} => {
+                Some(proto::server_message::Payload::UsageReportAck(
+                    proto::UsageReportAck {},
                 ))
             }
         };

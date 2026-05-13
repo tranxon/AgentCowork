@@ -30,6 +30,8 @@ pub struct RunningAgentInfo {
     pub connected: bool,
     /// Whether the agent was started in developer mode (Debug Protocol enabled)
     pub dev_mode: bool,
+    /// Debug WebSocket port (set when dev_mode is true)
+    pub debug_port: Option<u16>,
 }
 
 /// Shared permission store type (same as IPC server)
@@ -237,6 +239,7 @@ mod tests {
             workspace: "/tmp/weather-workspace".to_string(),
             connected: false,
             dev_mode: false,
+            debug_port: None,
         });
         assert!(state.is_running("com.example.weather"));
         

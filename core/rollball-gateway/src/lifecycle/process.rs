@@ -30,6 +30,7 @@ pub async fn spawn_agent_process(
     workspace: &Path,
     gateway_grpc_endpoint: &str,
     dev_mode: bool,
+    debug_port: Option<u16>,
 ) -> Result<AgentChild, GatewayError> {
     // Locate the rollball-runtime binary (sibling of current executable)
     let runtime_bin = std::env::current_exe()
@@ -73,6 +74,9 @@ pub async fn spawn_agent_process(
     // Developer mode: pass --dev-mode flag to enable Debug Protocol WebSocket
     if dev_mode {
         cmd.arg("--dev-mode");
+        if let Some(port) = debug_port {
+            cmd.arg("--debug-port").arg(port.to_string());
+        }
     }
 
     // On Unix, create a new process group so we can kill the entire group later
@@ -154,6 +158,26 @@ pub async fn kill_agent_process(pid: u32) -> Result<(), GatewayError> {
     Ok(())
 }
 
+/// Find an available TCP port for the debug WebSocket server.
+///
+/// Starts from `base_port` (typically 19878) and increments until a
+/// free port is found. Returns the first available port.
+///
+/// Uses a quick bind-then-close to test port availability.
+pub fn find_available_debug_port(base_port: u16) -> u16 {
+    let mut port = base_port;
+    loop {
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        if std::net::TcpListener::bind(addr).is_ok() {
+            // Listener is dropped immediately, releasing the port
+            tracing::info!(port, "Found available debug port");
+            return port;
+        }
+        tracing::debug!(port, "Debug port in use, trying next");
+        port += 1;
+    }
+}
+
 /// Check if a process with the given PID is still running
 ///
 /// On Linux: checks if `/proc/{pid}` exists
@@ -212,6 +236,7 @@ mod tests {
             Path::new("/tmp/nonexistent-workspace"),
             "http://127.0.0.1:19877",
             false,
+            None,
         )
         .await;
         assert!(result.is_err());

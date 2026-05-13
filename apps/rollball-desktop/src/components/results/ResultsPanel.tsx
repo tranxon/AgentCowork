@@ -88,7 +88,7 @@ export function ResultsPanel({ width, onCollapse, isDebugMode = false }: Results
 
     if (selectedAgent?.dev_mode && selectedAgent.running) {
       if (agentChanged || !connected || debugAgentId !== selectedAgentId) {
-        connect(selectedAgentId);
+        connect(selectedAgentId, selectedAgent?.debug_port);
       }
       autoConnectAttempted.current = true;
     }

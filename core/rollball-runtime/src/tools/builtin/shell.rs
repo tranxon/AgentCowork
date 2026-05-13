@@ -222,14 +222,17 @@ impl Tool for ShellTool {
         //
         // For future hardening: consider ProcessGuard with kill-on-drop
         // using Arc<Mutex<Child>> to guarantee cleanup on timeout.
-        let shell_binary = self.shell_binary.clone();
+        let shell_path = self.shell_path.clone();
         let shell_arg = self.shell_arg.clone();
         let command_owned = command.to_string();
         let work_dir = self.work_dir.clone();
         let tool_name = self.tool_name.clone();
 
         let output = tokio::task::spawn_blocking(move || {
-            let mut cmd = std::process::Command::new(&shell_binary);
+            // Use shell_path (fully-resolved path) instead of shell_binary
+            // (just "bash") to avoid PATH resolution finding WSL bash
+            // instead of Git Bash on Windows.
+            let mut cmd = std::process::Command::new(&shell_path);
             cmd.arg(&shell_arg)
                 .arg(&command_owned)
                 .current_dir(&work_dir);

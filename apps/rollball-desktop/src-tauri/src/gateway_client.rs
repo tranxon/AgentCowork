@@ -459,6 +459,7 @@ pub struct AgentListEntry {
     pub version: String,
     pub running: bool,
     pub dev_mode: bool,
+    pub debug_port: Option<u16>,
 }
 
 /// Agent detail response

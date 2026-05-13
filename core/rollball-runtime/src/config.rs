@@ -30,6 +30,9 @@ pub struct RuntimeConfig {
     /// Whether developer mode is enabled
     #[serde(default)]
     pub dev_mode: bool,
+    /// Debug WebSocket server port (used with dev_mode)
+    #[serde(default = "default_debug_port")]
+    pub debug_port: u16,
     /// Log level
     #[serde(default = "default_log_level")]
     pub log_level: String,
@@ -52,6 +55,10 @@ pub struct RuntimeConfig {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_debug_port() -> u16 {
+    19878
 }
 
 fn default_max_iterations() -> u32 {
@@ -86,6 +93,7 @@ impl Default for RuntimeConfig {
             manifest_path: None,
             config_dir: None,
             dev_mode: false,
+            debug_port: default_debug_port(),
             log_level: default_log_level(),
             max_iterations: default_max_iterations(),
             iteration_timeout_ms: default_iteration_timeout_ms(),
@@ -111,6 +119,7 @@ impl RuntimeConfig {
             manifest_path: cli.manifest_path.clone(),
             config_dir: cli.config_dir.clone(),
             dev_mode: cli.dev_mode,
+            debug_port: cli.debug_port,
             log_level: cli.log_level.clone(),
             ..Default::default()
         }

@@ -48,6 +48,12 @@ pub struct Cli {
     #[arg(long, default_value = "false")]
     pub dev_mode: bool,
 
+    /// Debug WebSocket server port (used with --dev-mode).
+    /// Gateway assigns a unique port per agent to avoid conflicts.
+    /// Defaults to 19878 when not specified.
+    #[arg(long, default_value = "19878")]
+    pub debug_port: u16,
+
     /// Log level (trace, debug, info, warn, error)
     #[arg(long, default_value = "info", env = "ROLLBALL_LOG_LEVEL")]
     pub log_level: String,
@@ -151,14 +157,18 @@ impl Cli {
 }
 
 /// Attempt to connect to Gateway via the given socket path.
-/// Returns Some(client) on success, None on failure (graceful fallback to standalone mode).
-async fn connect_gateway_client(endpoint: &str, agent_id: &str, version: &str) -> Option<crate::grpc::client::GatewayGrpcClient> {
+/// Returns Some((client, config)) on success, None on failure (graceful fallback to standalone mode).
+async fn connect_gateway_client(
+    endpoint: &str,
+    agent_id: &str,
+    version: &str,
+) -> Option<(crate::grpc::client::GatewayGrpcClient, crate::grpc::client::AgentHelloConfig)> {
     match crate::grpc::client::GatewayGrpcClient::connect_and_register(
         endpoint, agent_id, version,
     ).await {
-        Ok(client) => {
+        Ok((client, config)) => {
             tracing::info!(endpoint = %endpoint, "Connected and registered with Gateway gRPC");
-            Some(client)
+            Some((client, config))
         }
         Err(e) => {
             tracing::warn!(endpoint = %endpoint, error = %e, "Failed to connect to Gateway gRPC");
@@ -186,10 +196,19 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
     );
 
     // Step 2: Connect to Gateway gRPC if socket path is provided
-    let mut grpc_client = if let Some(endpoint) = config.get_gateway_address() {
-        connect_gateway_client(endpoint, &loaded.manifest.agent_id, &loaded.manifest.version).await
-    } else {
-        None
+    //
+    // The AgentHelloResult now bundles LLM config, workspace context, and
+    // runtime overrides in a single atomic response — no separate push
+    // messages are needed during handshake.
+    let mut grpc_client: Option<crate::grpc::client::GatewayGrpcClient> = None;
+    let mut hello_config: Option<crate::grpc::client::AgentHelloConfig> = None;
+    if let Some(endpoint) = config.get_gateway_address() {
+        if let Some((client, cfg)) =
+            connect_gateway_client(endpoint, &loaded.manifest.agent_id, &loaded.manifest.version).await
+        {
+            grpc_client = Some(client);
+            hello_config = Some(cfg);
+        }
     };
     if grpc_client.is_some() {
         tracing::info!("Gateway gRPC client initialized");
@@ -221,60 +240,52 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
 
     // Step 3: Initialize LLM Provider
     //
-    // In Gateway mode: LLMConfigDelivery is MANDATORY.
-    //   The user's provider/key/model MUST come from Gateway IPC.
-    //   Manifest's suggested_provider/model is for REFERENCE only — never used at runtime.
-    //   This satisfies PRD GTW-05 and SEC-07 (no env-var key distribution).
+    // In Gateway mode: the bundled AgentHelloConfig contains LLM config,
+    //   workspace context, and runtime overrides — all delivered atomically
+    //   in the AgentHelloResult response.
     //
     // In Standalone mode: use manifest suggested_provider + env vars (development only).
     let mut gateway_model_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo> = None;
     let mut gateway_max_output_tokens_limit: u64 = 32_768;
-    let (provider, resolved_model, available_models) = if let Some(ref mut client) = grpc_client {
-        // Gateway mode: LLMConfigDelivery is required
-        match client.recv_llm_config().await {
-            Ok(llm_config) => {
-                tracing::info!(
-                    provider = %llm_config.provider,
-                    model = ?llm_config.model,
-                    source = "Gateway IPC",
-                    "LLM config received from Gateway"
-                );
-                // Save model capabilities for later use in context and loop
-                gateway_model_capabilities = llm_config.model_capabilities;
-                gateway_max_output_tokens_limit = llm_config.max_output_tokens_limit;
-                let p = crate::providers::router::create_provider(
-                    &llm_config.provider,
-                    &llm_config.protocol_type,
-                    llm_config.api_key.as_deref(),
-                    llm_config.base_url.as_deref(),
-                );
-                // Model resolution: prefer explicit model > first from user-selected models list
-                // If neither is available, refuse service — Runtime cannot guess.
-                let resolved = llm_config.model
-                    .or_else(|| llm_config.models.first().cloned())
-                    .unwrap_or_else(|| {
-                        let provider = &llm_config.provider;
-                        tracing::error!(
-                            provider = %provider,
-                            "No model available from Gateway. \
-                             Please configure a provider and select a model in Settings."
-                        );
-                        format!("NO_MODEL_FOR_{}", provider.to_uppercase())
-                    });
-                let models = llm_config.models.clone();
-                (p, resolved, models)
-            }
-            Err(e) => {
-                // CRITICAL: In Gateway mode, no LLM config means the agent cannot function.
-                tracing::error!(
-                    error = %e,
-                    "CRITICAL: Failed to receive LLM config from Gateway. \
-                     Agent cannot process messages until API key is configured."
-                );
-                // Return a provider that returns clear error messages on any request
-                let p = crate::providers::router::create_noop_provider();
-                (p, "no-model".to_string(), vec![])
-            }
+    let (provider, resolved_model, available_models) = if let Some(ref cfg) = hello_config {
+        // Gateway mode: config was bundled in AgentHelloResult
+        if let Some(ref provider_name) = cfg.provider {
+            tracing::info!(
+                provider = %provider_name,
+                model = ?cfg.model,
+                source = "AgentHelloResult",
+                "LLM config received from Gateway"
+            );
+            gateway_model_capabilities = cfg.model_capabilities.clone();
+            gateway_max_output_tokens_limit = cfg.max_output_tokens_limit;
+            let p = crate::providers::router::create_provider(
+                provider_name,
+                &cfg.protocol_type,
+                cfg.api_key.as_deref(),
+                cfg.base_url.as_deref(),
+            );
+            // Model resolution: prefer explicit model > first from user-selected models list
+            let resolved = cfg.model
+                .clone()
+                .or_else(|| cfg.models.first().cloned())
+                .unwrap_or_else(|| {
+                    tracing::error!(
+                        provider = %provider_name,
+                        "No model available from Gateway. \
+                         Please configure a provider and select a model in Settings."
+                    );
+                    format!("NO_MODEL_FOR_{}", provider_name.to_uppercase())
+                });
+            let models = cfg.models.clone();
+            (p, resolved, models)
+        } else {
+            // No LLM config in AgentHelloResult — fall back to noop
+            tracing::error!(
+                "CRITICAL: No LLM config delivered by Gateway in AgentHelloResult. \
+                 Agent cannot process messages until API key is configured."
+            );
+            let p = crate::providers::router::create_noop_provider();
+            (p, "no-model".to_string(), vec![])
         }
     } else {
         // Standalone mode: use manifest suggested_provider + env vars
@@ -460,8 +471,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
 
         // Start debug protocol server if running in dev mode (--dev-mode flag)
         if config.dev_mode {
-            tracing::info!("DevMode enabled, starting debug protocol server on ws://127.0.0.1:19878");
-            let debug_server = crate::debug::server::DebugProtocolServer::new();
+            tracing::info!(
+                port = config.debug_port,
+                "DevMode enabled, starting debug protocol server on ws://127.0.0.1:{}",
+                config.debug_port
+            );
+            let debug_server = crate::debug::server::DebugProtocolServer::new(config.debug_port);
             let (debug_event_tx, debug_ctrl) = debug_server.start().await;
             if let Some(c) = Arc::get_mut(&mut core) {
                 c.set_debug_mode(debug_ctrl, debug_event_tx);
@@ -491,6 +506,49 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             session_manager.create_session().await?
         };
         tracing::info!(initial_session_id = %initial_session_id, "Initial session created");
+
+        // Step 9.5: Apply workspace context and runtime overrides from AgentHelloResult
+        //
+        // In the atomic handshake design (Plan B), Gateway bundles all startup
+        // configuration into AgentHelloResult — no separate push messages are
+        // sent during handshake. We must consume these fields here so that:
+        //   1. Workspace context is broadcast to the initial session.
+        //   2. Runtime overrides are cached on SessionManager (so sessions
+        //      created *after* this point also inherit them) and broadcast
+        //      to the initial session.
+        // Without this, the agent would start with no workspace info and
+        // runtime overrides would fall back to defaults until a hot-reload
+        // push arrives (which may never happen if settings don't change).
+        if let Some(ref cfg) = hello_config {
+            if let Some(ref ctx) = cfg.workspace_context_text {
+                tracing::info!(
+                    workspace_id = ?cfg.current_workspace_id,
+                    workspace_path = ?cfg.current_workspace_path,
+                    "Applying workspace context from AgentHelloResult"
+                );
+                session_manager.broadcast(SessionMessage::UpdateWorkspaceContext {
+                    context_text: ctx.clone(),
+                });
+            }
+            if cfg.runtime_max_output_tokens.is_some()
+                || cfg.runtime_max_iterations.is_some()
+                || cfg.runtime_temperature.is_some()
+                || cfg.runtime_system_prompt_override.is_some()
+            {
+                tracing::info!(
+                    max_output_tokens = ?cfg.runtime_max_output_tokens,
+                    max_iterations = ?cfg.runtime_max_iterations,
+                    temperature = ?cfg.runtime_temperature,
+                    "Applying runtime config overrides from AgentHelloResult"
+                );
+                session_manager.apply_runtime_config_override(
+                    cfg.runtime_max_output_tokens,
+                    cfg.runtime_max_iterations,
+                    cfg.runtime_temperature,
+                    cfg.runtime_system_prompt_override.clone(),
+                );
+            }
+        }
 
         // Spawn chunk relay task: consumes ChunkEvent from mpsc channel and
         // forwards each event to Gateway via the shared main gRPC connection.

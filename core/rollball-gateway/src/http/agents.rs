@@ -51,6 +51,8 @@ pub struct AgentListResponse {
     pub connected: bool,
     /// Whether the agent is running in developer mode (Debug Protocol enabled)
     pub dev_mode: bool,
+    /// Debug WebSocket port (set when dev_mode is true and agent is running)
+    pub debug_port: Option<u16>,
 }
 
 /// Agent detail response
@@ -69,6 +71,8 @@ pub struct AgentDetailResponse {
     pub connected: bool,
     pub pid: Option<u32>,
     pub started_at: Option<String>,
+    /// Debug WebSocket port (set when dev_mode is true and agent is running)
+    pub debug_port: Option<u16>,
 }
 
 /// Install request (kept for reference; actual install uses Multipart)
@@ -146,6 +150,7 @@ pub async fn list_agents(
                 running: actually_running,
                 connected,
                 dev_mode: running_info.map(|r| r.dev_mode).unwrap_or(false),
+                debug_port: running_info.and_then(|r| r.debug_port),
             }
         })
         .collect();
@@ -181,6 +186,7 @@ pub async fn get_agent_detail(
         connected,
         pid: running_info.map(|r| r.pid),
         started_at: running_info.map(|r| r.started_at.to_rfc3339()),
+        debug_port: running_info.and_then(|r| r.debug_port),
     };
     Ok(Json(resp))
 }
@@ -783,6 +789,7 @@ mod tests {
             running: false,
             connected: false,
             dev_mode: false,
+            debug_port: None,
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("com.example.weather"));

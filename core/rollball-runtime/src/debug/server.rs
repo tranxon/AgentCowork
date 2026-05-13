@@ -96,16 +96,22 @@ pub struct DebugProtocolServer {
     event_tx: mpsc::UnboundedSender<DebugEvent>,
     /// Event receiver (used by server task to forward to WebSocket)
     event_rx: mpsc::UnboundedReceiver<DebugEvent>,
+    /// Port to bind the WebSocket server to
+    port: u16,
 }
 
 impl DebugProtocolServer {
     /// Create a new DebugProtocolServer.
-    pub fn new() -> Self {
+    ///
+    /// `port` is the TCP port to bind the WebSocket server to.
+    /// Each agent instance should use a unique port to avoid conflicts.
+    pub fn new(port: u16) -> Self {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         Self {
             controller: Arc::new(Mutex::new(DebugController::new())),
             event_tx,
             event_rx,
+            port,
         }
     }
 
@@ -137,10 +143,30 @@ impl DebugProtocolServer {
 
     /// Main server loop: listen, accept, handle, repeat.
     async fn run(mut self) {
-        let addr = SocketAddr::from(([127, 0, 0, 1], 19878));
+        let addr = SocketAddr::from(([127, 0, 0, 1], self.port));
 
         let listener = match TcpListener::bind(addr).await {
             Ok(l) => l,
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tracing::warn!(
+                    error = %e,
+                    addr = %addr,
+                    "DebugProtocolServer: port in use, attempting to free it by killing old process"
+                );
+                kill_process_on_port(addr.port()).await;
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                match TcpListener::bind(addr).await {
+                    Ok(l) => l,
+                    Err(e2) => {
+                        tracing::error!(
+                            error = %e2,
+                            addr = %addr,
+                            "DebugProtocolServer: failed to bind after killing old process, debug protocol unavailable"
+                        );
+                        return;
+                    }
+                }
+            }
             Err(e) => {
                 tracing::error!(
                     error = %e,
@@ -680,7 +706,7 @@ impl DebugProtocolServer {
 
 impl Default for DebugProtocolServer {
     fn default() -> Self {
-        Self::new()
+        Self::new(19878)
     }
 }
 
@@ -778,5 +804,93 @@ impl MethodError {
 
     fn invalid_params(message: impl Into<String>) -> Self {
         Self::new(protocol::INVALID_PARAMS, message)
+    }
+}
+
+// ── Port Cleanup ──────────────────────────────────────────────────────
+
+/// Kill the process holding a TCP port, so the debug server can rebind.
+///
+/// This handles the case where a previous runtime process was orphaned
+/// (e.g. Gateway was killed without stopping the child) and still holds
+/// the debug WebSocket port. Without this, the new runtime would fail to
+/// bind and debug mode would be silently unavailable.
+///
+/// Platform behavior:
+/// - **Windows**: uses `netstat -ano` to find the PID, then `taskkill /F`.
+/// - **Unix**: uses `lsof -ti` (fallback: `fuser -k`) to find and kill.
+async fn kill_process_on_port(port: u16) {
+    tracing::info!(port, "Attempting to kill process holding debug port");
+
+    #[cfg(windows)]
+    {
+        let port_filter = format!(":{}", port);
+        match tokio::process::Command::new("cmd")
+            .args(["/C", "netstat", "-ano"])
+            .output()
+            .await
+        {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                // Find line containing the port, extract last column (PID)
+                for line in stdout.lines() {
+                    if line.contains(&port_filter) && line.contains("LISTENING") {
+                        let parts: Vec<&str> = line.split_whitespace().collect();
+                        if let Some(pid_str) = parts.last() {
+                            if let Ok(pid) = pid_str.parse::<u32>() {
+                                tracing::info!(pid, "Killing process holding debug port");
+                                let _ = tokio::process::Command::new("taskkill")
+                                    .args(["/F", "/PID", &pid.to_string()])
+                                    .output()
+                                    .await;
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "Failed to run netstat for port cleanup");
+            }
+        }
+    }
+
+    #[cfg(not(windows))]
+    {
+        // Try lsof first (macOS + most Linux)
+        let port_str = port.to_string();
+        match tokio::process::Command::new("lsof")
+            .args(["-ti", &format!(":{}", port_str)])
+            .output()
+            .await
+        {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let trimmed = line.trim();
+                    if let Ok(pid) = trimmed.parse::<u32>() {
+                        tracing::info!(pid, "Killing process holding debug port (lsof)");
+                        let _ = tokio::process::Command::new("kill")
+                            .args(["-9", &pid.to_string()])
+                            .output()
+                            .await;
+                    }
+                }
+            }
+            _ => {
+                // Fallback: try fuser
+                match tokio::process::Command::new("fuser")
+                    .args(["-k", "-TERM", &format!("{}/tcp", port_str)])
+                    .output()
+                    .await
+                {
+                    Ok(output) if output.status.success() => {
+                        tracing::info!(port, "Killed process holding debug port (fuser)");
+                    }
+                    _ => {
+                        tracing::warn!(port, "Could not identify process holding debug port");
+                    }
+                }
+            }
+        }
     }
 }
