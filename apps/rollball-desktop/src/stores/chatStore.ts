@@ -570,6 +570,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (agentState.messages.length <= count) return {}; // nothing to trim
       return updateAgentState(state, agentId, {
         messages: agentState.messages.slice(0, count),
+        // Reset pagination state after rewind so stale cursors don't
+        // trigger unnecessary loadMoreMessages requests.
+        hasMoreMessages: false,
+        messageCursor: null,
       });
     });
   },
@@ -831,7 +835,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const agentState = getAgentState(get(), agentId);
     if (isLoadingMore || !agentState.hasMoreMessages || !agentState.messageCursor) return;
     set({ isLoadingMore: true });
-    await get().loadSessionMessages(agentId, sessionId, agentState.messageCursor, 50, "backward");
+    try {
+      await get().loadSessionMessages(agentId, sessionId, agentState.messageCursor, 50, "backward");
+    } finally {
+      // Safety net: reset isLoadingMore even if loadSessionMessages
+      // returns early due to streaming state or stale sequence.
+      set({ isLoadingMore: false });
+    }
   },
 }));
 

@@ -17,6 +17,7 @@ use rollball_core::providers::traits::Provider;
 use rollball_core::tools::traits::Tool;
 use rollball_grafeo::grafeo::GrafeoStore;
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
 use crate::agent::loop_::ChunkEvent;
 use crate::config::RuntimeConfig;
@@ -63,6 +64,22 @@ pub struct AgentCore {
     /// Provides execution control (pause/step/resume), breakpoints, and snapshots.
     /// None in production mode.
     pub(crate) debug_ctrl: Option<Arc<tokio::sync::Mutex<DebugController>>>,
+    /// Debug rewind notification handle (shared across all sessions, only in DevMode).
+    ///
+    /// When the debug WebSocket sets a rewind target, the RPC handler calls
+    /// `rewind_notify.notify_one()`.  Both `await_debug_resume` (paused path)
+    /// and `SessionTask` (idle path) await this notify via `tokio::select!`
+    /// to consume rewinds without polling.
+    /// None in production mode.
+    pub(crate) debug_rewind_notify: Option<Arc<Notify>>,
+    /// Debug resume notification handle (shared across all sessions, only in DevMode).
+    ///
+    /// When the user presses resume but the agent loop has already exited
+    /// (e.g. after rewind was issued post-completion), the RPC handler calls
+    /// `resume_notify.notify_one()`.  The SessionTask uses this to wake up
+    /// from its idle wait and re-run the agent loop with the saved message.
+    /// None in production mode.
+    pub(crate) debug_resume_notify: Option<Arc<Notify>>,
     /// Debug event sender (clone for each session to push events to WebSocket).
     /// None in production mode.
     pub(crate) debug_event_tx: Option<DebugEventSender>,
@@ -93,6 +110,8 @@ impl AgentCore {
             on_chunk,
             memory_store: None,
             debug_ctrl: None,
+            debug_rewind_notify: None,
+            debug_resume_notify: None,
             debug_event_tx: None,
             user_display_name: None,
         }
@@ -289,6 +308,8 @@ impl AgentCore {
             on_chunk,
             memory_store: self.memory_store.clone(),
             debug_ctrl: self.debug_ctrl.clone(),
+            debug_rewind_notify: self.debug_rewind_notify.clone(),
+            debug_resume_notify: self.debug_resume_notify.clone(),
             debug_event_tx: self.debug_event_tx.clone(),
             user_display_name: self.user_display_name.clone(),
         }
@@ -306,12 +327,16 @@ impl AgentCore {
         self.gateway_model_capabilities.values().next()
     }
 
-    /// Set the debug controller and event sender (DevMode only).
+    /// Set the debug controller, notify handles, and event sender (DevMode only).
     pub fn set_debug_mode(
         &mut self,
         ctrl: Arc<tokio::sync::Mutex<DebugController>>,
         event_tx: DebugEventSender,
+        rewind_notify: Arc<Notify>,
+        resume_notify: Arc<Notify>,
     ) {
+        self.debug_rewind_notify = Some(rewind_notify);
+        self.debug_resume_notify = Some(resume_notify);
         self.debug_ctrl = Some(ctrl);
         self.debug_event_tx = Some(event_tx);
     }
@@ -319,6 +344,16 @@ impl AgentCore {
     /// Access the debug controller, if in DevMode.
     pub fn debug_ctrl(&self) -> Option<&Arc<tokio::sync::Mutex<DebugController>>> {
         self.debug_ctrl.as_ref()
+    }
+
+    /// Access the debug rewind notify handle, if in DevMode.
+    pub fn debug_rewind_notify(&self) -> Option<&Arc<Notify>> {
+        self.debug_rewind_notify.as_ref()
+    }
+
+    /// Access the debug resume notify handle, if in DevMode.
+    pub fn debug_resume_notify(&self) -> Option<&Arc<Notify>> {
+        self.debug_resume_notify.as_ref()
     }
 
     /// Access the debug event sender, if in DevMode.

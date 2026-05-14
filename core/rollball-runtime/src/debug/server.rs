@@ -388,6 +388,11 @@ impl DebugProtocolServer {
                     new_state: DebugState::Running,
                     iteration,
                 });
+                // Wake up the SessionTask so it can re-run the agent loop
+                // if it has already exited (e.g. after rewind was issued
+                // post-completion).  This is a no-op if the agent loop is
+                // already polling in await_debug_resume.
+                ctrl.resume_notify.notify_one();
                 tracing::info!("Debug: resume — agent loop will continue");
                 Ok(JsonRpcResponse::success(
                     id.clone(),
@@ -606,13 +611,29 @@ impl DebugProtocolServer {
                     .map_err(|e| MethodError::invalid_params(e.to_string()))?;
                 let target = rw_params.to_iteration;
 
+                // When rewind is invoked while Stopped, transition back to
+                // Paused.  Rewind is an explicit user action signalling
+                // intent to continue working from a previous iteration.
+                // Without this transition, await_debug_resume() returns
+                // false immediately and agent_loop.run() short-circuits
+                // with "Agent stopped by debugger", making rewind
+                // effectively useless after Stop.
+                let was_stopped = ctrl.state == DebugState::Stopped;
+                if was_stopped {
+                    ctrl.state = DebugState::Paused;
+                }
+
                 // Reset iteration counter immediately so that getState
                 // and any other consumers see the correct value without
                 // waiting for the SessionTask to consume rewind_target.
                 ctrl.iteration = target;
 
-                // Store rewind target for SessionTask to consume
+                // Store rewind target for consumer to apply
                 ctrl.rewind_target = Some(target);
+                // Notify consumers (await_debug_resume + SessionTask)
+                // that a rewind is pending, eliminating the need for
+                // polling.
+                ctrl.notify_rewind();
                 // Clear any pending patches — rewind supersedes patches
                 ctrl.pending_patches = None;
                 // Truncate snapshots after the target iteration
@@ -629,8 +650,19 @@ impl DebugProtocolServer {
                 tracing::info!(
                     target_iteration = target,
                     message_count,
+                    was_stopped,
                     "Debug: rewind — history will be truncated, patches cleared"
                 );
+
+                // If state transitioned from Stopped → Paused, push
+                // an ExecutionStateChanged event so the frontend's debug
+                // panel updates to show "Paused" instead of "Stopped".
+                if was_stopped {
+                    let _ = self.event_tx.send(DebugEvent::ExecutionStateChanged {
+                        new_state: DebugState::Paused,
+                        iteration: target,
+                    });
+                }
 
                 let result = serde_json::to_value(protocol::RewindResult {
                     rewound_to_iteration: target,

@@ -8,6 +8,7 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
 use crate::agent::agent_core::AgentCore;
 use crate::agent::context::ContextBuilder;
@@ -96,6 +97,19 @@ pub(crate) struct SessionTask {
     /// Used to consume rewind_target / pending_patches / re_execute_pending
     /// before each agent_loop.run() invocation.
     debug_ctrl: Option<Arc<tokio::sync::Mutex<DebugController>>>,
+    /// Debug rewind notification handle (shared, only in DevMode).
+    ///
+    /// The SessionTask's main loop uses `tokio::select!` to await
+    /// this notify instead of polling, making rewind an event-driven
+    /// operation rather than a polling-based side channel.
+    rewind_notify: Option<Arc<Notify>>,
+    /// Debug resume notification handle (shared, only in DevMode).
+    ///
+    /// When the user presses resume after the agent loop has exited
+    /// (e.g. after rewind was issued post-completion), the resume
+    /// handler calls `notify_one()` so the SessionTask can re-run
+    /// the agent loop with the saved user message.
+    resume_notify: Option<Arc<Notify>>,
 }
 
 impl SessionTask {
@@ -122,10 +136,12 @@ impl SessionTask {
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
-        // Extract debug_ctrl from the original core BEFORE clone_for_session —
-        // both the AgentLoop (via clone_for_session) and SessionTask hold an
-        // Arc to the same DebugController.
+        // Extract debug_ctrl, rewind_notify, and resume_notify from the original
+        // core BEFORE clone_for_session — both the AgentLoop (via clone_for_session)
+        // and SessionTask hold an Arc to the same DebugController and Notify handles.
         let debug_ctrl = core.debug_ctrl().cloned();
+        let rewind_notify = core.debug_rewind_notify().cloned();
+        let resume_notify = core.debug_resume_notify().cloned();
         let core_for_session = core.clone_for_session(chunk_tx.clone());
         let (agent_loop, agent_inbound_tx) =
             AgentLoop::from_core_and_session(core_for_session, session);
@@ -141,6 +157,8 @@ impl SessionTask {
             identity_context,
             override_model,
             debug_ctrl,
+            rewind_notify,
+            resume_notify,
         };
         (task, agent_inbound_tx)
     }
@@ -151,6 +169,8 @@ impl SessionTask {
             mut agent_loop,
             agent_inbound_tx,
             debug_ctrl,
+            rewind_notify,
+            resume_notify,
             session_id,
             chunk_tx,
             mut inbound_rx,
@@ -172,19 +192,116 @@ impl SessionTask {
             context_builder = context_builder.with_override_model(model.clone());
         }
 
-        loop {
-            // Use a 500ms timeout so that debug rewind operations can be
-            // consumed even when the SessionTask is idle (no new ChatMessage).
-            // Without this, rewind_target set via debugger.rewind would sit
-            // in the controller forever after agent_loop.run() finishes.
-            let msg = tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                inbound_rx.recv(),
-            )
-            .await;
+        // Saved user message for debug resume re-execution.
+        // When the user presses resume after the agent loop has exited
+        // (e.g. after rewind was issued post-completion), SessionTask
+        // replays the agent loop with this saved message.
+        let mut last_user_message: Option<(String, String)> = None;
 
+        loop {
+            // Use tokio::select! to await inbound messages, rewind
+            // notifications, and resume notifications.
+            //
+            // When DevMode is disabled (rewind_notify is None),
+            // inbound_rx is awaited directly.
+            let msg = if let Some(ref rewind) = rewind_notify {
+                // resume_notify is always Some when rewind_notify is
+                // Some (both are set together in set_debug_mode).
+                let resume = resume_notify.as_ref().expect("resume_notify must be set when rewind_notify is set");
+                tokio::select! {
+                    msg = inbound_rx.recv() => msg,
+                    _ = rewind.notified() => {
+                        // Apply rewind inline, then continue to the next
+                        // iteration.  The same rewind may also be consumed
+                        // by apply_debug_rewind_and_patches before
+                        // agent_loop.run(), which is fine —
+                        // take_rewind_target() returns None on the second
+                        // call (idempotent).
+                        if let Some(ref ctrl) = debug_ctrl {
+                            apply_debug_rewind(
+                                ctrl,
+                                &session_id,
+                                &mut agent_loop,
+                            ).await;
+                        }
+                        continue;
+                    }
+                    _ = resume.notified() => {
+                        // Resume pressed while agent loop is not running.
+                        // Check if the debug state is Running and we have
+                        // a saved user message to replay.
+                        let should_replay = if let Some(ref ctrl) = debug_ctrl {
+                            let guard = ctrl.lock().await;
+                            guard.state == crate::debug::controller::DebugState::Running
+                        } else {
+                            false
+                        };
+                        if should_replay
+                            && let Some((ref content, ref msg_id)) = last_user_message
+                        {
+                                tracing::info!(
+                                    session_id = %session_id,
+                                    "Debug: resume notify — replaying agent loop"
+                                );
+                                // Apply rewind/patches before replay
+                                apply_debug_rewind_and_patches(
+                                    &debug_ctrl,
+                                    &session_id,
+                                    &mut agent_loop,
+                                    &mut context_builder,
+                                ).await;
+                                match agent_loop.replay(content, &mut context_builder).await {
+                                    Ok(response) => {
+                                        tracing::info!(
+                                            session_id = %session_id,
+                                            response_len = response.len(),
+                                            "SessionTask processed chat message (replay)"
+                                        );
+                                        if let Some(ref tx) = chunk_tx {
+                                            let event = ChunkEvent::Done {
+                                                content: response,
+                                                message_id: msg_id.clone(),
+                                            };
+                                            if tx.send(event).await.is_err() {
+                                                tracing::warn!(
+                                                    session_id = %session_id,
+                                                    "Failed to send Done chunk event (replay)"
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(
+                                            session_id = %session_id,
+                                            error = %e,
+                                            "SessionTask agent loop error (replay)"
+                                        );
+                                        if let Some(ref tx) = chunk_tx {
+                                            let event = ChunkEvent::Error {
+                                                message: format!("Error: {}", e),
+                                                message_id: msg_id.clone(),
+                                            };
+                                            if tx.send(event).await.is_err() {
+                                                tracing::warn!(
+                                                    session_id = %session_id,
+                                                    "Failed to send Error chunk event (replay)"
+                                                );
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        continue;
+                    }
+                }
+            } else {
+                inbound_rx.recv().await
+            };
+
+            // Note: msg is now Option<SessionMessage> directly (no
+            // Ok/Err wrapper from the old timeout pattern).
             match msg {
-                Ok(Some(SessionMessage::ChatMessage { content, message_id, skill_instructions })) => {
+                Some(SessionMessage::ChatMessage { content, message_id, skill_instructions }) => {
                     if content.trim().is_empty() {
                         tracing::warn!(
                             session_id = %session_id,
@@ -192,6 +309,11 @@ impl SessionTask {
                         );
                         continue;
                     }
+
+                    // Save the user message so it can be replayed if
+                    // resume is pressed after the agent loop exits
+                    // (e.g. after a rewind issued post-completion).
+                    last_user_message = Some((content.clone(), message_id.clone()));
 
                     // Apply skill instructions to ContextBuilder (system prompt injection).
                     // This replaces the old behavior of prepending skill text to the user message,
@@ -259,7 +381,7 @@ impl SessionTask {
                         }
                     }
                 }
-                Ok(Some(SessionMessage::ContinueExecution)) => {
+                Some(SessionMessage::ContinueExecution) => {
                     tracing::debug!(
                         session_id = %session_id,
                         "SessionTask: ContinueExecution received"
@@ -268,7 +390,7 @@ impl SessionTask {
                         reason: "user_requested".to_string(),
                     }).await;
                 }
-                Ok(Some(SessionMessage::ModelSwitch { model })) => {
+                Some(SessionMessage::ModelSwitch { model }) => {
                     tracing::info!(
                         session_id = %session_id,
                         model = %model,
@@ -276,7 +398,7 @@ impl SessionTask {
                     );
                     context_builder.set_override_model(model);
                 }
-                Ok(Some(SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model })) => {
+                Some(SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model }) => {
                     tracing::info!(
                         session_id = %session_id,
                         provider = %provider_name,
@@ -291,7 +413,7 @@ impl SessionTask {
                     );
                     agent_loop.update_provider(new_provider, model);
                 }
-                Ok(Some(SessionMessage::UpdateCapabilities { caps })) => {
+                Some(SessionMessage::UpdateCapabilities { caps }) => {
                     tracing::info!(
                         session_id = %session_id,
                         model = ?caps.name,
@@ -299,7 +421,7 @@ impl SessionTask {
                     );
                     agent_loop.update_gateway_model_capabilities(caps);
                 }
-                Ok(Some(SessionMessage::UpdateMaxOutputTokens { limit })) => {
+                Some(SessionMessage::UpdateMaxOutputTokens { limit }) => {
                     tracing::info!(
                         session_id = %session_id,
                         limit = %limit,
@@ -307,12 +429,12 @@ impl SessionTask {
                     );
                     agent_loop.update_max_output_tokens_limit(limit);
                 }
-                Ok(Some(SessionMessage::UpdateRuntimeConfig {
+                Some(SessionMessage::UpdateRuntimeConfig {
                     max_output_tokens,
                     max_iterations,
                     temperature,
                     system_prompt_override,
-                })) => {
+                }) => {
                     tracing::info!(
                         session_id = %session_id,
                         max_output_tokens = ?max_output_tokens,
@@ -327,14 +449,14 @@ impl SessionTask {
                         system_prompt_override,
                     );
                 }
-                Ok(Some(SessionMessage::UpdateWorkspaceContext { context_text })) => {
+                Some(SessionMessage::UpdateWorkspaceContext { context_text }) => {
                     tracing::info!(
                         session_id = %session_id,
                         "SessionTask: updating workspace context"
                     );
                     context_builder.set_workspace_context(context_text);
                 }
-                Ok(Some(SessionMessage::UpdateSessionTitle { title })) => {
+                Some(SessionMessage::UpdateSessionTitle { title }) => {
                     tracing::info!(
                         session_id = %session_id,
                         title = %title,
@@ -342,7 +464,7 @@ impl SessionTask {
                     );
                     let _ = agent_loop.update_session_title(&title);
                 }
-                Ok(Some(SessionMessage::Interrupt { reason })) => {
+                Some(SessionMessage::Interrupt { reason }) => {
                     tracing::info!(
                         session_id = %session_id,
                         reason = %reason,
@@ -350,30 +472,19 @@ impl SessionTask {
                     );
                     let _ = agent_inbound_tx.send(crate::agent::inbound::InboundMessage::Interrupt { reason }).await;
                 }
-                Ok(Some(SessionMessage::Stop)) => {
+                Some(SessionMessage::Stop) => {
                     tracing::info!(
                         session_id = %session_id,
                         "SessionTask: Stop received, shutting down"
                     );
                     break;
                 }
-                Ok(None) => {
+                None => {
                     tracing::info!(
                         session_id = %session_id,
                         "SessionTask: inbound channel closed, shutting down"
                     );
                     break;
-                }
-                Err(_elapsed) => {
-                    // Timeout — check for pending debug rewind operations.
-                    // This ensures rewinds are consumed even when the
-                    // SessionTask is idle (no new ChatMessage).
-                    check_and_apply_debug_rewind(
-                        &debug_ctrl,
-                        &session_id,
-                        &mut agent_loop,
-                    )
-                    .await;
                 }
             }
         }
@@ -389,29 +500,43 @@ impl SessionTask {
     }
 }
 
-/// Apply any pending debug controller operations (rewind, patches) before
-/// the next agent loop invocation.
+/// Apply any pending debug rewind.
 ///
-/// This is called before each `agent_loop.run()` when DevMode is active.
-/// It consumes `rewind_target` (truncates history) and applies pending
-/// `PatchSet` to the `ContextBuilder`. The `re_execute_pending` flag is
-/// consumed for logging purposes only — execution proceeds naturally
-/// when the agent loop sees `Running` state.
-async fn apply_debug_rewind_and_patches(
-    debug_ctrl: &Option<Arc<tokio::sync::Mutex<DebugController>>>,
+/// Consumes `rewind_target` from the `DebugController` and truncates
+/// the agent loop's history to the message count recorded in the
+/// matching conversation snapshot.  Resets the iteration counter to
+/// the target so execution resumes from the correct point.
+///
+/// This is the **single** entry point for rewind consumption.
+/// It is called from:
+/// - `SessionTask::run()` (via `tokio::select!` on rewind notify)
+/// - `apply_debug_rewind_and_patches` (before each `agent_loop.run()`)
+/// - `AgentLoop::await_debug_resume` (during pause polling)
+///
+/// The function is idempotent: calling it when no rewind is pending
+/// is a no-op.
+pub(crate) async fn apply_debug_rewind(
+    debug_ctrl: &Arc<tokio::sync::Mutex<DebugController>>,
     session_id: &str,
     agent_loop: &mut AgentLoop,
-    context_builder: &mut ContextBuilder,
 ) {
-    let Some(debug_ctrl) = debug_ctrl else {
-        return; // Production mode, no debug controller
-    };
-
     let mut ctrl = debug_ctrl.lock().await;
+    apply_debug_rewind_locked(&mut ctrl, session_id, &mut agent_loop.session.history);
+}
 
-    // ── Handle rewind ──
+/// Core rewind logic — assumes the caller already holds the controller lock.
+///
+/// Extracted into a lock-free helper so that `apply_debug_rewind_and_patches`
+/// can apply rewind + patches + re-execute within a single lock acquisition,
+/// eliminating the double-lock race window.
+pub(crate) fn apply_debug_rewind_locked(
+    ctrl: &mut DebugController,
+    session_id: &str,
+    history: &mut crate::agent::history::HistoryManager,
+) {
     if let Some(target_iter) = ctrl.take_rewind_target() {
-        // Find the message_count from the conversation snapshot at the target iteration
+        // Find the message_count from the conversation snapshot
+        // at the target iteration.
         let msg_count = ctrl
             .conversation_snapshots
             .iter()
@@ -419,7 +544,7 @@ async fn apply_debug_rewind_and_patches(
             .map(|s| s.message_count);
 
         if let Some(count) = msg_count {
-            agent_loop.session.history.truncate_to(count);
+            history.truncate_to(count);
             tracing::info!(
                 session_id = %session_id,
                 target_iteration = target_iter,
@@ -435,15 +560,40 @@ async fn apply_debug_rewind_and_patches(
         }
 
         // Reset iteration counter to the target so the agent loop
-        // resumes from the correct point
+        // resumes from the correct point.
         ctrl.iteration = target_iter;
-        tracing::info!(
+        tracing::debug!(
             session_id = %session_id,
             target_iteration = target_iter,
-            ctrl_iteration_now = ctrl.iteration,
-            "Debug: apply_debug_rewind_and_patches reset ctrl.iteration"
+            "Debug: rewind applied, iteration reset"
         );
     }
+}
+
+/// Apply any pending debug controller operations (patches, re-execute)
+/// before the next agent loop invocation.
+///
+/// This is called before each `agent_loop.run()` when DevMode is active.
+/// It applies pending `PatchSet` to the `ContextBuilder` and consumes the
+/// `re_execute_pending` flag.  Rewind is consumed separately via
+/// `apply_debug_rewind` (called both here and from the select! loop).
+async fn apply_debug_rewind_and_patches(
+    debug_ctrl: &Option<Arc<tokio::sync::Mutex<DebugController>>>,
+    session_id: &str,
+    agent_loop: &mut AgentLoop,
+    context_builder: &mut ContextBuilder,
+) {
+    let Some(debug_ctrl) = debug_ctrl else {
+        return; // Production mode, no debug controller
+    };
+
+    // Single lock acquisition: apply rewind, patches, and re-execute
+    // within the same critical section to avoid race windows between
+    // successive lock/unlock cycles.
+    let mut ctrl = debug_ctrl.lock().await;
+
+    // ── Handle rewind ──
+    apply_debug_rewind_locked(&mut ctrl, session_id, &mut agent_loop.session.history);
 
     // ── Apply pending patches (consume them) ──
     if let Some(patches) = ctrl.pending_patches.take() {
@@ -460,52 +610,5 @@ async fn apply_debug_rewind_and_patches(
             session_id = %session_id,
             "Debug: re-execute flag consumed, agent will process next message with updated context"
         );
-    }
-}
-
-/// Check for and apply pending debug rewind operations.
-///
-/// Called periodically (via timeout) from `SessionTask::run()` when the
-/// session is idle, so that rewind_target set by `debugger.rewind` is
-/// consumed even without a new ChatMessage arriving. This function only
-/// handles history truncation — patches and re-execute are handled by
-/// `apply_debug_rewind_and_patches` before the next `agent_loop.run()`.
-async fn check_and_apply_debug_rewind(
-    debug_ctrl: &Option<Arc<tokio::sync::Mutex<DebugController>>>,
-    session_id: &str,
-    agent_loop: &mut AgentLoop,
-) {
-    let Some(debug_ctrl) = debug_ctrl else {
-        return;
-    };
-
-    let mut ctrl = debug_ctrl.lock().await;
-
-    if let Some(target_iter) = ctrl.take_rewind_target() {
-        let msg_count = ctrl
-            .conversation_snapshots
-            .iter()
-            .find(|s| s.iteration == target_iter)
-            .map(|s| s.message_count);
-
-        if let Some(count) = msg_count {
-            agent_loop.session.history.truncate_to(count);
-            tracing::info!(
-                session_id = %session_id,
-                target_iteration = target_iter,
-                messages_trimmed_to = count,
-                "Debug rewind: history truncated (idle polling)"
-            );
-        } else {
-            tracing::warn!(
-                session_id = %session_id,
-                target_iteration = target_iter,
-                "Debug rewind: no snapshot found for target iteration, history unchanged"
-            );
-        }
-
-        // Reset iteration counter to the target so the frontend
-        // reflects the correct state after the rewind.
-        ctrl.iteration = target_iter;
     }
 }

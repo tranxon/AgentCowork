@@ -599,16 +599,35 @@ impl AgentLoop {
         Ok(())
     }
 
-    /// Run the agent loop for a single user message
+    /// Run the agent loop for a single user message.
+    ///
+    /// When `replay` is true, the user message is NOT appended to history
+    /// or persisted to JSONL (it is assumed to already be present, e.g.
+    /// after a debug rewind + resume).  Memory retrieval is still performed
+    /// in case the context builder has been modified by pending patches.
     pub async fn run(&mut self, user_message: &str, context_builder: &mut ContextBuilder) -> Result<String> {
-        // Add user message to history
-        self.session.history.append(ChatMessage::user(user_message));
+        self.run_inner(user_message, context_builder, false).await
+    }
 
-        // Persist user message to JSONL
-        if let Some(ref conversation) = self.session.conversation {
-            conversation.append_message("user", user_message, None);
-            // Set session title from first user message (first 100 chars)
-            conversation.set_title(user_message);
+    /// Re-run the agent loop after a debug resume (user message already in history).
+    ///
+    /// Same as [`run`] but skips the user-message append and JSONL persist steps.
+    pub async fn replay(&mut self, user_message: &str, context_builder: &mut ContextBuilder) -> Result<String> {
+        self.run_inner(user_message, context_builder, true).await
+    }
+
+    /// Core agent loop shared by [`run`] and [`replay`].
+    async fn run_inner(&mut self, user_message: &str, context_builder: &mut ContextBuilder, replay: bool) -> Result<String> {
+        if !replay {
+            // Add user message to history
+            self.session.history.append(ChatMessage::user(user_message));
+
+            // Persist user message to JSONL
+            if let Some(ref conversation) = self.session.conversation {
+                conversation.append_message("user", user_message, None);
+                // Set session title from first user message (first 100 chars)
+                conversation.set_title(user_message);
+            }
         }
 
         // Retrieve relevant long-term memories and inject into context
@@ -1345,7 +1364,11 @@ impl AgentLoop {
 
     /// Await debug resume: blocks if the debug controller is in Paused state.
     ///
-    /// Polls every 100ms and returns when Running/Stepping or no controller.
+    /// Uses `rewind_notify` via `tokio::select!` so that rewinds requested
+    /// via the Debug Panel are applied **immediately** (notification-driven)
+    /// rather than after up to 100ms of polling.  State changes (Running /
+    /// Stepping / Stopped) are still checked on each loop iteration.
+    ///
     /// Also checks the inbound channel for Chat Panel STOP signals
     /// (InboundMessage::Interrupt), which arrive via the Gateway gRPC push
     /// path rather than the debug WebSocket.
@@ -1354,6 +1377,10 @@ impl AgentLoop {
         let Some(ctrl) = self.core.debug_ctrl().cloned() else {
             return true; // Production mode, no debug controller
         };
+
+        // Clone the rewind notify handle so the Paused branch can use
+        // tokio::select! for instant rewind response.
+        let rewind_notify = self.core.debug_rewind_notify().cloned();
 
         loop {
             // Check for Chat Panel STOP (arrives via inbound channel).
@@ -1380,6 +1407,22 @@ impl AgentLoop {
                 return false;
             }
 
+            // Consume any pending rewind target during polling.
+            // Uses the unified apply_debug_rewind entry point so
+            // rewind logic lives in exactly one place.
+            {
+                let session_id = self
+                    .current_session_id()
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                crate::agent::session::session_task::apply_debug_rewind(
+                    &ctrl,
+                    &session_id,
+                    self,
+                )
+                .await;
+            }
+
             let state = {
                 let ctrl = ctrl.lock().await;
                 ctrl.state.clone()
@@ -1392,8 +1435,19 @@ impl AgentLoop {
                     return false;
                 }
                 crate::debug::controller::DebugState::Paused => {
-                    // Poll every 100ms until resumed
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    // Use tokio::select! with rewind_notify so that
+                    // rewinds are applied immediately (notification-driven)
+                    // instead of waiting up to 100ms for the next poll.
+                    // State changes are still picked up on the next
+                    // iteration after the select! resolves.
+                    if let Some(ref notify) = rewind_notify {
+                        tokio::select! {
+                            _ = notify.notified() => {},
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {},
+                        }
+                    } else {
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    }
                 }
             }
         }

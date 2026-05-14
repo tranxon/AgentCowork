@@ -511,8 +511,21 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             );
             let debug_server = crate::debug::server::DebugProtocolServer::new(config.debug_port);
             let (debug_event_tx, debug_ctrl) = debug_server.start().await;
+
+            // Clone the rewind/resume notify handles so SessionTask can await
+            // rewind/resume events via tokio::select! without holding the
+            // controller mutex.
+            let rewind_notify = {
+                let guard = debug_ctrl.lock().await;
+                guard.rewind_notify_handle()
+            };
+            let resume_notify = {
+                let guard = debug_ctrl.lock().await;
+                guard.resume_notify_handle()
+            };
+
             if let Some(c) = Arc::get_mut(&mut core) {
-                c.set_debug_mode(debug_ctrl, debug_event_tx);
+                c.set_debug_mode(debug_ctrl, debug_event_tx, rewind_notify, resume_notify);
             }
         }
 

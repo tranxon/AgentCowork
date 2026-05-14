@@ -5,8 +5,10 @@
 //! safe sharing between the WebSocket server and AgentLoop.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Notify;
 
 use super::protocol::{
     Breakpoint, ContextSections, DebugPhase, DebugUsage, SectionMeta,
@@ -154,6 +156,23 @@ pub struct DebugController {
     pub rewind_target: Option<u32>,
     /// Flag indicating re-execute was requested (set by `debugger.reExecute`, consumed by SessionTask)
     pub re_execute_pending: bool,
+    /// Notification signal for pending rewind.
+    ///
+    /// The RPC handler calls `notify_one()` after setting `rewind_target`.
+    /// The agent loop (via `await_debug_resume`) and the SessionTask
+    /// (via `tokio::select!`) await this notify to consume the rewind
+    /// without polling.  This makes rewind a first-class event in the
+    /// debug lifecycle instead of a polling-based side channel.
+    pub rewind_notify: Arc<Notify>,
+    /// Notification signal for resume requests.
+    ///
+    /// When the user presses resume but the agent loop has already
+    /// completed (e.g. after rewind was issued post-completion),
+    /// the SessionTask is blocked waiting for the next ChatMessage
+    /// and cannot detect the state change.  The resume handler calls
+    /// `notify_one()` so the SessionTask wakes up and re-runs the
+    /// agent loop with the saved user message.
+    pub resume_notify: Arc<Notify>,
     /// Breakpoint ID counter for generating unique IDs
     next_bp_id: u64,
 }
@@ -171,6 +190,8 @@ impl DebugController {
             pending_patches: None,
             rewind_target: None,
             re_execute_pending: false,
+            rewind_notify: Arc::new(Notify::const_new()),
+            resume_notify: Arc::new(Notify::const_new()),
             next_bp_id: 1,
         }
     }
@@ -270,6 +291,30 @@ impl DebugController {
     /// Returns the target iteration if set.
     pub fn take_rewind_target(&mut self) -> Option<u32> {
         self.rewind_target.take()
+    }
+
+    /// Notify consumers that a rewind is pending.
+    ///
+    /// Called by the RPC handler after setting `rewind_target`.
+    /// Wakes up any task waiting on `rewind_notify.notified()`.
+    pub fn notify_rewind(&self) {
+        self.rewind_notify.notify_one();
+    }
+
+    /// Clone the rewind notification handle.
+    ///
+    /// Used by `AgentCore` to pass the notify to `SessionTask`
+    /// without holding the controller mutex.
+    pub fn rewind_notify_handle(&self) -> Arc<Notify> {
+        self.rewind_notify.clone()
+    }
+
+    /// Clone the resume notification handle.
+    ///
+    /// Used by `AgentCore` to pass the notify to `SessionTask`
+    /// without holding the controller mutex.
+    pub fn resume_notify_handle(&self) -> Arc<Notify> {
+        self.resume_notify.clone()
     }
 
     /// Set the re-execute pending flag.
