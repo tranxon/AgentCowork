@@ -245,13 +245,15 @@ impl AgentLoop {
                     {
                         tracing::warn!(
                             error = %e.message,
+                            current_tokens = self.session.history.token_count(),
                             "Context overflow detected in stream, attempting emergency trim"
                         );
                         let removed = self.session.history.emergency_trim();
                         if removed > 0 {
                             tracing::info!(
-                                "Emergency trim removed {} messages, retrying",
-                                removed
+                                removed,
+                                remaining_tokens = self.session.history.token_count(),
+                                "Emergency trim completed, retrying with trimmed context"
                             );
                             let model_name = self.resolve_current_model(context_builder);
                             let chat_request = context_builder.unwrap().build(

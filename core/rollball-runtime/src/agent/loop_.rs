@@ -912,21 +912,23 @@ impl AgentLoop {
                 "Built chat request for LLM (after preemptive trim)"
             );
 
-            // ②.6 Request size warning / circuit-breaking
-            // Prevents sending requests that are too large for most models.
-            const REQUEST_SIZE_WARN: usize = 200_000;  // 200KB
-            const REQUEST_SIZE_HARD: usize = 280_000;   // 280KB
-            let request_size = serde_json::to_vec(&chat_request)
-                .map(|v| v.len())
-                .unwrap_or(0);
-            if request_size > REQUEST_SIZE_HARD {
+            // ②.6 Context usage check / circuit-breaking
+            // Dynamic token-based thresholds derived from model capabilities.
+            // Unlike the previous hardcoded 200KB/280KB byte thresholds, these
+            // scale correctly across models from 32K to 2M context windows.
+            let usable = self.context_trim_budget(&current_model);
+            let warn_threshold = (usable as f64 * 0.70) as u64;
+            let hard_threshold = (usable as f64 * 0.90) as u64;
+            let current_tokens = self.session.history.token_count();
+            if current_tokens > hard_threshold {
                 tracing::error!(
-                    request_size,
-                    hard_limit = REQUEST_SIZE_HARD,
-                    "Request body exceeds hard limit, emergency trimming"
+                    current_tokens,
+                    hard_threshold,
+                    usable_context = usable,
+                    "Context usage exceeds hard limit, emergency trimming"
                 );
                 let removed = self.session.history.emergency_trim();
-                tracing::info!(removed, "Emergency trimmed messages for oversized request");
+                tracing::info!(removed, "Emergency trimmed messages for oversized context");
                 if removed > 0 {
                     // Rebuild request with trimmed history.
                     chat_request = context_builder.build(
@@ -936,15 +938,16 @@ impl AgentLoop {
                         self.core.max_output_tokens_limit,
                     );
                     tracing::info!(
-                        request_size = serde_json::to_vec(&chat_request).map(|v| v.len()).unwrap_or(0),
-                        "Request size after emergency trim"
+                        current_tokens = self.session.history.token_count(),
+                        "Context usage after emergency trim"
                     );
                 }
-            } else if request_size > REQUEST_SIZE_WARN {
+            } else if current_tokens > warn_threshold {
                 tracing::warn!(
-                    request_size,
-                    warn_limit = REQUEST_SIZE_WARN,
-                    "Request body approaching size limit"
+                    current_tokens,
+                    warn_threshold,
+                    usable_context = usable,
+                    "Context usage approaching limit"
                 );
             }
 

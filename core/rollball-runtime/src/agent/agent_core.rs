@@ -367,12 +367,27 @@ impl AgentCore {
         self.debug_event_tx.as_ref()
     }
 
-    /// Get the context window budget for history trimming.
-    /// Uses Gateway model capabilities (context_window) if available for the given model,
-    /// otherwise falls back to config.history_max_tokens.
+    /// Get the usable context budget for history trimming.
+    /// Uses Gateway model capabilities if available: subtracts max_output_tokens
+    /// (capped at 20K) from context_window, consistent with compute_context_usage().
+    /// Falls back to config.history_max_tokens when no capabilities are present.
     pub fn context_trim_budget(&self, model_name: &str) -> u64 {
         self.get_model_capabilities(model_name)
-            .map(|caps| caps.context_window)
+            .map(|caps| {
+                // Reserve space for the model's output. Cap at 20K so that
+                // models with very large max_output_tokens don't waste context.
+                let output_reserve = caps.max_output_tokens.min(20_000);
+                let usable = caps.context_window.saturating_sub(output_reserve);
+                tracing::debug!(
+                    model = %model_name,
+                    context_window = caps.context_window,
+                    max_output_tokens = caps.max_output_tokens,
+                    output_reserve,
+                    usable_context = usable,
+                    "Computed usable context budget from model capabilities"
+                );
+                usable
+            })
             .unwrap_or_else(|| {
                 tracing::debug!(
                     model = %model_name,
