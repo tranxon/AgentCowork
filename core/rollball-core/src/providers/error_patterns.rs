@@ -91,6 +91,10 @@ pub fn is_auth_error(msg: &str) -> bool {
 
 /// Check if an error message indicates a non-retryable rate limit
 /// (business/quota exhaustion that retries cannot fix).
+///
+/// NOTE: Provider-specific business codes (e.g., MiniMax 1113/1311) should be
+/// handled by the provider layer, not here. This function only matches
+/// generic error message patterns.
 pub fn is_non_retryable_rate_limit(msg: &str) -> bool {
     let lower = msg.to_lowercase();
     const BUSINESS_PATTERNS: &[&str] = &[
@@ -104,10 +108,6 @@ pub fn is_non_retryable_rate_limit(msg: &str) -> bool {
         "model not available for your plan",
         "free usage limit",
     ];
-    // Known provider business codes: 1113 (MiniMax), 1311
-    if lower.contains("1113") || lower.contains("1311") {
-        return true;
-    }
     BUSINESS_PATTERNS.iter().any(|p| lower.contains(p))
 }
 
@@ -179,8 +179,11 @@ mod tests {
     #[test]
     fn test_non_retryable_rate_limit_detection() {
         assert!(is_non_retryable_rate_limit("insufficient_quota"));
-        assert!(is_non_retryable_rate_limit("Error code 1113"));
+        assert!(is_non_retryable_rate_limit("quota exhausted"));
+        assert!(is_non_retryable_rate_limit("out of credits"));
         assert!(!is_non_retryable_rate_limit("Too many requests"));
+        // Note: MiniMax business codes (1113/1311) are handled by provider layer
+        assert!(!is_non_retryable_rate_limit("Error code 1113"));
     }
 
     #[test]

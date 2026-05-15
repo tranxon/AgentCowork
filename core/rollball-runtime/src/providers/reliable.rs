@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_core::Stream;
+use rollball_core::providers::error_patterns::is_non_retryable_rate_limit;
 use rollball_core::providers::traits::{
     ChatMessage, ChatRequest, ChatResponse, Provider, ProviderError, ProviderErrorType, StreamEvent,
 };
@@ -100,17 +101,29 @@ impl ReliableProvider {
         }
     }
 
-    /// Check if an error indicates insufficient balance (not retryable)
+    /// Check if an error indicates insufficient balance (not retryable).
+    ///
+    /// Combines:
+    /// 1. Generic business/quota exhaustion patterns from error_patterns.rs
+    /// 2. MiniMax-specific business codes (1113, 1311)
     fn is_balance_exhausted(error: &rollball_core::RollballError) -> bool {
         match error {
             rollball_core::RollballError::Provider(provider_err) => {
-                // Common error codes for insufficient balance
-                provider_err.message.contains("1113")
-                    || provider_err.message.contains("1311")
-                    || provider_err.message.contains("insufficient_quota")
+                // 1. Check generic patterns (e.g. "insufficient quota", "out of credits")
+                is_non_retryable_rate_limit(&provider_err.message)
+                // 2. Check MiniMax-specific business codes
+                || Self::is_minimax_balance_code(&provider_err.message)
             }
             _ => false,
         }
+    }
+
+    /// Check for MiniMax-specific balance exhaustion error codes.
+    ///
+    /// These are provider-specific business codes that cannot be matched
+    /// by generic patterns alone.
+    fn is_minimax_balance_code(msg: &str) -> bool {
+        msg.contains("1113") || msg.contains("1311")
     }
 }
 
@@ -263,16 +276,44 @@ mod tests {
     }
 
     #[test]
-    fn test_is_balance_exhausted() {
+    fn test_is_balance_exhausted_generic() {
         let err = rollball_core::RollballError::Provider(ProviderError::unknown(
             "insufficient_quota".to_string(),
         ));
         assert!(ReliableProvider::is_balance_exhausted(&err));
 
+        let err = rollball_core::RollballError::Provider(ProviderError::unknown(
+            "out of credits".to_string(),
+        ));
+        assert!(ReliableProvider::is_balance_exhausted(&err));
+    }
+
+    #[test]
+    fn test_is_balance_exhausted_minimax_codes() {
+        let err = rollball_core::RollballError::Provider(ProviderError::unknown(
+            "Error code 1113: balance exhausted".to_string(),
+        ));
+        assert!(ReliableProvider::is_balance_exhausted(&err));
+
+        let err = rollball_core::RollballError::Provider(ProviderError::unknown(
+            "Code 1311: insufficient balance".to_string(),
+        ));
+        assert!(ReliableProvider::is_balance_exhausted(&err));
+    }
+
+    #[test]
+    fn test_is_balance_exhausted_non_matching() {
         let err = rollball_core::RollballError::Provider(ProviderError::from_status_code(
             500,
             "500 internal error".to_string(),
         ));
         assert!(!ReliableProvider::is_balance_exhausted(&err));
+    }
+
+    #[test]
+    fn test_is_minimax_balance_code() {
+        assert!(ReliableProvider::is_minimax_balance_code("error code 1113"));
+        assert!(ReliableProvider::is_minimax_balance_code("code 1311"));
+        assert!(!ReliableProvider::is_minimax_balance_code("generic error"));
     }
 }
