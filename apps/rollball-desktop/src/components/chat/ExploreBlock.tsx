@@ -51,20 +51,20 @@ export function ExploreBlock({ items, isStreaming }: ExploreBlockProps) {
       {/* Header: clickable toggle */}
       <button
         onClick={() => setExpanded(!expanded)}
-        className="flex w-fit items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-zinc-600 transition-colors hover:bg-zinc-100 dark:bg-zinc-800/30 dark:text-zinc-400 dark:hover:bg-zinc-800/50"
+        className="flex w-fit items-center gap-2 rounded-lg bg-zinc-50 px-3 py-2 text-zinc-500 transition-colors hover:bg-zinc-100 dark:bg-zinc-800/30 dark:text-zinc-400 dark:hover:bg-zinc-800/50"
         style={{ fontSize: EXPLORE_FONT_SIZE }}
       >
-        <Brain className="h-3.5 w-3.5 shrink-0 text-zinc-400" />
-        <span className="font-medium">
+        <Brain className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
+        <span className="font-medium text-zinc-600 dark:text-zinc-400">
           {isStreaming ? "Exploring..." : "Explored"}
         </span>
-        <span className="text-zinc-500 dark:text-zinc-500">
+        <span className="text-zinc-400 dark:text-zinc-500">
           ({stepCount} {stepCount === 1 ? "step" : "steps"})
         </span>
         {expanded ? (
-          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0" />
+          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-400" />
         ) : (
-          <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0" />
+          <ChevronRight className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-400" />
         )}
       </button>
 
@@ -190,14 +190,14 @@ function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessag
     <div className="min-w-0">
       <button
         onClick={() => setShowDetails(!showDetails)}
-        className="flex w-fit max-w-full items-center gap-2 rounded-md bg-zinc-100 px-2.5 py-1.5 transition-colors hover:bg-zinc-200 dark:bg-zinc-700/50 dark:hover:bg-zinc-700"
+        className="flex min-w-0 w-full items-center gap-2 rounded-md bg-zinc-100 px-2.5 py-1.5 transition-colors hover:bg-zinc-200 dark:bg-zinc-700/50 dark:hover:bg-zinc-700"
         style={{ fontSize: EXPLORE_FONT_SIZE }}
       >
         <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-        <span className="font-medium text-zinc-700 dark:text-zinc-300">{toolName}</span>
+        <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{toolName}</span>
         {summary && (
-          <span className="truncate text-zinc-500 dark:text-zinc-400" style={{ maxWidth: "200px" }}>
-            {summary.length > 50 ? summary.slice(0, 50) + "..." : summary}
+          <span className="min-w-0 flex-1 truncate text-zinc-500 dark:text-zinc-400">
+            {summary}
           </span>
         )}
         {/* Status indicator */}
