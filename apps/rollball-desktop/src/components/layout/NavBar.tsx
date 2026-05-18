@@ -99,7 +99,7 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
               ? ""
               : "text-zinc-500 hover:text-zinc-600 hover:bg-zinc-200/50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-700/50",
           )}
-          style={currentView === view ? { color: "var(--color-accent-green)" } : undefined}
+          style={currentView === view ? { color: "var(--color-accent)" } : undefined}
           title={label}
           aria-label={label}
           aria-current={currentView === view ? "page" : undefined}

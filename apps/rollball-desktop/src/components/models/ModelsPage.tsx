@@ -203,7 +203,7 @@ export function ModelsPage() {
                               Not configured
                             </span>
                           ) : (
-                            <span className="rounded bg-accent-green/10 px-1.5 py-0.5 text-xs text-accent-green">
+                            <span className="rounded px-1.5 py-0.5 text-xs border" style={{ backgroundColor: "color-mix(in srgb, var(--color-accent) 10%, transparent)", color: "var(--color-accent)", borderColor: "var(--color-accent)" }}>
                               Available
                             </span>
                           )}

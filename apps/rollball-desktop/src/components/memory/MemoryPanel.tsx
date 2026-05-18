@@ -1,9 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useMemoryStore } from "../../stores/memoryStore";
 import { useAgentStore } from "../../stores/agentStore";
 import { MemoryNodeList } from "./MemoryNodeList";
 import { MemoryNodeDetail } from "./MemoryNodeDetail";
-import { RefreshCw, Zap, AlertTriangle } from "lucide-react";
+import { RefreshCw, Zap, AlertTriangle, Info } from "lucide-react";
 import { cn } from "../../lib/utils";
 
 export function MemoryPanel() {
@@ -18,6 +18,7 @@ export function MemoryPanel() {
     pageSize,
     loading,
     error,
+    consolidateMessage,
     fetchNodes,
     fetchStats,
     consolidate,
@@ -42,6 +43,19 @@ export function MemoryPanel() {
     if (!selectedAgentId) return;
     void fetchNodes(selectedAgentId);
   }, [filters, page, pageSize, selectedAgentId, fetchNodes]);
+
+  // Auto-dismiss consolidate message after 6 seconds
+  const dismissTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!consolidateMessage) return;
+    if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    dismissTimer.current = setTimeout(() => {
+      useMemoryStore.setState({ consolidateMessage: null });
+    }, 6000);
+    return () => {
+      if (dismissTimer.current) clearTimeout(dismissTimer.current);
+    };
+  }, [consolidateMessage]);
 
   const handleConsolidate = () => {
     if (!selectedAgentId) return;
@@ -81,7 +95,7 @@ export function MemoryPanel() {
           <button
             onClick={handleRefresh}
             disabled={loading}
-            className="inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 text-[11px] font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            className="inline-flex items-center gap-1 rounded-md btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
             Refresh
@@ -154,6 +168,14 @@ export function MemoryPanel() {
         <div className="flex items-center gap-1.5 border-b border-red-200 bg-red-50 px-3 py-1.5 dark:border-red-900 dark:bg-red-950">
           <AlertTriangle className="h-3 w-3 text-red-600 dark:text-red-400" />
           <span className="text-[11px] text-red-700 dark:text-red-300">{error}</span>
+        </div>
+      )}
+
+      {/* Consolidate feedback banner */}
+      {consolidateMessage && (
+        <div className="flex items-center gap-1.5 border-b border-blue-200 bg-blue-50 px-3 py-1.5 dark:border-blue-900 dark:bg-blue-950">
+          <Info className="h-3 w-3 shrink-0 text-blue-600 dark:text-blue-400" />
+          <span className="text-[11px] text-blue-700 dark:text-blue-300">{consolidateMessage}</span>
         </div>
       )}
 

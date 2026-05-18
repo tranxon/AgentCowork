@@ -236,7 +236,7 @@ export function AgentSetupTab() {
         </button>
         <button
           onClick={() => resetProfile(selectedAgentId)}
-          className="flex-1 rounded-lg btn-outline px-3 py-1.5 text-xs font-medium"
+          className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium"
         >
           Reset to defaults
         </button>

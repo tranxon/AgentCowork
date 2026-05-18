@@ -619,7 +619,7 @@ export function ChatPanel() {
         {/* Active skill badge */}
         {activeSkill && (
           <div className="flex items-center gap-1 px-3 pt-2">
-            <span className="inline-flex items-center gap-1 rounded bg-accent-green/10 px-1.5 py-0.5 text-xs font-medium text-accent-green border border-accent-green/20">
+            <span className="inline-flex items-center gap-1 rounded bg-[var(--color-accent)]/10 px-1.5 py-0.5 text-xs font-medium border border-[var(--color-accent)]/20" style={{ color: "var(--color-accent)" }}>
               /{activeSkill.name}
               <button
                 type="button"
@@ -636,8 +636,8 @@ export function ChatPanel() {
         {queuedMessage && sending && (
           <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-0">
             <div className="flex items-center gap-1.5 min-w-0">
-              <span className="shrink-0 text-[10px] text-accent-green">⏳</span>
-              <span className="truncate text-xs text-accent-green">
+              <span className="shrink-0 text-[10px]" style={{ color: "var(--color-accent)" }}>⏳</span>
+              <span className="truncate text-xs" style={{ color: "var(--color-accent)" }}>
                 Queued: {queuedMessage}
               </span>
             </div>
@@ -708,7 +708,7 @@ export function ChatPanel() {
               <button
                 className={`rounded-lg p-1.5 transition-colors ${
                   sending
-                    ? "text-[var(--color-accent-green)] hover:bg-green-50 dark:hover:bg-green-900/20"
+                    ? "text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
                     : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-50"
                 }`}
                 onClick={sending ? handleStop : handleSend}
@@ -754,16 +754,16 @@ function ContextUsageTooltip({ usage }: { usage: ContextUsageInfo }) {
   const [hovered, setHovered] = useState(false);
 
   // Color coding for tooltip internals -- urgency-based
-  const urgencyColor = "var(--color-accent-green)";
+  const urgencyColor = "var(--color-accent)";
 
-  const barColor = "var(--color-accent-green)";
+  const barColor = "var(--color-accent)";
 
   return (
     <div className="group relative">
       {/* Icon button */}
       <button
         className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs transition-colors text-zinc-400 dark:text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700"
-        style={hovered ? { color: "var(--color-accent-green)" } : undefined}
+        style={hovered ? { color: "var(--color-accent)" } : undefined}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
         aria-label="Context usage"
@@ -976,7 +976,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             {liveUserName && (
               <span className="mt-[2px] text-xs text-zinc-400 dark:text-zinc-500">{liveUserName}</span>
             )}
-            <div className="mt-[6px] max-w-[85%] rounded-lg rounded-br-sm bg-accent-green/15 px-4 py-2.5 text-zinc-900 dark:text-zinc-200 select-text whitespace-pre-wrap break-words" style={fontSizeStyle}>
+            <div className="mt-[6px] max-w-[85%] rounded-lg rounded-br-sm bg-[var(--color-accent)]/15 px-4 py-2.5 text-zinc-900 dark:text-zinc-200 select-text whitespace-pre-wrap break-words" style={fontSizeStyle}>
               {message.content}
             </div>
           </div>
@@ -1699,7 +1699,7 @@ function ModelMenu({
         )}
       >
         <Cpu size={14} />
-        <span className="font-medium">
+        <span>
           {(() => {
             if (!currentModel || !currentModel.includes('/')) return currentModel ?? "Model";
             const parts = currentModel.split('/');
@@ -1740,7 +1740,7 @@ function ModelMenu({
                     : "text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50",
                 )}
               >
-                <span className={cn("font-medium")} style={isActive ? { color: "var(--color-accent-green)" } : undefined}>
+                <span className={cn("font-medium")} style={isActive ? { color: "var(--color-accent)" } : undefined}>
                   {/* Strip provider prefix from model name if format is provider/model and model is longer */}
                   {(() => {
                     if (!m.name.includes('/')) return m.name;

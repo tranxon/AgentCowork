@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --color-accent-green: #00C375;
+  --color-accent: #00C375;
   --color-text-secondary: hsl(240 3.7% 46.9%); /* ~zinc-500: secondary labels & icons */
 }
 
@@ -26,8 +26,8 @@
   --color-bg: white;
   --color-text: hsl(240 10% 3.9%);
 
-  /* Accent highlight (WeChat-style green) */
-  --color-accent-green: #00C375;
+  /* Accent highlight (user-configurable color) */
+  --color-accent: #00C375;
 
   /* Semantic colors */
   --color-agent-running: hsl(142 76% 36%);
@@ -406,12 +406,12 @@ input[type="range"] {
 /* Track */
 input[type="range"]::-webkit-slider-runnable-track {
   height: 4px;
-  background: linear-gradient(to right, var(--color-accent-green) var(--progress, 0%), #d4d4d8 var(--progress, 0%));
+  background: linear-gradient(to right, var(--color-accent) var(--progress, 0%), #d4d4d8 var(--progress, 0%));
   border-radius: 2px;
 }
 input[type="range"]::-moz-range-track {
   height: 4px;
-  background: linear-gradient(to right, var(--color-accent-green) var(--progress, 0%), #d4d4d8 var(--progress, 0%));
+  background: linear-gradient(to right, var(--color-accent) var(--progress, 0%), #d4d4d8 var(--progress, 0%));
   border-radius: 2px;
 }
 /* Thumb */
@@ -420,22 +420,22 @@ input[type="range"]::-webkit-slider-thumb {
   height: 14px;
   width: 14px;
   border-radius: 50%;
-  background: var(--color-accent-green);
+  background: var(--color-accent);
   margin-top: -5px;
 }
 input[type="range"]::-moz-range-thumb {
   height: 14px;
   width: 14px;
   border-radius: 50%;
-  background: var(--color-accent-green);
+  background: var(--color-accent);
   border: none;
 }
 /* Dark mode */
 .dark input[type="range"]::-webkit-slider-runnable-track {
-  background: linear-gradient(to right, var(--color-accent-green) var(--progress, 0%), #52525b var(--progress, 0%));
+  background: linear-gradient(to right, var(--color-accent) var(--progress, 0%), #52525b var(--progress, 0%));
 }
 .dark input[type="range"]::-moz-range-track {
-  background: linear-gradient(to right, var(--color-accent-green) var(--progress, 0%), #52525b var(--progress, 0%));
+  background: linear-gradient(to right, var(--color-accent) var(--progress, 0%), #52525b var(--progress, 0%));
 }
 
 /* ── Radio — fully custom, no browser dark-outline artifact ── */
@@ -452,8 +452,8 @@ input[type="radio"] {
   background-color: transparent;
 }
 input[type="radio"]:checked {
-  border-color: var(--color-accent-green);
-  background-color: var(--color-accent-green);
+  border-color: var(--color-accent);
+  background-color: var(--color-accent);
 }
 
 /* ── Button surface variants — replaces raw bg-zinc-200 / border-zinc-300 patterns ── */
@@ -511,26 +511,26 @@ input[type="radio"]:checked {
 }
 
 .btn-option-active {
-  border-color: var(--color-accent-green);
-  background: color-mix(in srgb, var(--color-accent-green) 10%, transparent);
-  color: var(--color-accent-green);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 10%, transparent);
+  color: var(--color-accent);
 }
 .dark .btn-option-active {
-  border-color: var(--color-accent-green);
-  background: color-mix(in srgb, var(--color-accent-green) 20%, transparent);
-  color: var(--color-accent-green);
+  border-color: var(--color-accent);
+  background: color-mix(in srgb, var(--color-accent) 20%, transparent);
+  color: var(--color-accent);
 }
 
 /* ── Solid accent-colored button — for confirm/primary actions in dialogs ── */
 .btn-accent {
-  background-color: var(--color-accent-green);
+  background-color: var(--color-accent);
   color: white;
 }
 .btn-accent:hover {
   filter: brightness(0.9);
 }
 .dark .btn-accent {
-  background-color: var(--color-accent-green);
+  background-color: var(--color-accent);
   color: white;
 }
 .dark .btn-accent:hover {

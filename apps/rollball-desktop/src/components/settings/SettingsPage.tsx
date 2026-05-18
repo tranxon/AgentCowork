@@ -37,7 +37,7 @@ export function SettingsPage({ initialTab = "profile" }: { initialTab?: Settings
             className={cn(
               "border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               activeTab === tab.id
-                ? "border-accent-green text-accent-green dark:border-accent-green dark:text-accent-green"
+                ? "border-[var(--color-accent)] text-[var(--color-accent)] dark:border-[var(--color-accent)] dark:text-[var(--color-accent)]"
                 : "border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300",
             )}
           >
@@ -135,7 +135,7 @@ function GatewayTab() {
             {urlDraft !== gatewayUrl && (
               <button
                 onClick={handleUrlSave}
-                className="rounded-md bg-accent-green px-3 py-2 text-xs font-medium text-white hover:opacity-90"
+                className="rounded-md px-3 py-2 text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
               >
                 Apply
               </button>
@@ -653,9 +653,9 @@ function ProvidersTab() {
                         <div className="flex items-center flex-nowrap gap-2">
                           <span className="shrink-0 text-xs font-medium">{providerName}</span>
                           {keyEntry.models?.length ? (
-                            <span className="shrink-0 text-xs text-accent-green">{keyEntry.models.join(", ")}</span>
+                            <span className="shrink-0 text-xs" style={{ color: "var(--color-accent)" }}>{keyEntry.models.join(", ")}</span>
                           ) : keyEntry.default_model ? (
-                            <span className="shrink-0 text-xs text-accent-green">{keyEntry.default_model}</span>
+                            <span className="shrink-0 text-xs" style={{ color: "var(--color-accent)" }}>{keyEntry.default_model}</span>
                           ) : (
                             <span className="shrink-0 text-xs text-zinc-400">—</span>
                           )}
@@ -677,7 +677,7 @@ function ProvidersTab() {
                           <span className="text-xs text-zinc-400">Key: {keyEntry.key_preview}</span>
                           <button
                             onClick={() => handleEdit(keyEntry.provider)}
-                            className="text-xs text-accent-green hover:text-accent-green/70"
+                            className="text-xs hover:opacity-70" style={{ color: "var(--color-accent)" }}
                           >
                             Edit
                           </button>
@@ -919,7 +919,7 @@ function ProvidersTab() {
                             type="checkbox"
                             checked={newModels.includes(m.id)}
                             onChange={() => toggleModel(m.id, newModels, setNewModels)}
-                            className="accent-accent-green"
+                            className="accent-[var(--color-accent)]"
                           />
                           <div className="flex flex-1 flex-col gap-0.5">
                             <span className="truncate">{m.name || m.id}</span>
@@ -1022,7 +1022,7 @@ function ProvidersTab() {
                           checked={displaySupportsToolCalling}
                           onChange={(e) => setNewSupportsToolCalling(e.target.checked)}
                           disabled={hasModelsDevData}
-                          className="accent-accent-green"
+                          className="accent-[var(--color-accent)]"
                         />
                         Supports Tool Calling
                       </label>
@@ -1157,7 +1157,7 @@ function ProvidersTab() {
                             type="checkbox"
                             checked={editModels.includes(m.id)}
                             onChange={() => toggleModel(m.id, editModels, setEditModels)}
-                            className="accent-accent-green"
+                            className="accent-[var(--color-accent)]"
                           />
                           <div className="flex flex-1 flex-col gap-0.5">
                             <span className="truncate">{m.name || m.id}</span>
@@ -1253,7 +1253,7 @@ function ProvidersTab() {
                           checked={displaySupportsToolCalling}
                           onChange={(e) => setEditSupportsToolCalling(e.target.checked)}
                           disabled={hasModelsDevData}
-                          className="accent-accent-green"
+                          className="accent-[var(--color-accent)]"
                         />
                         Supports Tool Calling
                       </label>
@@ -1322,7 +1322,7 @@ function AppearanceTab() {
                 value={t}
                 checked={theme === t}
                 onChange={() => setTheme(t)}
-                className="accent-accent-green"
+                className="accent-[var(--color-accent)]"
               />
               {t.charAt(0).toUpperCase() + t.slice(1)}
             </label>

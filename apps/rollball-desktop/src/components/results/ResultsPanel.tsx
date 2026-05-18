@@ -443,7 +443,7 @@ function TabButton({
       className={cn(
         "border-b-2 px-3 py-2 text-xs font-medium transition-colors",
         active
-          ? "border-accent-green text-accent-green dark:border-accent-green dark:text-accent-green"
+          ? "border-[var(--color-accent)] text-[var(--color-accent)] dark:border-[var(--color-accent)] dark:text-[var(--color-accent)]"
           : "border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300",
       )}
     >

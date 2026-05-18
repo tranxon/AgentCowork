@@ -43,7 +43,8 @@ function applyOpacity(opacity: number) {
 
 /** Apply accent color to CSS custom property on root */
 function applyAccentColor(color: string) {
-  document.documentElement.style.setProperty("--color-accent-green", color);
+  document.documentElement.style.setProperty("--color-accent", color);
+  document.documentElement.style.setProperty("--color-accent", color);
 }
 
 /** Read persisted theme from localStorage, fallback to "system" */

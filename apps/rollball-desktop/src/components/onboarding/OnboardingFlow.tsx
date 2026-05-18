@@ -327,9 +327,9 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
             {selectedModels.length > 0 && (
               <div className="mb-1 flex flex-wrap gap-1">
                 {selectedModels.map((m) => (
-                  <span key={m} className="inline-flex items-center gap-1 rounded bg-accent-green/10 px-2 py-0.5 text-xs text-accent-green">
+                  <span key={m} className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs border" style={{ backgroundColor: "color-mix(in srgb, var(--color-accent) 10%, transparent)", color: "var(--color-accent)", borderColor: "color-mix(in srgb, var(--color-accent) 20%, transparent)" }}>
                     {m}
-                    <button onClick={() => setSelectedModels(selectedModels.filter((x) => x !== m))} className="text-accent-green/60 hover:text-accent-green">×</button>
+                    <button onClick={() => setSelectedModels(selectedModels.filter((x) => x !== m))} className="hover:opacity-70" style={{ color: "var(--color-accent)" }}>×</button>
                   </span>
                 ))}
               </div>
@@ -361,7 +361,7 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
                         type="checkbox"
                         checked={selectedModels.includes(m.id)}
                         onChange={() => toggleModel(m.id)}
-                        className="accent-accent-green"
+                        className="accent-[var(--color-accent)]"
                       />
                       <span className="flex-1 truncate">{m.name || m.id}</span>
                     </label>

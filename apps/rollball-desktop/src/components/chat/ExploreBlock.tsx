@@ -202,7 +202,7 @@ function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessag
         )}
         {/* Status indicator */}
         {isSuccess ? (
-          <Check className="h-3 w-3 shrink-0 text-emerald-500" />
+          <Check className="h-3 w-3 shrink-0" style={{ color: "var(--color-accent)" }} />
         ) : isError ? (
           <X className="h-3 w-3 shrink-0 text-red-500" />
         ) : isPending ? (
@@ -222,7 +222,7 @@ function ToolCallItem({ call, result }: { call: ChatMessage; result?: ChatMessag
           </pre>
           {/* Result */}
           {result && (
-            <pre className={`overflow-x-auto rounded p-2 ${isError ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400" : "bg-emerald-50 text-zinc-600 dark:bg-emerald-900/10 dark:text-zinc-400"}`} style={{ fontSize: EXPLORE_DETAIL_FONT_SIZE }}>
+            <pre className={`overflow-x-auto rounded p-2 ${isError ? "bg-red-50 text-red-600 dark:bg-red-900/20 dark:text-red-400" : "bg-[var(--color-accent)]/10 text-zinc-600 dark:bg-[var(--color-accent)]/10 dark:text-zinc-400"}`} style={{ fontSize: EXPLORE_DETAIL_FONT_SIZE }}>
               {result.content.length > 500 ? result.content.slice(0, 500) + "\n..." : result.content}
             </pre>
           )}

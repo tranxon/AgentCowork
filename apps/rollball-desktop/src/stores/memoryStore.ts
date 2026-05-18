@@ -4,6 +4,7 @@ import type {
   MemoryNodesListResponse,
   MemoryStatsResponse,
   DeleteNodeResponse,
+  ConsolidateResponse,
 } from "../lib/types";
 import { getGatewayUrl } from "../lib/config";
 
@@ -25,6 +26,7 @@ interface MemoryStore {
 
   loading: boolean;
   error: string | null;
+  consolidateMessage: string | null;
 
   // Actions
   fetchNodes: (agentId: string) => Promise<void>;
@@ -47,6 +49,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
   pageSize: 20,
   loading: false,
   error: null,
+  consolidateMessage: null,
 
   fetchNodes: async (agentId) => {
     const { page, pageSize, filters } = get();
@@ -102,7 +105,7 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
   },
 
   consolidate: async (agentId, force = false) => {
-    set({ loading: true, error: null });
+    set({ loading: true, error: null, consolidateMessage: null });
     try {
       const res = await fetch(`${getGatewayUrl()}/api/agents/${agentId}/memory/consolidate`, {
         method: "POST",
@@ -110,9 +113,19 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
         body: JSON.stringify({ force }),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data: ConsolidateResponse = await res.json();
+      if (!data.started) {
+        set({ loading: false, consolidateMessage: data.message || "Consolidation could not start" });
+        return;
+      }
       // Refresh after consolidation
       await get().fetchNodes(agentId);
       await get().fetchStats(agentId);
+      const msg =
+        data.episodes_consolidated > 0 || data.knowledge_nodes_generated > 0
+          ? data.message
+          : "No pending memories to consolidate";
+      set({ consolidateMessage: msg });
     } catch (e) {
       set({ loading: false, error: e instanceof Error ? e.message : "Consolidation failed" });
     }
@@ -134,5 +147,6 @@ export const useMemoryStore = create<MemoryStore>((set, get) => ({
       selectedNodeId: null,
       page: 1,
       error: null,
+      consolidateMessage: null,
     }),
 }));
