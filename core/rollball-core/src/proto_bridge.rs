@@ -191,6 +191,9 @@ impl From<&protocol::SessionInfoDto> for proto::SessionInfoDto {
             message_count: s.message_count,
             title: s.title.clone().unwrap_or_default(),
             corrupted: s.corrupted,
+            status_json: s.status.as_ref()
+                .map(|st| serde_json::to_string(st).unwrap_or_default())
+                .unwrap_or_default(),
         }
     }
 }
@@ -203,6 +206,11 @@ impl From<proto::SessionInfoDto> for protocol::SessionInfoDto {
             message_count: s.message_count,
             title: if s.title.is_empty() { None } else { Some(s.title) },
             corrupted: s.corrupted,
+            status: if s.status_json.is_empty() {
+                None
+            } else {
+                serde_json::from_str(&s.status_json).ok()
+            },
         }
     }
 }
@@ -943,6 +951,7 @@ mod tests {
             message_count: 42,
             title: Some("Test Session".to_string()),
             corrupted: false,
+            status: None,
         };
 
         let proto_msg: proto::SessionInfoDto = (&original).into();
@@ -952,6 +961,40 @@ mod tests {
         assert_eq!(restored.created_at, original.created_at);
         assert_eq!(restored.message_count, original.message_count);
         assert_eq!(restored.title, original.title);
+    }
+
+    #[test]
+    fn test_session_info_dto_roundtrip_with_status() {
+        // ADR-014: Verify SessionStatusDto survives proto roundtrip
+        let original = protocol::SessionInfoDto {
+            session_id: "20260520_180000_d4e5f6".to_string(),
+            created_at: "2026-05-20T18:00:00Z".to_string(),
+            message_count: 7,
+            title: Some("Status Test".to_string()),
+            corrupted: false,
+            status: Some(protocol::SessionStatusDto::Streaming { message_id: None }),
+        };
+
+        let proto_msg: proto::SessionInfoDto = (&original).into();
+        let restored: protocol::SessionInfoDto = proto_msg.into();
+
+        assert_eq!(restored.session_id, original.session_id);
+        assert_eq!(restored.status, original.status);
+
+        // Also test WaitingApproval variant
+        let original2 = protocol::SessionInfoDto {
+            session_id: "20260520_180001_g7h8i9".to_string(),
+            created_at: "2026-05-20T18:01:00Z".to_string(),
+            message_count: 3,
+            title: None,
+            corrupted: false,
+            status: Some(protocol::SessionStatusDto::WaitingApproval { request_id: "req-123".to_string() }),
+        };
+
+        let proto_msg2: proto::SessionInfoDto = (&original2).into();
+        let restored2: protocol::SessionInfoDto = proto_msg2.into();
+
+        assert_eq!(restored2.status, original2.status);
     }
 
     #[test]

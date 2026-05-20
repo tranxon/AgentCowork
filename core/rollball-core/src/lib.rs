@@ -30,7 +30,7 @@ pub mod logging;
 
 // Re-exports for convenience
 pub use manifest::{AgentManifest, CapabilityDef, LlmConfig, ProviderConfig, RoutingConfig, LlmBudget, RagToolConfig, ToolDeclaration, SkillMode, SkillsConfig};
-pub use protocol::{GatewayRequest, GatewayResponse, ModelCapabilitiesInfo, ModelCostInfo, ModelModalities, ProtocolType, SessionInfoDto, ConversationEntryDto};
+pub use protocol::{GatewayRequest, GatewayResponse, ModelCapabilitiesInfo, ModelCostInfo, ModelModalities, ProtocolType, SessionInfoDto, SessionStatusDto, ConversationEntryDto};
 
 pub use intent::Intent;
 pub use permission::{Permission, ShellApprovalThreshold};

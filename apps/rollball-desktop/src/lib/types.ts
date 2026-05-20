@@ -439,7 +439,27 @@ export interface SessionInfo {
   last_active_at?: string;
   message_count: number;
   title: string | null;
-  status?: "active" | "idle" | "ended";
+  /** ADR-014: Session lifecycle status from backend (source of truth) */
+  status?: SessionStatus;
+}
+
+/** ADR-014: Session lifecycle status — read-only from backend */
+export type SessionStatus =
+  | { status: "idle" }
+  | { status: "streaming"; detail?: { message_id: string | null } }
+  | { status: "waiting_approval"; detail: { request_id: string } }
+  | { status: "paused"; detail?: { iteration: number | null; max_iterations: number | null } };
+
+/** Helper: check if a SessionStatus means the session is actively processing (includes paused) */
+export function isSessionActive(s: SessionStatus | undefined | null): boolean {
+  if (!s) return false;
+  return s.status === "streaming" || s.status === "waiting_approval" || s.status === "paused";
+}
+
+/** Helper: get message_id from Streaming status, or null */
+export function getStreamingMessageId(s: SessionStatus | undefined | null): string | null {
+  if (!s || s.status !== "streaming") return null;
+  return s.detail?.message_id ?? null;
 }
 
 /** A single conversation entry as stored in JSONL */

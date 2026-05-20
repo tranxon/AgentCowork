@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionInfo } from "../lib/types";
+import type { SessionInfo, SessionStatus } from "../lib/types";
 import { getGatewayUrl } from "../lib/config";
 import { useChatStore } from "./chatStore";
 
@@ -58,6 +58,26 @@ export const useSessionStore = create<SessionState>((set) => ({
         isLoading: false,
         sessionTitles: { ...state.sessionTitles, [agentId]: title },
       }));
+
+      // ADR-014: Pull repair — use backend sessionStatus to correct frontend state
+      // Batch all mismatches into a single chatStore update to avoid O(n) re-renders
+      const chatStore = useChatStore.getState();
+      const mismatches = new Map<string, SessionStatus>();
+      for (const session of sessions) {
+        if (session.status) {
+          const sessionState = chatStore.getSessionState(agentId, session.session_id);
+          if (sessionState?.sessionStatus) {
+            const prevStatus = JSON.stringify(sessionState.sessionStatus);
+            const newStatus = JSON.stringify(session.status);
+            if (prevStatus !== newStatus) {
+              mismatches.set(session.session_id, session.status);
+            }
+          }
+        }
+      }
+      if (mismatches.size > 0) {
+        chatStore.batchUpdateSessionStatuses(agentId, mismatches);
+      }
     } catch (e) {
       // Discard stale error too
       if (requestId !== fetchSessionId) return;
@@ -107,6 +127,9 @@ export const useSessionStore = create<SessionState>((set) => ({
       ).catch((e) => {
         console.warn("[SessionStore] activate_session failed:", e);
       });
+
+      // ADR-014: Pull repair — refresh session statuses on switch
+      useSessionStore.getState().fetchSessions(agentId);
     }
   },
 
@@ -132,7 +155,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         created_at: new Date().toISOString(),
         message_count: 0,
         title: null,
-        status: "active",
+        status: { status: "idle" },
       };
       set((state) => ({
         sessions: [newSession, ...state.sessions],

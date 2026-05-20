@@ -958,6 +958,9 @@ pub struct SessionInfoResponse {
     pub message_count: u32,
     /// Optional session title
     pub title: Option<String>,
+    /// Current session lifecycle status (ADR-014)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<rollball_core::SessionStatusDto>,
 }
 
 /// Response for session messages
@@ -1026,6 +1029,7 @@ pub async fn list_sessions(
             created_at: s.created_at,
             message_count: s.message_count,
             title: s.title,
+            status: s.status,
         })
         .collect();
 

@@ -17,7 +17,7 @@ use crate::agent::agent_core::AgentCore;
 use crate::agent::loop_::SessionChunkEvent;
 use crate::agent::session::session_handle::SessionHandle;
 use crate::agent::session::session_task::{SessionMessage, SessionTask};
-use crate::agent::session_state::SessionState;
+use crate::agent::session_state::{SessionState, SessionStatus};
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
 
@@ -227,7 +227,7 @@ impl SessionManager {
             conversation,
         );
 
-        let (task, agent_inbound_tx) = SessionTask::new(
+        let (mut task, agent_inbound_tx) = SessionTask::new(
             self.core.clone(),
             session_state,
             inbound_rx,
@@ -239,6 +239,10 @@ impl SessionManager {
             self.config.override_model.clone(),
         );
 
+        // ADR-014: Create watch channel for session status
+        let (status_tx, status_rx) = tokio::sync::watch::channel(SessionStatus::Idle);
+        task.set_status_tx(status_tx);
+
         // Spawn the session task with panic isolation
         let join_handle = tokio::spawn(async move {
             task.run().await;
@@ -249,6 +253,7 @@ impl SessionManager {
             inbound_tx,
             agent_inbound_tx,
             join_handle,
+            status_rx,
         };
 
         self.sessions.insert(session_id.clone(), handle);
@@ -595,6 +600,18 @@ impl SessionManager {
     /// Get the number of active sessions.
     pub fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+
+    /// Get the current status of all active sessions (ADR-014).
+    ///
+    /// Returns a map from session_id → SessionStatus for sessions currently
+    /// running in memory. Sessions that exist only on disk (scanned by
+    /// `list_sessions`) won't appear here.
+    pub fn session_statuses(&self) -> Vec<(String, SessionStatus)> {
+        self.sessions
+            .iter()
+            .map(|(id, handle)| (id.clone(), handle.status()))
+            .collect()
     }
 
     /// Get the suggested provider name from the shared core manifest.

@@ -54,6 +54,8 @@ pub enum BridgeEventType {
     ContextUsage,
     /// LLM reasoning phase started — frontend shows pulsing "..." indicator
     ReasoningStarted,
+    /// Session lifecycle status changed (ADR-014)
+    SessionStateChanged,
 }
 
 impl BridgeEventType {
@@ -72,6 +74,7 @@ impl BridgeEventType {
             "iteration_limit_paused" => Some(Self::IterationLimitPaused),
             "context_usage" => Some(Self::ContextUsage),
             "agent_reasoning_started" => Some(Self::ReasoningStarted),
+            "session_state_changed" => Some(Self::SessionStateChanged),
             _ => None,
         }
     }
@@ -95,6 +98,7 @@ impl BridgeEventType {
             Self::IterationLimitPaused => "iteration_limit_paused",
             Self::ContextUsage => "context_usage",
             Self::ReasoningStarted => "reasoning_started",
+            Self::SessionStateChanged => "session_state_changed",
         }
     }
 }

@@ -74,6 +74,8 @@ impl ApprovalHandle {
     }
 }
 
+use crate::agent::session_state::SessionStatus;
+
 /// A ChunkEvent annotated with the session that produced it.
 ///
 /// Every event emitted by a SessionTask carries its `session_id` at the
@@ -151,6 +153,12 @@ pub enum ChunkEvent {
     Error {
         message: String,
         message_id: String,
+    },
+    /// Session lifecycle status changed (ADR-014).
+    /// Emitted whenever SessionState::status transitions, so the frontend
+    /// can stay in sync without optimistic local writes.
+    SessionStateChanged {
+        status: SessionStatus,
     },
 }
 
@@ -244,6 +252,30 @@ impl AgentLoop {
         // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
         session_loop.core.approval_handle = Some(approval_handle);
         (session_loop, inbound_tx)
+    }
+
+    /// Transition session status and emit SessionStateChanged event if the status changed.
+    ///
+    /// ADR-014 helper: ensures every status transition is paired with an event emission.
+    /// Returns true if the status actually changed (and event was emitted).
+    fn transition_status(&mut self, new_status: SessionStatus) -> bool {
+        if self.session.set_status(new_status) {
+            let status = self.session.status.clone();
+            // Emit chunk event to Gateway → frontend
+            if !self.core.try_send_chunk(ChunkEvent::SessionStateChanged { status: status.clone() }) {
+                tracing::warn!(
+                    "SessionStateChanged event dropped (channel full/closed), status={:?}. Pull repair will correct frontend.",
+                    status
+                );
+            }
+            // Update watch channel for SessionHandle reads
+            if let Some(ref tx) = self.core.status_tx {
+                let _ = tx.send(status);
+            }
+            true
+        } else {
+            false
+        }
     }
 
     /// Update the LLM provider at runtime (e.g., after receiving a hot-pushed
@@ -727,6 +759,9 @@ impl AgentLoop {
 
     /// Core agent loop shared by [`run`] and [`replay`].
     async fn run_inner(&mut self, user_message: &str, context_builder: &mut ContextBuilder, replay: bool) -> Result<String> {
+        // ADR-014: Idle → Streaming
+        self.transition_status(SessionStatus::Streaming { message_id: None });
+
         if !replay {
             // Add user message to history
             self.session.history.append(ChatMessage::user(user_message));
@@ -767,6 +802,11 @@ impl AgentLoop {
                 );
 
                 // Notify Gateway/Desktop App that iteration limit was reached
+                // ADR-014: Streaming → Paused
+                self.transition_status(SessionStatus::Paused {
+                    iteration: Some(iteration),
+                    max_iterations: Some(self.core.config.max_iterations),
+                });
                 let _ = self.core.try_send_chunk(ChunkEvent::IterationLimitPaused {
                     iteration,
                     max_iterations: self.core.config.max_iterations,
@@ -780,6 +820,8 @@ impl AgentLoop {
                                 reason = %reason,
                                 "User chose to continue, resetting iteration counter"
                             );
+                            // ADR-014: Paused → Streaming
+                            self.transition_status(SessionStatus::Streaming { message_id: None });
                             iteration = 0; // Reset counter
                             
                             // Trim history before resuming to avoid context window overflow
@@ -789,6 +831,8 @@ impl AgentLoop {
                         }
                         Some(InboundMessage::Interrupt { reason }) => {
                             tracing::info!(reason = %reason, "User chose to stop during iteration limit pause");
+                            // ADR-014: Paused → Idle
+                            self.transition_status(SessionStatus::Idle);
                             let name = self.core.user_display_name.as_deref().unwrap_or("user");
                             return Ok(format!("Agent stopped by {} after reaching iteration limit.", name));
                         }
@@ -826,6 +870,8 @@ impl AgentLoop {
 
             // ⓪ Drain inbound queue (non-blocking)
             if self.drain_inbound_queue() {
+                // ADR-014: Streaming → Idle
+                self.transition_status(SessionStatus::Idle);
                 let name = self.core.user_display_name.as_deref().unwrap_or("user");
                 tracing::info!("Agent loop interrupted by inbound interrupt signal");
                 return Ok(format!("Agent stopped by {}.", name));
@@ -853,12 +899,24 @@ impl AgentLoop {
                         tokio::time::sleep(backoff).await;
                         continue;
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        // ADR-014: Streaming → Idle on non-retryable error
+                        self.transition_status(SessionStatus::Idle);
+                        return Err(e);
+                    }
                 }
             };
             match iteration_result {
-                IterationResult::TextResponse(content) => return Ok(content),
-                IterationResult::Interrupted(content) => return Ok(content),
+                IterationResult::TextResponse(content) => {
+                    // ADR-014: Streaming → Idle (normal completion)
+                    self.transition_status(SessionStatus::Idle);
+                    return Ok(content);
+                }
+                IterationResult::Interrupted(content) => {
+                    // ADR-014: Streaming → Idle (interrupted)
+                    self.transition_status(SessionStatus::Idle);
+                    return Ok(content);
+                }
                 IterationResult::ToolCallsExecuted => {
                     tracing::debug!(iteration, "Loop iteration complete, continuing");
                     continue;
@@ -979,6 +1037,8 @@ impl AgentLoop {
                     tracing::warn!(reason = %reason, action = %action, "Budget exceeded");
                     match action.as_str() {
                         "deny" => {
+                            // ADR-014: Streaming → Idle (budget exceeded)
+                            self.transition_status(SessionStatus::Idle);
                             return Err(RuntimeError::BudgetExceeded(reason));
                         }
                         "warn" => {
@@ -1241,6 +1301,8 @@ impl AgentLoop {
             // Check for interrupt before executing tools
             if self.poll_interrupt() {
                 tracing::info!("Interrupted before tool execution — saving partial response");
+                // ADR-014: Streaming → Idle (interrupted before tool execution)
+                self.transition_status(SessionStatus::Idle);
                 let content = response.content.clone();
 
                 // Persist interrupted assistant message to JSONL conversation.
@@ -1389,6 +1451,8 @@ impl AgentLoop {
 
             // Handle Break-level loop detection
             if let Some(msg) = break_error {
+                // ADR-014: Streaming → Idle (loop detected)
+                self.transition_status(SessionStatus::Idle);
                 return Err(RuntimeError::LoopDetected(msg));
             }
 
@@ -1604,13 +1668,28 @@ impl AgentLoop {
                 ctrl.state.clone()
             };
             match state {
-                crate::debug::controller::DebugState::Running => return true,
-                crate::debug::controller::DebugState::Stepping => return true,
+                crate::debug::controller::DebugState::Running => {
+                    // ADR-014: Paused → Streaming (debug resume)
+                    self.transition_status(SessionStatus::Streaming { message_id: None });
+                    return true;
+                }
+                crate::debug::controller::DebugState::Stepping => {
+                    // ADR-014: Paused → Streaming (debug step)
+                    self.transition_status(SessionStatus::Streaming { message_id: None });
+                    return true;
+                }
                 crate::debug::controller::DebugState::Stopped => {
                     tracing::info!("Debug: agent loop stopped");
+                    // ADR-014: Paused → Idle (debug stop)
+                    self.transition_status(SessionStatus::Idle);
                     return false;
                 }
                 crate::debug::controller::DebugState::Paused => {
+                    // ADR-014: Streaming → Paused (debug pause)
+                    self.transition_status(SessionStatus::Paused {
+                        iteration: None,
+                        max_iterations: None,
+                    });
                     // Use tokio::select! with rewind_notify so that
                     // rewinds are applied immediately (notification-driven)
                     // instead of waiting up to 100ms for the next poll.
@@ -1773,8 +1852,16 @@ impl AgentLoop {
             // 1. Send ChunkEvent to Gateway → Desktop App
             self.send_tool_approval_needed(&request_id, &req);
 
+            // ADR-014: Streaming → WaitingApproval
+            self.transition_status(SessionStatus::WaitingApproval {
+                request_id: request_id.clone(),
+            });
+
             // 2. Pause and wait for user decision (no timeout)
             let decision = self.await_approval_decision(&request_id).await;
+
+            // ADR-014: WaitingApproval → Streaming (resume after approval/rejection)
+            self.transition_status(SessionStatus::Streaming { message_id: None });
 
             // 3. Resolve the spawned task's oneshot
             let _ = decision_tx.send(decision);

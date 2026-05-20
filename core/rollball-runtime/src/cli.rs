@@ -763,6 +763,13 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             });
                             relay_intent(&outbound_tx, "agent_interrupted", &params).await;
                         }
+                        crate::agent::loop_::ChunkEvent::SessionStateChanged { status } => {
+                            let params = serde_json::json!({
+                                "status": status,
+                                "session_id": sid,
+                            });
+                            relay_intent(&outbound_tx, "session_state_changed", &params).await;
+                        }
                     }
                 }
                 tracing::debug!("Chunk relay task ended");
@@ -1281,7 +1288,7 @@ async fn process_gateway_recv(
 
                     // S1.14: Session query actions from Gateway HTTP API
                     if action == "list_sessions" {
-                        handle_list_sessions(work_dir, grpc_client, &params).await;
+                        handle_list_sessions(work_dir, grpc_client, &params, &session_manager).await;
                         return LoopAction::Continue;
                     }
                     if action == "get_session_messages" {
@@ -2094,10 +2101,14 @@ fn handle_memory_consolidate_query(
 /// Scans the conversations directory for JSONL session files,
 /// converts the results to SessionInfoDto, and sends them back
 /// to Gateway via IntentSend with action "session_response".
+///
+/// ADR-014: Merges live session status from SessionManager into
+/// the DTOs, so the frontend gets real-time status via Pull path.
 async fn handle_list_sessions(
     work_dir: &str,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
     params: &serde_json::Value,
+    session_manager: &crate::agent::session::session_manager::SessionManager,
 ) {
     let request_id = params.get("request_id")
         .and_then(|v| v.as_str())
@@ -2114,14 +2125,35 @@ async fn handle_list_sessions(
         }
     };
 
+    // ADR-014: Collect live session statuses from SessionManager
+    let live_statuses: std::collections::HashMap<String, crate::agent::session_state::SessionStatus> =
+        session_manager.session_statuses().into_iter().collect();
+
     let session_dtos: Vec<rollball_core::protocol::SessionInfoDto> = sessions
         .into_iter()
-        .map(|s| rollball_core::protocol::SessionInfoDto {
-            session_id: s.session_id,
-            created_at: s.created_at,
-            message_count: s.message_count,
-            title: s.title,
-            corrupted: s.corrupted,
+        .map(|s| {
+            let status = live_statuses.get(&s.session_id)
+                .map(|st| {
+                    // Convert SessionStatus → SessionStatusDto
+                    match st {
+                        crate::agent::session_state::SessionStatus::Idle =>
+                            rollball_core::protocol::SessionStatusDto::Idle,
+                        crate::agent::session_state::SessionStatus::Streaming { message_id } =>
+                            rollball_core::protocol::SessionStatusDto::Streaming { message_id: message_id.clone() },
+                        crate::agent::session_state::SessionStatus::WaitingApproval { request_id } =>
+                            rollball_core::protocol::SessionStatusDto::WaitingApproval { request_id: request_id.clone() },
+                        crate::agent::session_state::SessionStatus::Paused { iteration, max_iterations } =>
+                            rollball_core::protocol::SessionStatusDto::Paused { iteration: *iteration, max_iterations: *max_iterations },
+                    }
+                });
+            rollball_core::protocol::SessionInfoDto {
+                session_id: s.session_id,
+                created_at: s.created_at,
+                message_count: s.message_count,
+                title: s.title,
+                corrupted: s.corrupted,
+                status,
+            }
         })
         .collect();
 

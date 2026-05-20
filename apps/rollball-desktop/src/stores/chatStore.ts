@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry } from "../lib/types";
+import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry, SessionStatus } from "../lib/types";
 import { useSessionStore } from "./sessionStore";
 import { useAgentStore } from "./agentStore";
 import { useUserProfileStore } from "./userProfileStore";
@@ -49,6 +49,8 @@ interface SessionChatState {
   isLoadingSession: boolean;
   loadError: string | null;
   isReasoning: boolean;
+  /** ADR-014: Session lifecycle status from backend (source of truth) */
+  sessionStatus: SessionStatus | null;
   /** Last accessed timestamp — used for LRU eviction */
   lastAccessed: number;
 }
@@ -69,6 +71,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   isLoadingSession: false,
   loadError: null,
   isReasoning: false,
+  sessionStatus: null,
   lastAccessed: 0,
 };
 
@@ -198,6 +201,15 @@ function updateAgentAndSession(
   };
 }
 
+/** ADR-014: Derive `sending` from sessionStatus.
+ *  Returns true if ANY session of this agent is streaming or waiting approval.
+ *  This replaces the old optimistic `sending` local write. */
+function deriveSendingFromStatus(agent: AgentState): boolean {
+  return Object.values(agent.sessionStates).some(
+    (s) => s.sessionStatus?.status === "streaming" || s.sessionStatus?.status === "waiting_approval"
+  );
+}
+
 /** Evict oldest/unused sessions when cache exceeds MAX_CACHED_SESSIONS */
 function evictStaleSessions(
   state: ChatStore,
@@ -294,6 +306,12 @@ interface ChatStore {
   activateSession: (agentId: string, sessionId: string) => void;
   /** Get the active session ID for an agent */
   getActiveSessionId: (agentId: string) => string | null;
+  /** ADR-014: Get session state for reading from external stores */
+  getSessionState: (agentId: string, sessionId: string) => SessionChatState;
+  /** ADR-014: Update session status from backend (Pull repair) */
+  updateSessionStatus: (agentId: string, sessionId: string, status: SessionStatus) => void;
+  /** ADR-014: Batch update session statuses — single set() call to avoid O(n) re-renders */
+  batchUpdateSessionStatuses: (agentId: string, statuses: Map<string, SessionStatus>) => void;
 }
 
 function toWsUrl(httpUrl: string, agentId: string): string {
@@ -370,6 +388,47 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   getActiveSessionId: (agentId: string) => {
     return getAgentState(get(), agentId).activeSessionId;
+  },
+
+  // ADR-014: Get session state for reading from external stores
+  getSessionState: (agentId: string, sessionId: string): SessionChatState => {
+    return getSessionState(get(), agentId, sessionId);
+  },
+
+  // ADR-014: Update session status from backend (Pull repair)
+  updateSessionStatus: (agentId: string, sessionId: string, status: SessionStatus) => {
+    set((state) => {
+      const agent = getAgentState(state, agentId);
+      const session = agent.sessionStates[sessionId];
+      if (!session) return {}; // Session not cached, skip
+
+      const updatedSession = { ...session, sessionStatus: status, lastAccessed: Date.now() };
+      const updatedSessions = { ...agent.sessionStates, [sessionId]: updatedSession };
+      const updatedAgent = { ...agent, sessionStates: updatedSessions };
+
+      // Re-derive sending from all session statuses
+      updatedAgent.sending = deriveSendingFromStatus(updatedAgent);
+
+      return { agentStates: { ...state.agentStates, [agentId]: updatedAgent } };
+    });
+  },
+
+  // ADR-014: Batch update — single set() call, O(1) re-render regardless of session count
+  batchUpdateSessionStatuses: (agentId: string, statuses: Map<string, SessionStatus>) => {
+    if (statuses.size === 0) return;
+    set((state) => {
+      const agent = getAgentState(state, agentId);
+      const updatedSessions = { ...agent.sessionStates };
+      for (const [sessionId, status] of statuses) {
+        const session = updatedSessions[sessionId];
+        if (session) {
+          updatedSessions[sessionId] = { ...session, sessionStatus: status, lastAccessed: Date.now() };
+        }
+      }
+      const updatedAgent = { ...agent, sessionStates: updatedSessions };
+      updatedAgent.sending = deriveSendingFromStatus(updatedAgent);
+      return { agentStates: { ...state.agentStates, [agentId]: updatedAgent } };
+    });
   },
 
   activateSession: (agentId: string, sessionId: string) => {
@@ -508,6 +567,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       console.log("[ChatStore] WebSocket connected for agent:", agentId);
       resetReconnect(agentId);
       set((state) => ({ wsMap: { ...state.wsMap, [agentId]: ws } }));
+
+      // ADR-014: Pull repair — refresh session statuses on WS (re)connect
+      useSessionStore.getState().fetchSessions(agentId);
     };
 
     ws.onmessage = (event) => {
@@ -1190,7 +1252,7 @@ function convertConversationEntry(entry: ConversationEntry, agentId: string): Ch
 const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "iteration_limit_paused",
-  "context_usage",
+  "context_usage", "session_state_changed",
 ]);
 
 function handleMessageEvent(
@@ -1630,6 +1692,47 @@ function handleMessageEvent(
             message,
           },
         }));
+      }
+      break;
+    }
+
+    // ADR-014: Session lifecycle status changed — source of truth from backend
+    case "session_state_changed": {
+      if (sid) {
+        const status = data.status as SessionStatus | undefined;
+        if (status) {
+          set((state) => {
+            const agentPatch: Partial<AgentState> = {};
+            const sessionPatch: Partial<SessionChatState> = { sessionStatus: status };
+
+            // When status transitions FROM Streaming, clear transient streaming state
+            const prev = getSessionState(state, agentId, sid);
+            if (prev.sessionStatus?.status === "streaming" && status.status !== "streaming") {
+              sessionPatch.streamingMessageId = null;
+              sessionPatch.streamBuffer = "";
+              sessionPatch.isReasoning = false;
+              sessionPatch.thinkingMessageId = null;
+            }
+
+            // When status transitions TO Idle from non-Idle, clear pending flags
+            if (prev.sessionStatus?.status !== "idle" && status.status === "idle") {
+              sessionPatch.pendingApproval = null;
+              sessionPatch.iterationLimitPaused = null;
+            }
+
+            // Derive `sending` from the updated sessionStatus
+            const updatedAgent = {
+              ...getAgentState(state, agentId),
+              sessionStates: {
+                ...getAgentState(state, agentId).sessionStates,
+                [sid]: { ...(state.agentStates[agentId]?.sessionStates[sid] ?? DEFAULT_SESSION_STATE), ...sessionPatch, lastAccessed: Date.now() },
+              },
+            };
+            agentPatch.sending = deriveSendingFromStatus(updatedAgent);
+
+            return { agentStates: { ...state.agentStates, [agentId]: { ...updatedAgent, ...agentPatch } } };
+          });
+        }
       }
       break;
     }

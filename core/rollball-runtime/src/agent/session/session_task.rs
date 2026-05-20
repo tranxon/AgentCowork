@@ -169,6 +169,12 @@ impl SessionTask {
         (task, agent_inbound_tx)
     }
 
+    /// Set the status watch sender (ADR-014).
+    /// Called by SessionManager after creating the SessionTask, before spawning.
+    pub(crate) fn set_status_tx(&mut self, tx: tokio::sync::watch::Sender<crate::agent::session_state::SessionStatus>) {
+        self.agent_loop.core.status_tx = Some(tx);
+    }
+
     /// Run the session task, processing messages until Stop or channel close.
     pub async fn run(self) {
         let Self {

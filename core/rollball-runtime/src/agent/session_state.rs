@@ -14,6 +14,39 @@ use crate::agent::inbound::InboundMessage;
 use crate::agent::loop_detector::LoopDetector;
 use crate::conversation::ConversationSession;
 
+/// Lifecycle status of a session, managed by Runtime as the source of truth.
+///
+/// ADR-014: The Runtime owns session status; the frontend is read-only.
+/// State transitions are emitted as `ChunkEvent::SessionStateChanged` via
+/// the on_chunk channel, so the Gateway and frontend stay in sync without
+/// optimistic local writes.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "status", content = "detail")]
+pub enum SessionStatus {
+    /// Session is idle — no LLM call in progress
+    Idle,
+    /// LLM is generating a response. `message_id` matches the streaming message.
+    Streaming { message_id: Option<String> },
+    /// A tool requires user approval before execution
+    WaitingApproval { request_id: String },
+    /// Iteration limit reached or debug pause — awaiting user decision
+    Paused { iteration: Option<u32>, max_iterations: Option<u32> },
+
+}
+
+impl Default for SessionStatus {
+    fn default() -> Self {
+        Self::Idle
+    }
+}
+
+impl SessionStatus {
+    /// Returns true if the session is actively processing (streaming or awaiting approval).
+    pub fn is_active(&self) -> bool {
+        matches!(self, Self::Streaming { .. } | Self::WaitingApproval { .. })
+    }
+}
+
 /// Per-session state for the agent loop.
 ///
 /// Each field is scoped to a single session and is not shared across sessions.
@@ -38,6 +71,9 @@ pub struct SessionState {
     /// re-injected at the next `drain_inbound_queue()` call so no
     /// message is silently lost.
     pub(crate) deferred_inbound: Vec<InboundMessage>,
+    /// Current lifecycle status of the session (source of truth).
+    /// ADR-014: Runtime owns this; frontend reads it via SessionStateChanged events.
+    pub(crate) status: SessionStatus,
 }
 
 impl SessionState {
@@ -55,6 +91,7 @@ impl SessionState {
             budget_guard: BudgetGuard::new(budget),
             turn_counter: 0,
             deferred_inbound: Vec::new(),
+            status: SessionStatus::Idle,
         }
     }
 
@@ -96,5 +133,21 @@ impl SessionState {
     /// Access the budget guard (mutable).
     pub fn budget_guard_mut(&mut self) -> &mut BudgetGuard {
         &mut self.budget_guard
+    }
+
+    /// Access the session status.
+    pub fn status(&self) -> &SessionStatus {
+        &self.status
+    }
+
+    /// Transition session status and return true if the status actually changed.
+    /// Returns false if the new status equals the current one (no-op).
+    pub fn set_status(&mut self, new_status: SessionStatus) -> bool {
+        if self.status == new_status {
+            return false;
+        }
+        tracing::info!(old = ?self.status, new = ?new_status, "Session status changed");
+        self.status = new_status;
+        true
     }
 }

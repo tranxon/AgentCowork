@@ -598,6 +598,28 @@ pub struct SessionInfoDto {
     /// Whether the session metadata was recovered from a corrupted first line
     #[serde(default)]
     pub corrupted: bool,
+    /// Current session lifecycle status (ADR-014). None if status is unknown
+    /// (e.g. session loaded from disk, not currently active in memory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<SessionStatusDto>,
+}
+
+/// DTO for session lifecycle status (ADR-014).
+///
+/// Mirrors `SessionStatus` from rollball-runtime but is defined in
+/// rollball-core so Gateway can use it without depending on runtime.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case", tag = "status", content = "detail")]
+pub enum SessionStatusDto {
+    /// Session is idle — no LLM call in progress
+    Idle,
+    /// LLM is generating a response
+    Streaming { message_id: Option<String> },
+    /// A tool requires user approval before execution
+    WaitingApproval { request_id: String },
+    /// Iteration limit reached or debug pause — awaiting user decision
+    Paused { iteration: Option<u32>, max_iterations: Option<u32> },
+
 }
 
 /// Conversation entry DTO for IPC responses (S1.14)

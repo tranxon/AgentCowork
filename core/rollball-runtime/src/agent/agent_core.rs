@@ -107,6 +107,11 @@ pub struct AgentCore {
     /// Shell approval threshold: Low / Medium / High / Never.
     /// Default: "medium" — Medium and High risk commands need approval.
     pub(crate) shell_approval_threshold: ShellApprovalThreshold,
+    /// Watch sender for session status (ADR-014).
+    /// The AgentLoop writes to this via `transition_status()`;
+    /// the SessionHandle holds the Receiver for non-blocking reads.
+    /// None for CLI-only sessions (no SessionHandle).
+    pub(crate) status_tx: Option<tokio::sync::watch::Sender<crate::agent::session_state::SessionStatus>>,
 }
 
 impl AgentCore {
@@ -141,6 +146,7 @@ impl AgentCore {
             approval_gate: None,
             approval_handle: None,
             shell_approval_threshold,
+            status_tx: None,
         }
     }
 
@@ -381,6 +387,7 @@ impl AgentCore {
             approval_gate: self.approval_gate.clone(),
             approval_handle: self.approval_handle.clone(),
             shell_approval_threshold: self.shell_approval_threshold.clone(),
+            status_tx: None, // set separately by SessionTask
         }
     }
 

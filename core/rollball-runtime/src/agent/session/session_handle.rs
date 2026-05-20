@@ -4,9 +4,11 @@
 //! checking whether the session task is still alive.
 
 use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::agent::inbound::InboundMessage;
+use crate::agent::session_state::SessionStatus;
 use super::session_task::SessionMessage;
 
 /// External handle for interacting with a running SessionTask.
@@ -29,6 +31,11 @@ pub struct SessionHandle {
     pub(crate) agent_inbound_tx: mpsc::Sender<InboundMessage>,
     /// Join handle for the session's tokio task (for lifecycle observation)
     pub(crate) join_handle: JoinHandle<()>,
+    /// Watch channel receiver for session status (ADR-014).
+    /// The AgentLoop updates its status via the Sender half;
+    /// the SessionHandle exposes this Receiver so SessionManager
+    /// can read the current status without locking.
+    pub(crate) status_rx: watch::Receiver<SessionStatus>,
 }
 
 impl SessionHandle {
@@ -60,5 +67,13 @@ impl SessionHandle {
     /// or if the inbound channel is closed.
     pub fn is_alive(&self) -> bool {
         !self.join_handle.is_finished() && !self.inbound_tx.is_closed()
+    }
+
+    /// Read the current session status (ADR-014).
+    ///
+    /// Uses a watch channel, so this is lock-free and non-blocking.
+    /// The value is always the most recent status written by the AgentLoop.
+    pub fn status(&self) -> SessionStatus {
+        self.status_rx.borrow().clone()
     }
 }

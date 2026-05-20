@@ -1,7 +1,7 @@
 # ADR-014: Session State Machine — 从"事件驱动猜测"到"状态驱动只读"
 
 ## Status
-Accepted
+Implemented
 
 ## 元信息
 - 编号: ADR-014
