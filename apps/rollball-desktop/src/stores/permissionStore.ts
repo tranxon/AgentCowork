@@ -37,7 +37,8 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
     // If tool is already session-approved, auto-approve without showing dialog
     if (sessionAllowed.has(event.tool_name)) {
       // Send approval to Gateway API directly, then advance queue
-      void sendApprovalToGateway(event.agent_id, event.request_id, "allow");
+      // Use the event's session_id (originating session) not currentSessionId
+      void sendApprovalToGateway(event.agent_id, event.request_id, "allow", event.session_id);
       set((s) => {
         const next = s.pendingRequests[0] || null;
         return {
@@ -76,7 +77,9 @@ export const usePermissionStore = create<PermissionStore>((set, get) => ({
     // Send approval decision to Gateway API and await response
     const agentId = current?.agent_id;
     if (agentId) {
-      const result = await sendApprovalToGateway(agentId, requestId, action);
+      // Use the event's session_id (originating session) not currentSessionId
+      const sessionId = current?.session_id;
+      const result = await sendApprovalToGateway(agentId, requestId, action, sessionId);
       if (!result.ok) {
         // Gateway returned error (e.g. 404 = approval already timed out)
         const errorMsg = result.status === 404
@@ -127,13 +130,18 @@ async function sendApprovalToGateway(
   agentId: string,
   requestId: string,
   action: string,
+  sessionId?: string | null,
 ): Promise<{ ok: boolean; status: number }> {
   try {
     const url = `${getGatewayUrl()}/api/agents/${encodeURIComponent(agentId)}/approval`;
     const resp = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ request_id: requestId, action }),
+      body: JSON.stringify({
+        request_id: requestId,
+        action,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }),
     });
     if (!resp.ok) {
       console.warn(

@@ -52,6 +52,9 @@ pub struct SendMessageRequest {
     /// Optional conversation ID for multi-turn
     #[serde(default)]
     pub conversation_id: Option<String>,
+    /// Session ID for multi-session routing (explicit pass-through)
+    #[serde(default)]
+    pub session_id: Option<String>,
     /// Skill command selected by the user (e.g. "/commit", "/review-pr")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
@@ -118,6 +121,9 @@ struct WsClientMessage {
     model: Option<String>,
     /// Provider name for model_switch messages
     provider: Option<String>,
+    /// Session ID for multi-session routing (explicit pass-through)
+    #[serde(default)]
+    session_id: Option<String>,
     /// Skill command selected by the user (e.g. "/commit", "/review-pr")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     command: Option<String>,
@@ -179,16 +185,21 @@ pub async fn send_message(
     if let Some(session_mgr) = &state.session_mgr {
         let mgr = session_mgr.lock().await;
         if let Some((conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
-            let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
-                from: "http-api".to_string(),
-                action: "chat_message".to_string(),
-                params: serde_json::json!({
+            let mut params = serde_json::json!({
                     "content": body.content,
                     "message_id": message_id,
                     "conversation_id": body.conversation_id,
-                }),
-                command: body.command.clone(),
-            };
+                });
+                // Explicit session_id pass-through for multi-session routing (P0 fix)
+                if let Some(ref sid) = body.session_id {
+                    params["session_id"] = serde_json::json!(sid);
+                }
+                let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
+                    from: "http-api".to_string(),
+                    action: "chat_message".to_string(),
+                    params,
+                    command: body.command.clone(),
+                };
             let pushed = session.push_message(intent).await;
             if !pushed {
                 tracing::warn!(
@@ -640,12 +651,17 @@ async fn handle_ws_text(
         if let Some(session_mgr) = &state.session_mgr {
             let mgr = session_mgr.lock().await;
             if let Some((_, session)) = mgr.find_by_agent_id(agent_id) {
+                let mut params = serde_json::json!({
+                        "reason": "user_requested",
+                    });
+                // Explicit session_id pass-through for multi-session routing
+                if let Some(ref sid) = client_msg.session_id {
+                    params["session_id"] = serde_json::json!(sid);
+                }
                 let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                     from: "http-ws".to_string(),
                     action: "interrupt".to_string(),
-                    params: serde_json::json!({
-                        "reason": "user_requested",
-                    }),
+                    params,
                     command: None,
                 };
                 pushed_ok = session.push_message(intent).await;
@@ -705,13 +721,18 @@ async fn handle_ws_text(
     if let Some(session_mgr) = &state.session_mgr {
         let mgr = session_mgr.lock().await;
         if let Some((_, session)) = mgr.find_by_agent_id(agent_id) {
+            let mut params = serde_json::json!({
+                    "content": content,
+                    "message_id": message_id,
+                });
+            // Explicit session_id pass-through for multi-session routing (P0 fix)
+            if let Some(ref sid) = client_msg.session_id {
+                params["session_id"] = serde_json::json!(sid);
+            }
             let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-ws".to_string(),
                 action: "chat_message".to_string(),
-                params: serde_json::json!({
-                    "content": content,
-                    "message_id": message_id,
-                }),
+                params,
                 command: client_msg.command.clone(),
             };
             pushed_ok = session.push_message(intent).await;
@@ -824,6 +845,14 @@ mod tests {
 
 // ── Continue Execution API ────────────────────────────────────────────
 
+/// Request body for continue execution
+#[derive(Deserialize)]
+pub struct ContinueExecutionRequest {
+    /// Optional session ID for multi-session routing
+    #[serde(default)]
+    pub session_id: Option<String>,
+}
+
 /// Continue agent execution after iteration limit was reached.
 ///
 /// This sends a `ContinueExecution` signal to the Agent Runtime via IPC,
@@ -831,6 +860,7 @@ mod tests {
 pub async fn continue_execution(
     State(state): State<AppState>,
     Path(agent_id): Path<String>,
+    Json(body): Json<ContinueExecutionRequest>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), (StatusCode, Json<ApiError>)> {
     // Validate agent exists and is running
     {
@@ -850,12 +880,17 @@ pub async fn continue_execution(
     if let Some(ref session_mgr) = state.session_mgr {
         let mgr = session_mgr.lock().await;
         if let Some((_, session)) = mgr.find_by_agent_id(&agent_id) {
+            let mut params = serde_json::json!({
+                    "reason": "user_requested",
+                });
+            // Explicit session_id pass-through for multi-session routing
+            if let Some(ref sid) = body.session_id {
+                params["session_id"] = serde_json::json!(sid);
+            }
             let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-api".to_string(),
                 action: "continue_execution".to_string(),
-                params: serde_json::json!({
-                    "reason": "user_requested",
-                }),
+                params,
                 command: None,
             };
             let pushed = session.push_message(intent).await;
@@ -1149,7 +1184,7 @@ pub struct UpdateTitleRequest {
 
 pub async fn update_session_title(
     State(state): State<AppState>,
-    Path((agent_id, _session_id)): Path<(String, String)>,
+    Path((agent_id, session_id)): Path<(String, String)>,
     Json(body): Json<UpdateTitleRequest>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     // Verify agent exists and is running
@@ -1168,6 +1203,7 @@ pub async fn update_session_title(
 
     let params = serde_json::json!({
         "title": body.title,
+        "session_id": session_id,
     });
 
     let data = forward_session_query(&state, &agent_id, "update_session_title", params).await?;

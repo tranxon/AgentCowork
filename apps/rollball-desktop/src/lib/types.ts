@@ -406,6 +406,8 @@ export interface ToolApprovalNeededEvent {
   agent_id: string;
   tool_name: string;
   risk_level: "Low" | "Medium" | "High";
+  /** Session ID that originated this approval (used for multi-session routing) */
+  session_id?: string;
   shell_command?: {
     command: string;
     preview: string;

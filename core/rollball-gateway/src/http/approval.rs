@@ -44,6 +44,9 @@ pub struct ApprovalRequest {
     pub request_id: String,
     /// User decision: "allow", "deny", or "allow_all_session"
     pub action: String,
+    /// Session ID for multi-session routing (explicit pass-through)
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// Response body for the approval endpoint.
@@ -104,11 +107,15 @@ async fn handle_approval(
             if let Some(ref grpc_mgr) = state.grpc_session_mgr {
                 let grpc_mgr = grpc_mgr.lock().await;
                 if let Some((_, session)) = grpc_mgr.find_by_agent_id(&agent_id) {
-                    let params = serde_json::json!({
+                    let mut params = serde_json::json!({
                         "request_id": &request_id,
                         "approved": approved,
                         "allow_all_session": allow_all_session,
                     });
+                    // Explicit session_id pass-through for multi-session routing (P0 fix)
+                    if let Some(ref sid) = req.session_id {
+                        params["session_id"] = serde_json::json!(sid);
+                    }
                     let pushed = session.push_message(
                         GatewayResponse::IntentReceived {
                             from: "http-api".to_string(),
@@ -220,6 +227,7 @@ mod tests {
             Json(ApprovalRequest {
                 request_id: request_id.clone(),
                 action: "allow".to_string(),
+                session_id: None,
             }),
         ).await;
 
@@ -244,6 +252,7 @@ mod tests {
             Json(ApprovalRequest {
                 request_id: "nonexistent".to_string(),
                 action: "deny".to_string(),
+                session_id: None,
             }),
         ).await;
 
@@ -269,6 +278,7 @@ mod tests {
             Json(ApprovalRequest {
                 request_id: request_id.clone(),
                 action: "deny".to_string(),
+                session_id: None,
             }),
         ).await;
 

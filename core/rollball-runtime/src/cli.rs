@@ -586,6 +586,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
         };
         tracing::info!(initial_session_id = %initial_session_id, "Initial session created");
 
+        // Watch channel for sharing current session ID with the chunk relay task.
+        // The relay reads the latest session_id before forwarding each event,
+        // so all ChunkEvent params include the originating session.
+        let (session_id_watch_tx, session_id_watch_rx) =
+            tokio::sync::watch::channel(initial_session_id.clone());
+
         // Step 9.5: Apply workspace context and runtime overrides from AgentHelloResult
         //
         // In the atomic handshake design (Plan B), Gateway bundles all startup
@@ -654,13 +660,18 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
         let agent_id_for_relay = agent_id.clone();
         let chunk_relay = if let Some(mut chunk_rx) = chunk_rx {
             let outbound_tx = client.outbound_sender();
+            let mut session_id_rx = session_id_watch_rx.clone();
             Some(tokio::spawn(async move {
                 tracing::info!("Chunk relay started (shared gRPC connection)");
 
                 while let Some(event) = chunk_rx.recv().await {
+                    // Read the latest session_id for injecting into event params
+                    let relay_session_id = session_id_rx.borrow().clone();
+
                     match event {
                         crate::agent::loop_::ChunkEvent::ReasoningStarted => {
-                            let params = serde_json::json!({});
+                            let mut params = serde_json::json!({});
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::StreamChunk(
@@ -676,9 +687,10 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::Delta(delta) => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "content": delta,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::StreamChunk(
@@ -694,9 +706,10 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::ReasoningDelta(delta) => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "reasoning_content": delta,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::StreamChunk(
@@ -728,11 +741,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                         crate::agent::loop_::ChunkEvent::ToolCall { name, args, id } => {
                             let parsed_args: serde_json::Value = serde_json::from_str(&args)
                                 .unwrap_or_else(|_| serde_json::json!({ "raw": args }));
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "name": name,
                                 "params": parsed_args,
                                 "tool_call_id": id,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -751,11 +765,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                         crate::agent::loop_::ChunkEvent::ToolResult { name, result, tool_call_id } => {
                             let parsed_result: serde_json::Value = serde_json::from_str(&result)
                                 .unwrap_or_else(|_| serde_json::json!({ "content": result }));
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "name": name,
                                 "result": parsed_result,
                                 "tool_call_id": tool_call_id,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -772,11 +787,12 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::IterationLimitPaused { iteration, max_iterations } => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "iteration": iteration,
                                 "max_iterations": max_iterations,
                                 "message": format!("Iteration limit reached ({}/{}). Click Continue to keep going.", iteration, max_iterations),
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -792,8 +808,8 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                                 tracing::warn!("Iteration limit paused relay send failed — main connection may be closed");
                             }
                         }
-                        crate::agent::loop_::ChunkEvent::ToolApprovalNeeded { request_id, tool_name, action, risk_level, reason } => {
-                            let params = serde_json::json!({
+                        crate::agent::loop_::ChunkEvent::ToolApprovalNeeded { request_id, tool_name, action, risk_level, reason, session_id } => {
+                            let mut params = serde_json::json!({
                                 "request_id": request_id,
                                 "agent_id": agent_id_for_relay,
                                 "tool_name": tool_name,
@@ -801,6 +817,9 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                                 "risk_level": risk_level,
                                 "reason": reason,
                             });
+                            // Use event's session_id if present, otherwise relay's current session_id
+                            let sid = session_id.as_deref().unwrap_or(&relay_session_id);
+                            params["session_id"] = serde_json::json!(sid);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -817,10 +836,11 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::Done { content, message_id } => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "content": content,
                                 "message_id": message_id,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -837,10 +857,11 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::Error { message, message_id } => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "content": message,
                                 "message_id": message_id,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -857,9 +878,10 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                             }
                         }
                         crate::agent::loop_::ChunkEvent::Interrupted { content } => {
-                            let params = serde_json::json!({
+                            let mut params = serde_json::json!({
                                 "content": content,
                             });
+                            params["session_id"] = serde_json::json!(relay_session_id);
                             let msg = rollball_core::proto::ClientMessage {
                                 request_id: 0,
                                 payload: Some(rollball_core::proto::client_message::Payload::IntentSend(
@@ -899,6 +921,7 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
             log_reload_handle,
             skill_registry,
             initial_session_id,
+            session_id_watch_tx,
         ).await;
 
         // Chunk relay task will end when chunk_rx is dropped (all senders dropped)
@@ -1146,6 +1169,7 @@ async fn run_gateway_loop(
     log_reload_handle: Option<LogReloadHandle>,
     skill_registry: crate::skills::parser::SkillRegistry,
     initial_session_id: String,
+    session_id_watch_tx: tokio::sync::watch::Sender<String>,
 ) -> Result<()> {
     // Retrieve the provider name for budget queries
     let budget_provider = session_manager.provider_name();
@@ -1174,6 +1198,7 @@ async fn run_gateway_loop(
                         &skill_registry,
                         &budget_provider,
                         &log_reload_handle,
+                        &session_id_watch_tx,
                     ).await {
                         LoopAction::Continue => continue,
                         LoopAction::Break => break,
@@ -1213,6 +1238,7 @@ async fn run_gateway_loop(
                 &skill_registry,
                 &budget_provider,
                 &log_reload_handle,
+                &session_id_watch_tx,
             ).await {
                 LoopAction::Continue => continue,
                 LoopAction::Break => break,
@@ -1264,7 +1290,11 @@ async fn process_gateway_recv(
     skill_registry: &crate::skills::parser::SkillRegistry,
     budget_provider: &str,
     log_reload_handle: &Option<LogReloadHandle>,
+    session_id_watch_tx: &tokio::sync::watch::Sender<String>,
 ) -> LoopAction {
+    // session_id_watch_tx is passed to handle_* sub-functions which update
+    // the watch channel when session changes. Currently these are reserved
+    // for refactoring; the inline code in this function also uses it directly.
     use rollball_core::protocol::GatewayResponse;
 
     match recv_result {
@@ -1425,6 +1455,7 @@ async fn process_gateway_recv(
                                     send_session_response(grpc_client, &request_id, data).await;
                                 } else {
                                     *current_session_id = new_session_id.clone();
+                                    let _ = session_id_watch_tx.send(new_session_id.clone());
                                     tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
                                     let data = serde_json::json!({ "session_id": new_session_id });
                                     send_session_response(grpc_client, &request_id, data).await;
@@ -1457,6 +1488,7 @@ async fn process_gateway_recv(
                         };
                         // In multi-session mode, activation updates current_session_id for routing
                         *current_session_id = session_id.clone();
+                        let _ = session_id_watch_tx.send(session_id.clone());
                         let data = serde_json::json!({
                             "session_id": session_id,
                             "activated": true,
@@ -1540,6 +1572,7 @@ async fn process_gateway_recv(
                                         tracing::error!("Failed to create replacement session: {}", e);
                                     } else {
                                         *current_session_id = new_session_id.clone();
+                                        let _ = session_id_watch_tx.send(new_session_id.clone());
                                         tracing::info!(new_session_id = %new_session_id, "Switched to new session after deletion");
                                     }
                                 }
@@ -2352,6 +2385,7 @@ async fn handle_create_session(
     current_session_id: &mut String,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
     params: &serde_json::Value,
+    session_id_watch_tx: &tokio::sync::watch::Sender<String>,
 ) {
     let request_id = params.get("request_id")
         .and_then(|v| v.as_str())
@@ -2380,6 +2414,7 @@ async fn handle_create_session(
                 "Created and activated new conversation session via Gateway request"
             );
             *current_session_id = new_session_id.clone();
+            let _ = session_id_watch_tx.send(new_session_id.clone());
 
             let data = serde_json::json!({
                 "session_id": new_session_id,
@@ -2444,6 +2479,7 @@ async fn handle_activate_session(
     current_session_id: &mut String,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
     params: &serde_json::Value,
+    session_id_watch_tx: &tokio::sync::watch::Sender<String>,
 ) {
     let request_id = params.get("request_id")
         .and_then(|v| v.as_str())
@@ -2478,6 +2514,7 @@ async fn handle_activate_session(
                 "Activated existing conversation session via Gateway request"
             );
             *current_session_id = session_id.clone();
+            let _ = session_id_watch_tx.send(session_id.clone());
 
             let data = serde_json::json!({
                 "session_id": session_id,
@@ -2567,6 +2604,7 @@ async fn handle_delete_session(
     agent_id: &str,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
     params: &serde_json::Value,
+    session_id_watch_tx: &tokio::sync::watch::Sender<String>,
 ) {
     let request_id = params.get("request_id")
         .and_then(|v| v.as_str())
@@ -2612,6 +2650,7 @@ async fn handle_delete_session(
             Ok(new_session) => {
                 agent_loop.switch_conversation(new_session);
                 *current_session_id = new_session_id.clone();
+                let _ = session_id_watch_tx.send(new_session_id.clone());
                 tracing::info!(new_session_id = %new_session_id, "Switched to new session after deletion");
             }
             Err(e) => {

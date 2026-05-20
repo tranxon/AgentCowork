@@ -11,7 +11,9 @@ pub async fn send_message(
     state: State<'_, AppState>,
     agent_id: String,
     content: String,
+    session_id: Option<String>,
+    command: Option<String>,
 ) -> Result<SendMessageResponse, String> {
     let client = state.gateway.read().await;
-    client.send_message(&agent_id, &content).await.map_err(|e| e.to_string())
+    client.send_message(&agent_id, &content, session_id.as_deref(), command.as_deref()).await.map_err(|e| e.to_string())
 }

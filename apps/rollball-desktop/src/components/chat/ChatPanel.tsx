@@ -14,7 +14,7 @@ import { getGatewayUrl } from "../../lib/config";
 import { needsApiKey, keyPlaceholder } from "../../lib/providers";
 import { fetchProviderModels, fetchProviders } from "../../lib/gateway-api";
 import { toolbarButton, toolbarButtonActive } from "../../lib/ui-styles";
-import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Layers, Cpu, Loader } from "lucide-react";
+import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Layers, Cpu, Loader, Pencil } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContextUsageInfo, VaultKeyEntry, ModelInfo } from "../../lib/types";
@@ -54,7 +54,7 @@ export function ChatPanel() {
   const gatewayStatus = useGatewayStore((s) => s.status);
   const { activeSkill, clearActiveSkill } = useSkillStore();
   const [inputValue, setInputValue] = useState("");
-  const [queuedMessage, setQueuedMessage] = useState<string | null>(null);
+  const [queuedMessages, setQueuedMessages] = useState<string[]>([]);
   const [hasLlmConfig, setHasLlmConfig] = useState<boolean | null>(null); // null = checking
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -416,23 +416,31 @@ export function ChatPanel() {
   const handleStop = () => {
     const content = inputValue.trim();
     if (content && selectedAgentId) {
-      // First click: queue the message — do NOT send yet.
-      // The message waits in a banner above the input area.
-      setQueuedMessage(content);
+      // Add to queue — message waits in the queue box above the input area.
+      setQueuedMessages(prev => [...prev, content]);
       setInputValue("");
-    } else if (queuedMessage && selectedAgentId) {
-      // Second click: commit queued message + interrupt current loop.
-      // The message enters the backend inbound channel, then interrupt
-      // stops the current loop so the queued message is picked up next.
-      void sendMessage(queuedMessage, selectedAgentId, activeSkill?.name).then(() => {
-        clearActiveSkill();
-      });
-      setQueuedMessage(null);
+    } else if (queuedMessages.length > 0 && selectedAgentId) {
+      // Click with queued messages: send all queued + interrupt current loop.
+      for (const msg of queuedMessages) {
+        void sendMessage(msg, selectedAgentId, activeSkill?.name).then(() => {
+          clearActiveSkill();
+        });
+      }
+      setQueuedMessages([]);
       sendInterrupt();
     } else {
-      // No queued message: just interrupt
+      // No queued messages: just interrupt
       sendInterrupt();
     }
+  };
+
+  const handleRemoveQueued = (index: number) => {
+    setQueuedMessages(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const handleEditQueued = (index: number) => {
+    setInputValue(queuedMessages[index]);
+    setQueuedMessages(prev => prev.filter((_, i) => i !== index));
   };
 
   // Tool approval: send decision to Gateway API directly, then clear inline state
@@ -440,12 +448,17 @@ export function ChatPanel() {
     const approvalData = approval as unknown as Record<string, unknown>;
     const agentId = String(approvalData.agent_id ?? selectedAgentId ?? "");
     const requestId = String(approvalData.request_id ?? "");
+    const sessionId = approval.session_id;
     try {
       const url = `${getGatewayUrl()}/api/agents/${encodeURIComponent(agentId)}/approval`;
       await fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ request_id: requestId, action }),
+        body: JSON.stringify({
+          request_id: requestId,
+          action,
+          ...(sessionId ? { session_id: sessionId } : {}),
+        }),
       });
     } catch (err) {
       console.error("[ChatPanel] Failed to send approval:", err);
@@ -455,6 +468,17 @@ export function ChatPanel() {
     // Also clear permissionStore to prevent stale queue
     usePermissionStore.getState().clearAll();
   };
+
+  // Auto-send queued messages when agent finishes execution
+  useEffect(() => {
+    if (!sending && queuedMessages.length > 0 && selectedAgentId) {
+      const msgs = [...queuedMessages];
+      setQueuedMessages([]);
+      for (const msg of msgs) {
+        void sendMessage(msg, selectedAgentId);
+      }
+    }
+  }, [sending]);
 
   // ── Empty state: no agents at all ──
   if (agents.length === 0) {
@@ -608,6 +632,7 @@ export function ChatPanel() {
                           (m: ChatMessage) => m.id === streamingMessageId || m.id === thinkingMessageId
                         )}
                         pendingApproval={pendingApproval}
+                        currentSessionId={currentSessionId}
                         onApprove={(action) => handleToolApprove(action, pendingApproval!)}
                       />
                     )}
@@ -656,6 +681,56 @@ export function ChatPanel() {
         </div>
       </div>
 
+      {/* Queued messages box — separate standalone box above the input area */}
+      {queuedMessages.length > 0 && (
+        <div className="mx-4 mb-2 rounded-lg border border-zinc-200 dark:border-zinc-700 bg-zinc-50/80 dark:bg-zinc-800/60 overflow-hidden">
+          <div className="flex items-center justify-between px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-700">
+            <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
+              消息队列 ({queuedMessages.length})
+            </span>
+            <button
+              type="button"
+              onClick={() => setQueuedMessages([])}
+              className="rounded-sm p-0.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 dark:hover:text-zinc-300 dark:hover:bg-zinc-700"
+              aria-label="Clear all queued messages"
+            >
+              <X size={12} />
+            </button>
+          </div>
+          <div className="max-h-[7.5rem] overflow-y-auto">
+            {queuedMessages.map((msg, i) => (
+              <div
+                key={i}
+                className="group flex items-start gap-1.5 px-2.5 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700/40 border-b border-zinc-100 dark:border-zinc-700/30 last:border-b-0"
+              >
+                <span className="shrink-0 text-[10px] mt-0.5 text-zinc-400 dark:text-zinc-500 select-none">{i + 1}.</span>
+                <span className="flex-1 min-w-0 text-xs text-zinc-700 dark:text-zinc-300 truncate leading-relaxed">
+                  {msg}
+                </span>
+                <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button
+                    type="button"
+                    onClick={() => handleEditQueued(i)}
+                    className="rounded-sm p-0.5 text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:text-blue-400 dark:hover:bg-blue-900/30"
+                    aria-label={`Edit message ${i + 1}`}
+                  >
+                    <Pencil size={12} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveQueued(i)}
+                    className="rounded-sm p-0.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 dark:hover:text-red-400 dark:hover:bg-red-900/30"
+                    aria-label={`Remove message ${i + 1}`}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Unified input container with toolbar */}
       <div className="mx-3 mb-3 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800/50">
         {/* Active skill badge */}
@@ -672,25 +747,6 @@ export function ChatPanel() {
                 <X size={12} />
               </button>
             </span>
-          </div>
-        )}
-        {/* Queued message banner — shown when user clicked Stop with input content */}
-        {queuedMessage && sending && (
-          <div className="flex items-center justify-between gap-2 px-3 pt-2 pb-0">
-            <div className="flex items-center gap-1.5 min-w-0">
-              <span className="shrink-0 text-[10px]" style={{ color: "var(--color-accent)" }}>⏳</span>
-              <span className="truncate text-xs" style={{ color: "var(--color-accent)" }}>
-                Queued: {queuedMessage}
-              </span>
-            </div>
-            <button
-              type="button"
-              onClick={() => setQueuedMessage(null)}
-              className="shrink-0 rounded-sm p-0.5 text-zinc-400 hover:text-zinc-600 hover:bg-zinc-200 dark:hover:text-zinc-300 dark:hover:bg-zinc-700"
-              aria-label="Dismiss queued message"
-            >
-              <X size={12} />
-            </button>
           </div>
         )}
         {/* Textarea area — borderless, transparent background */}
@@ -754,7 +810,7 @@ export function ChatPanel() {
                 }`}
                 onClick={sending ? handleStop : handleSend}
                 disabled={!sending && (inputDisabled || !inputValue.trim())}
-                aria-label={sending ? (inputValue.trim() || queuedMessage ? "Send to queue" : "Stop generation") : "Send message"}
+                aria-label={sending ? (inputValue.trim() ? "Add to queue" : queuedMessages.length > 0 ? "Send queued & stop" : "Stop") : "Send message"}
               >
                 {sending ? <Square size={16} fill="currentColor" /> : <Send size={16} />}
               </button>
@@ -763,11 +819,11 @@ export function ChatPanel() {
                 <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
                   {sending
                     ? (inputValue.trim()
-                        ? "Send to queue"
-                        : queuedMessage
-                          ? "Stop & send queued"
-                          : "Stop")
-                    : "Send message"}
+                        ? "加入队列"
+                        : queuedMessages.length > 0
+                          ? "发送队列 & 停止"
+                          : "停止")
+                    : "发送消息"}
                 </div>
               </div>
             </div>

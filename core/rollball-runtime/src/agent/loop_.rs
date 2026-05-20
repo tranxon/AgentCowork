@@ -122,6 +122,8 @@ pub enum ChunkEvent {
         risk_level: String,
         /// Human-readable reason for the risk assessment
         reason: String,
+        /// Session ID that originated this approval request (for multi-session routing)
+        session_id: Option<String>,
     },
     /// Agent response interrupted by user stop signal
     Interrupted {
@@ -1732,6 +1734,7 @@ impl AgentLoop {
                 action: req.action.clone(),
                 risk_level: req.risk_level.label().to_string(),
                 reason: req.reason.clone(),
+                session_id: self.current_session_id().map(|s| s.to_string()),
             });
         }
     }

@@ -7,6 +7,7 @@ interface ExploreBlockProps {
   items: ChatMessage[];
   isStreaming: boolean;
   pendingApproval?: ToolApprovalNeededEvent | null;
+  currentSessionId?: string | null;
   onApprove?: (action: "allow" | "deny") => void;
 }
 
@@ -21,6 +22,19 @@ function isShellTool(name: string): boolean {
   return SHELL_TOOLS.includes(name);
 }
 
+/** Check if a pending approval belongs to the current session.
+ *  If session_id is absent (old Runtime), assume it matches (backward compat). */
+function approvalMatchesSession(
+  approval: ToolApprovalNeededEvent | null | undefined,
+  currentSessionId?: string | null,
+): boolean {
+  if (!approval) return false;
+  // No session_id on the event → old Runtime, assume match for backward compat
+  if (approval.session_id === undefined || approval.session_id === null) return true;
+  // session_id present → must match current session
+  return approval.session_id === currentSessionId;
+}
+
 /**
  * ExploreBlock: aggregates consecutive think + tool_call + tool_result
  * messages into a single collapsible block with full rendering inside.
@@ -30,7 +44,7 @@ function isShellTool(name: string): boolean {
  * - Expanded: max-height 240px container with ThinkBlock and ToolCallItem.
  * - Streaming: auto-scrolls to bottom.
  */
-export function ExploreBlock({ items, isStreaming, pendingApproval, onApprove }: ExploreBlockProps) {
+export function ExploreBlock({ items, isStreaming, pendingApproval, currentSessionId, onApprove }: ExploreBlockProps) {
   const [expanded, setExpanded] = useState(isStreaming);
   const contentRef = useRef<HTMLDivElement>(null);
 
@@ -48,9 +62,9 @@ export function ExploreBlock({ items, isStreaming, pendingApproval, onApprove }:
 
   const stepCount = buildPairedItems(items).length;
 
-  // Auto-expand when there's a pending approval
-  const hasPendingApproval = pendingApproval && items.some(
-    (m) => m.type === "tool_call" && m.toolName === pendingApproval.tool_name && !items.some(
+  // Auto-expand when there's a pending approval for this session
+  const hasPendingApproval = approvalMatchesSession(pendingApproval, currentSessionId) && items.some(
+    (m) => m.type === "tool_call" && m.toolName === pendingApproval!.tool_name && !items.some(
       (r) => r.type === "tool_result" && r.toolName === m.toolName
     )
   );
@@ -89,7 +103,7 @@ export function ExploreBlock({ items, isStreaming, pendingApproval, onApprove }:
         >
           <div className="flex flex-col gap-2">
             {buildPairedItems(items).map((paired, idx) => (
-              <PairedExploreItem key={idx} item={paired} isStreaming={isStreaming} pendingApproval={pendingApproval} onApprove={onApprove} />
+              <PairedExploreItem key={idx} item={paired} isStreaming={isStreaming} pendingApproval={pendingApproval} currentSessionId={currentSessionId} onApprove={onApprove} />
             ))}
           </div>
         </div>
@@ -143,7 +157,7 @@ function buildPairedItems(items: ChatMessage[]): PairedItem[] {
 }
 
 /** Render a paired item */
-function PairedExploreItem({ item, isStreaming, pendingApproval, onApprove }: { item: PairedItem; isStreaming: boolean; pendingApproval?: ToolApprovalNeededEvent | null; onApprove?: (action: "allow" | "deny") => void }) {
+function PairedExploreItem({ item, isStreaming, pendingApproval, currentSessionId, onApprove }: { item: PairedItem; isStreaming: boolean; pendingApproval?: ToolApprovalNeededEvent | null; currentSessionId?: string | null; onApprove?: (action: "allow" | "deny") => void }) {
   if (item.kind === "thought") {
     return (
       <ThinkBlock
@@ -158,7 +172,7 @@ function PairedExploreItem({ item, isStreaming, pendingApproval, onApprove }: { 
   }
 
   if (item.kind === "tool") {
-    return <ToolCallItem call={item.call} result={item.result} pendingApproval={pendingApproval} onApprove={onApprove} />;
+    return <ToolCallItem call={item.call} result={item.result} pendingApproval={pendingApproval} currentSessionId={currentSessionId} onApprove={onApprove} />;
   }
 
   // Fallback
@@ -170,7 +184,7 @@ function PairedExploreItem({ item, isStreaming, pendingApproval, onApprove }: { 
 }
 
 /** Tool call + result paired display: icon + tool name + status indicator + expandable details */
-function ToolCallItem({ call, result, pendingApproval, onApprove }: { call: ChatMessage; result?: ChatMessage; pendingApproval?: ToolApprovalNeededEvent | null; onApprove?: (action: "allow" | "deny") => void }) {
+function ToolCallItem({ call, result, pendingApproval, currentSessionId, onApprove }: { call: ChatMessage; result?: ChatMessage; pendingApproval?: ToolApprovalNeededEvent | null; currentSessionId?: string | null; onApprove?: (action: "allow" | "deny") => void }) {
   const [showDetails, setShowDetails] = useState(false);
   const toolName = call.toolName ?? "tool";
   const isShell = isShellTool(toolName);
@@ -181,8 +195,8 @@ function ToolCallItem({ call, result, pendingApproval, onApprove }: { call: Chat
   const isError = result?.toolStatus === "error";
   const isPendingResult = !result;
 
-  // Check if this tool_call has a pending approval
-  const needsApproval = pendingApproval && pendingApproval.tool_name === toolName && isPendingResult;
+  // Check if this tool_call has a pending approval for the current session
+  const needsApproval = approvalMatchesSession(pendingApproval, currentSessionId) && pendingApproval!.tool_name === toolName && isPendingResult;
 
   let summary = "";
   try {

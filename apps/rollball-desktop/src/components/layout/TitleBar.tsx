@@ -1,6 +1,24 @@
-import { Minus, Square, X, PanelRightOpen, PanelRightClose } from "lucide-react";
+import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../../stores/settingsStore";
+
+// ── VS Code style panel toggle icon ──────────────────────────────────
+/** VS Code style panel toggle: a box divided by a vertical line into left/right halves.
+ *  Right half highlights (filled) when panel is expanded. */
+function PanelToggleIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round">
+      {/* Outer rectangle */}
+      <rect x="1.5" y="1.5" width="11" height="11" rx="1.2" />
+      {/* Vertical divider line */}
+      <line x1="7" y1="1.5" x2="7" y2="12.5" />
+      {/* Right half fill — accent when expanded */}
+      <rect x="7" y="1.5" width="5.5" height="11" rx="0"
+        fill={expanded ? "var(--color-accent)" : "none"}
+      />
+    </svg>
+  );
+}
 
 interface TitleBarProps {
   /** Whether the right panel is currently expanded */
@@ -77,11 +95,7 @@ export function TitleBar({ panelExpanded, onTogglePanel }: TitleBarProps) {
           aria-label={panelExpanded ? "Collapse right panel" : "Expand right panel"}
           title={panelExpanded ? "Collapse Right Panel" : "Expand Right Panel"}
         >
-          {panelExpanded ? (
-            <PanelRightClose className="h-3.5 w-3.5" style={{ color: "var(--color-accent)" }} />
-          ) : (
-            <PanelRightOpen className="h-3.5 w-3.5" />
-          )}
+          <PanelToggleIcon expanded={panelExpanded} />
         </button>
 
         {/* Minimize */}

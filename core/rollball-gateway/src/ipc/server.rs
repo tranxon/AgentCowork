@@ -148,6 +148,10 @@ pub async fn handle_intent_send(
                     if let Some(reasoning) = params.get("reasoning_content").and_then(|v| v.as_str()) {
                         payload["reasoning_content"] = serde_json::Value::String(reasoning.to_string());
                     }
+                    // Preserve session_id for multi-session routing
+                    if let Some(sid) = params.get("session_id") {
+                        payload["session_id"] = sid.clone();
+                    }
                     payload
                 }
                 crate::http::routes::BridgeEventType::Done => {
@@ -155,15 +159,25 @@ pub async fn handle_intent_send(
                     let content = params.get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
-                    serde_json::json!({ "content": content })
+                    let mut payload = serde_json::json!({ "content": content });
+                    // Preserve session_id for multi-session routing
+                    if let Some(sid) = params.get("session_id") {
+                        payload["session_id"] = sid.clone();
+                    }
+                    payload
                 }
                 crate::http::routes::BridgeEventType::Error => {
                     let msg = params.get("content")
                         .and_then(|v| v.as_str())
                         .unwrap_or("Unknown error");
-                    serde_json::json!({ "message": msg })
+                    let mut payload = serde_json::json!({ "message": msg });
+                    // Preserve session_id for multi-session routing
+                    if let Some(sid) = params.get("session_id") {
+                        payload["session_id"] = sid.clone();
+                    }
+                    payload
                 }
-                // tool_call / tool_result — pass through params as-is
+                // tool_call / tool_result — pass through params as-is (already includes session_id)
                 _ => params.clone(),
             };
 

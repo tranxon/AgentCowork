@@ -87,6 +87,13 @@ export const useSessionStore = create<SessionState>((set) => ({
     // Cancel any in-flight session message loading before switching
     useChatStore.getState().abortSessionLoad();
 
+    // Clear the current agent's transient state (streaming, approvals, etc.)
+    // so content from the old session doesn't leak into the new session's view.
+    // The new session's messages will be loaded by ChatPanel's useEffect.
+    if (agentId) {
+      useChatStore.getState().clearMessages(agentId);
+    }
+
     // Notify Runtime to switch its active ConversationSession (S1.14)
     if (agentId) {
       try {

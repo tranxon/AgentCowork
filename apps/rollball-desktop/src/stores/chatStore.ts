@@ -361,7 +361,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // Helper: send via WebSocket and set up streaming state
     const sendViaWs = (socket: WebSocket) => {
-      socket.send(JSON.stringify({ type: "message", content, command }));
+      const sessionId = useSessionStore.getState().currentSessionId;
+      socket.send(JSON.stringify({
+        type: "message",
+        content,
+        command,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }));
 
       // Reset streaming state for this agent — messages will be created on first chunk
       set((state) => updateAgentState(state, agentId, {
@@ -411,9 +417,10 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
     // Fallback: send via Tauri HTTP command
     try {
+      const sessionId = useSessionStore.getState().currentSessionId;
       const result = await invoke<{ message_id: string; status: string }>(
         "send_message",
-        { agentId, content, command },
+        { agentId, content, command, sessionId },
       );
       console.log("[ChatStore] Message sent via HTTP:", result);
       // Show a system message since we can't stream the response
@@ -460,7 +467,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // is cancelled but the agent process stays alive.
     const ws = get().wsMap[currentAgentId];
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop", agentId: currentAgentId }));
+      const sessionId = useSessionStore.getState().currentSessionId;
+      ws.send(JSON.stringify({
+        type: "stop",
+        agentId: currentAgentId,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }));
     } else {
       console.warn("[ChatStore] WebSocket not available for stop, skipping");
     }
@@ -484,7 +496,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!currentAgentId) return;
     const ws = get().wsMap[currentAgentId];
     if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: "stop", agentId: currentAgentId }));
+      const sessionId = useSessionStore.getState().currentSessionId;
+      ws.send(JSON.stringify({
+        type: "stop",
+        agentId: currentAgentId,
+        ...(sessionId ? { session_id: sessionId } : {}),
+      }));
     }
   },
 
@@ -618,9 +635,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
   continueExecution: async (agentId: string) => {
     try {
+      const sessionId = useSessionStore.getState().currentSessionId;
       const resp = await fetch(`${getGatewayUrl()}/api/agents/${agentId}/continue`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...(sessionId ? { session_id: sessionId } : {}) }),
       });
       if (resp.ok) {
         set((state) => ({
@@ -939,6 +958,25 @@ function handleMessageEvent(
   agentId: string,
 ) {
   const eventType = data.type as string;
+
+  // Session filtering: skip content events that belong to a different session.
+  // Structural events (connected, ack) are always processed.
+  // Events without session_id are allowed through for backward compatibility.
+  const contentEventTypes = new Set([
+    "reasoning_started", "chunk", "tool_call", "tool_result",
+    "done", "error", "tool_approval_needed", "iteration_limit_paused",
+    "context_usage",
+  ]);
+  if (contentEventTypes.has(eventType)) {
+    const eventSessionId = data.session_id as string | undefined;
+    if (eventSessionId !== undefined && eventSessionId !== null) {
+      const currentSessionId = useSessionStore.getState().currentSessionId;
+      if (eventSessionId !== currentSessionId) {
+        // Event belongs to a different session — skip it
+        return;
+      }
+    }
+  }
 
   switch (eventType) {
     case "connected":

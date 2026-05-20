@@ -215,8 +215,14 @@ impl GatewayClient {
     // ── Chat ───────────────────────────────────────────────────────────
 
     /// `POST /api/agents/:id/message`
-    pub async fn send_message(&self, agent_id: &str, content: &str) -> Result<SendMessageResponse> {
-        let body = serde_json::json!({ "content": content });
+    pub async fn send_message(&self, agent_id: &str, content: &str, session_id: Option<&str>, command: Option<&str>) -> Result<SendMessageResponse> {
+        let mut body = serde_json::json!({ "content": content });
+        if let Some(sid) = session_id {
+            body["session_id"] = serde_json::json!(sid);
+        }
+        if let Some(cmd) = command {
+            body["command"] = serde_json::json!(cmd);
+        }
         let resp = self
             .client
             .post(format!("{}/api/agents/{}/message", self.base_url, agent_id))
