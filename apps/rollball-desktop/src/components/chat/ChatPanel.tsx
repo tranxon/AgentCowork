@@ -20,7 +20,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage, ContextUsageInfo, VaultKeyEntry, ModelInfo } from "../../lib/types";
 import { ThinkBlock } from "./ThinkBlock";
 import { ExploreBlock } from "./ExploreBlock";
-import { SessionPanel } from "./SessionPanel";
+import { SessionTabBar } from "./SessionTabBar";
 import { SkillsPanel } from "../skills/SkillsPanel";
 import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
 import { UserAvatar } from "../common/UserAvatar";
@@ -564,7 +564,7 @@ export function ChatPanel() {
 
   return (
     <div
-      className="flex flex-1 flex-col bg-[#FAFAFA] dark:bg-zinc-900"
+      className="flex flex-1 min-w-0 flex-col bg-[#FAFAFA] dark:bg-zinc-900"
     >
       {/* LLM config warning */}
       {hasLlmConfig === false && (
@@ -575,6 +575,8 @@ export function ChatPanel() {
           </span>
         </div>
       )}
+      {/* ADR-015: Session tab bar */}
+      {selectedAgentId && <SessionTabBar agentId={selectedAgentId} />}
       {/* Messages area with drawer overlay */}
       <div className="relative flex-1 overflow-hidden">
         <div
@@ -819,8 +821,6 @@ export function ChatPanel() {
             )}
             {/* Workspace button */}
             <WorkspaceSelector />
-            {/* Session button */}
-            {selectedAgentId && <SessionPanel agentId={selectedAgentId} />}
             {/* Skills dropdown */}
             <SkillsPanel />
           </div>

@@ -85,6 +85,8 @@ interface AgentState {
   sessionStates: Record<string, SessionChatState>;
   /** Currently active session ID for this agent */
   activeSessionId: string | null;
+  /** ADR-015: All session IDs that are open as tabs (ordered, max 32) */
+  openSessionIds: string[];
   /** Per-agent model info */
   model: string | null;
   provider: string | null;
@@ -103,6 +105,7 @@ interface AgentState {
 const DEFAULT_AGENT_STATE: AgentState = {
   sessionStates: {},
   activeSessionId: null,
+  openSessionIds: [],
   model: null,
   provider: null,
   sending: false,
@@ -112,7 +115,8 @@ const DEFAULT_AGENT_STATE: AgentState = {
   isSessionInitLoading: false,
 };
 
-const MAX_CACHED_SESSIONS = 5;
+const MAX_CACHED_SESSIONS = 32;
+const MAX_OPEN_TABS = 32;
 
 // ---------------------------------------------------------------------------
 // Helper functions for state access
@@ -226,7 +230,7 @@ function evictStaleSessions(
   );
 
   const toEvict = sorted
-    .filter((id) => id !== agent.activeSessionId && id !== protectSessionId)
+    .filter((id) => !agent.openSessionIds.includes(id) && id !== protectSessionId)
     .slice(0, sessionIds.length - MAX_CACHED_SESSIONS);
 
   if (toEvict.length === 0) return { agentStates: state.agentStates };
@@ -312,6 +316,12 @@ interface ChatStore {
   updateSessionStatus: (agentId: string, sessionId: string, status: SessionStatus) => void;
   /** ADR-014: Batch update session statuses — single set() call to avoid O(n) re-renders */
   batchUpdateSessionStatuses: (agentId: string, statuses: Map<string, SessionStatus>) => void;
+  /** ADR-015: Open a session tab (append to openSessionIds) */
+  openTab: (agentId: string, sessionId: string) => void;
+  /** ADR-015: Close a session tab (remove from openSessionIds, activate neighbor) */
+  closeTab: (agentId: string, sessionId: string) => string | null;
+  /** ADR-015: Get open session IDs for an agent */
+  getOpenSessionIds: (agentId: string) => string[];
 }
 
 function toWsUrl(httpUrl: string, agentId: string): string {
@@ -431,6 +441,52 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
+  // ADR-015: Open a session as a tab
+  openTab: (agentId: string, sessionId: string) => {
+    set((state) => {
+      const agent = getAgentState(state, agentId);
+      if (agent.openSessionIds.includes(sessionId)) {
+        // Already open — just activate it
+        return updateAgentState(state, agentId, { activeSessionId: sessionId });
+      }
+      // Append to end, cap at MAX_OPEN_TABS
+      const newOpenIds = [...agent.openSessionIds, sessionId].slice(-MAX_OPEN_TABS);
+      return updateAgentState(state, agentId, { openSessionIds: newOpenIds, activeSessionId: sessionId });
+    });
+  },
+
+  // ADR-015: Close a session tab, returns the new active sessionId (or null)
+  closeTab: (agentId: string, sessionId: string): string | null => {
+    let newActiveId: string | null = null;
+    set((state) => {
+      const agent = getAgentState(state, agentId);
+      const idx = agent.openSessionIds.indexOf(sessionId);
+      if (idx === -1) return {}; // Not open
+
+      const newOpenIds = agent.openSessionIds.filter((id) => id !== sessionId);
+
+      // If closing the active tab, activate neighbor
+      if (agent.activeSessionId === sessionId) {
+        // Prefer right neighbor, then left
+        const neighborIdx = Math.min(idx, newOpenIds.length - 1);
+        newActiveId = newOpenIds[neighborIdx] ?? null;
+      } else {
+        newActiveId = agent.activeSessionId;
+      }
+
+      return updateAgentState(state, agentId, {
+        openSessionIds: newOpenIds,
+        activeSessionId: newActiveId,
+      });
+    });
+    return newActiveId;
+  },
+
+  // ADR-015: Get open session IDs for reading
+  getOpenSessionIds: (agentId: string): string[] => {
+    return getAgentState(get(), agentId).openSessionIds;
+  },
+
   activateSession: (agentId: string, sessionId: string) => {
     set((state) => {
       const agent = getAgentState(state, agentId);
@@ -438,6 +494,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (agent.activeSessionId === sessionId) return {};
 
       const patches: Partial<AgentState> = { activeSessionId: sessionId };
+
+      // ADR-015: Ensure session is in openSessionIds (open tab)
+      if (!agent.openSessionIds.includes(sessionId)) {
+        const newOpenIds = [...agent.openSessionIds, sessionId].slice(-MAX_OPEN_TABS);
+        patches.openSessionIds = newOpenIds;
+      }
 
       let newSessionStates = { ...agent.sessionStates };
 

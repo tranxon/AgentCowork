@@ -189,6 +189,12 @@ export const useSessionStore = create<SessionState>((set) => ({
         currentSessionId: newCurrentId,
       });
 
+      // ADR-015: Close tab if the deleted session was open
+      const openIds = useChatStore.getState().getOpenSessionIds(agentId);
+      if (openIds.includes(sessionId)) {
+        useChatStore.getState().closeTab(agentId, sessionId);
+      }
+
       // If the deleted session was current, activate the new current session
       if (isCurrent) {
         if (newCurrentId) {
