@@ -83,6 +83,7 @@ export function ChatPanel() {
     size: number;
     status: "uploading" | "success" | "error";
     documentId?: string;
+    errorMessage?: string;
   }>>([]);
   const [hasLlmConfig, setHasLlmConfig] = useState<boolean | null>(null); // null = checking
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -523,7 +524,7 @@ export function ChatPanel() {
       multiple: false,
     });
 
-    if (!selected || !currentSessionId || !selectedAgentId) return;
+    if (!selected) return;
 
     const filePath = selected as string;
     if (!filePath) return;
@@ -532,8 +533,33 @@ export function ChatPanel() {
     const ext = filename.split(".").pop()?.toLowerCase() ?? "";
     if (!["pdf", "docx", "pptx", "xlsx"].includes(ext)) return;
 
-    // Add pending chip with uploading status
     const tempId = `file-${Date.now()}`;
+
+    // Check prerequisites before adding chip
+    if (!currentSessionId) {
+      setPendingFiles(prev => [...prev, {
+        tempId,
+        filename,
+        format: ext,
+        size: 0,
+        status: "error",
+        errorMessage: "No active session",
+      }]);
+      return;
+    }
+    if (!selectedAgentId) {
+      setPendingFiles(prev => [...prev, {
+        tempId,
+        filename,
+        format: ext,
+        size: 0,
+        status: "error",
+        errorMessage: "No agent selected",
+      }]);
+      return;
+    }
+
+    // Add pending chip with uploading status
     setPendingFiles(prev => [...prev, {
       tempId,
       filename,
@@ -560,10 +586,11 @@ export function ChatPanel() {
           : f
       ));
     } catch (err) {
+      const msg = err instanceof Error ? err.message : typeof err === "string" ? err : "Upload failed";
       console.error("[ChatPanel] Document upload failed:", err);
       // Update chip to error
       setPendingFiles(prev => prev.map((f) =>
-        f.tempId === tempId ? { ...f, status: "error" } : f
+        f.tempId === tempId ? { ...f, status: "error", errorMessage: msg } : f
       ));
     }
   };
@@ -913,6 +940,7 @@ export function ChatPanel() {
                 format={file.format}
                 size={file.size > 0 ? file.size : undefined}
                 status={file.status}
+                errorMessage={file.errorMessage}
                 onRemove={() => handleRemoveFile(file.tempId)}
               />
             ))}

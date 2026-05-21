@@ -14,6 +14,8 @@ export interface DocumentChipProps {
   size?: number;
   /** Upload/persistence status */
   status?: DocumentChipStatus;
+  /** Error message to display (when status is "error") */
+  errorMessage?: string;
   /** Callback to remove the chip (when provided, a remove button is shown) */
   onRemove?: () => void;
   /** Additional CSS classes */
@@ -47,6 +49,7 @@ export function DocumentChip({
   format,
   size,
   status,
+  errorMessage,
   onRemove,
   className,
 }: DocumentChipProps) {
@@ -86,7 +89,9 @@ export function DocumentChip({
       {status === "error" && (
         <>
           <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
-          <span className="text-red-500 dark:text-red-400">上传失败</span>
+          <span className="text-red-500 dark:text-red-400">
+            {errorMessage || "上传失败"}
+          </span>
         </>
       )}
 
