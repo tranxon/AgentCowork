@@ -9,9 +9,10 @@ import { GatewayBanner } from "./GatewayBanner";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useAgentStore } from "../../stores/agentStore";
 import { SettingsPage } from "../settings/SettingsPage";
+import { HarnessPage } from "../harness/HarnessPage";
 
 /** Settings tab type — keep in sync with SettingsPage */
-type SettingsTab = "gateway" | "providers" | "appearance" | "general" | "profile";
+type SettingsTab = "gateway" | "appearance" | "general" | "profile";
 
 const MIN_SIDEBAR_WIDTH = 160;
 const MAX_SIDEBAR_WIDTH = 400;
@@ -188,6 +189,8 @@ export function AppLayout() {
         )}
 
         {currentView === "settings" && <SettingsPage initialTab={settingsInitialTab} />}
+
+        {currentView === "harness" && <HarnessPage />}
       </div>
 
     </div>
