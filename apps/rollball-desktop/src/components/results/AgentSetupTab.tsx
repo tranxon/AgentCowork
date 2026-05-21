@@ -11,6 +11,7 @@ interface AvailableTool {
   name: string;
   description: string;
   required_permissions: string[];
+  always_on?: boolean;
 }
 
 interface ToolsResponse {
@@ -306,15 +307,17 @@ export function AgentSetupTab() {
                   checked ? prev.filter((n) => n !== tool.name) : [...prev, tool.name],
                 );
               };
+              const isAlwaysOn = tool.always_on === true;
               return (
                 <label
                   key={tool.name}
-                  className="flex items-center gap-2 py-1 px-1.5 rounded hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer"
+                  className={"flex items-center gap-2 py-1 px-1.5 rounded " + (isAlwaysOn ? "opacity-60" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer")}
                 >
                   <input
                     type="checkbox"
-                    checked={checked}
-                    onChange={toggle}
+                    checked={isAlwaysOn || checked}
+                    onChange={isAlwaysOn ? undefined : toggle}
+                    disabled={isAlwaysOn}
                     className="h-3.5 w-3.5 shrink-0 rounded accent-[var(--color-accent)]"
                   />
                   <div className="flex-1 min-w-0">

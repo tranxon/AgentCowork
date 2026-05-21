@@ -423,6 +423,39 @@ export interface ToolApprovalResponse {
   action: "allow" | "deny" | "allow_all_session";
 }
 
+// ── Ask question types ────────────────────────────────────────────────
+
+/** A single option in an ask_user_question prompt */
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+/** Ask question event from WebSocket (ask_user_question tool) */
+export interface AskQuestionEvent {
+  type: "ask_question";
+  request_id: string;
+  agent_id: string;
+  question: string;
+  options: QuestionOption[];
+  title?: string;
+  /** Session ID that originated this question (used for multi-session routing) */
+  session_id?: string;
+}
+
+/** Question answer request payload */
+export interface QuestionAnswerRequest {
+  request_id: string;
+  answer: string;
+  session_id?: string;
+}
+
+/** Question answer API response */
+export interface QuestionAnswerResponse {
+  request_id: string;
+  status: string;
+}
+
 /** Approval API response */
 export interface ApprovalApiResponse {
   request_id: string;

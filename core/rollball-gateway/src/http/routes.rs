@@ -58,6 +58,8 @@ pub enum BridgeEventType {
     ReasoningStarted,
     /// Session lifecycle status changed (ADR-014)
     SessionStateChanged,
+    /// LLM asks user a question with options (ask_user_question tool)
+    AskQuestion,
     /// Unknown/unrecognized action — payload is forwarded as-is so the
     /// frontend can decide what to do. This avoids silently treating new
     /// Runtime event types as "done" (which would break streaming state).
@@ -82,6 +84,7 @@ impl BridgeEventType {
             "context_usage" => Some(Self::ContextUsage),
             "agent_reasoning_started" => Some(Self::ReasoningStarted),
             "session_state_changed" => Some(Self::SessionStateChanged),
+            "ask_question" => Some(Self::AskQuestion),
             _ => None,
         }
     }
@@ -110,6 +113,7 @@ impl BridgeEventType {
             Self::ContextUsage => "context_usage",
             Self::ReasoningStarted => "reasoning_started",
             Self::SessionStateChanged => "session_state_changed",
+            Self::AskQuestion => "ask_question",
             Self::Unknown => "unknown",
         }
     }
@@ -264,6 +268,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::http::workspaces::workspace_routes())
         .merge(crate::http::publish_api::publish_routes())
         .merge(crate::http::approval::approval_routes())
+        .merge(crate::http::question::question_routes())
         .with_state(state)
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors)

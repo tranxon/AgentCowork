@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { invoke } from "@tauri-apps/api/core";
-import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry, SessionStatus } from "../lib/types";
+import type { ChatMessage, ContextUsageInfo, TokenUsage, ToolApprovalNeededEvent, PaginatedMessages, ConversationEntry, SessionStatus, AskQuestionEvent } from "../lib/types";
 import { useSessionStore } from "./sessionStore";
 import { useAgentStore } from "./agentStore";
 import { useUserProfileStore } from "./userProfileStore";
@@ -46,6 +46,7 @@ interface SessionChatState {
   messageCursor: string | null;
   iterationLimitPaused: { iteration: number; maxIterations: number; message: string } | null;
   pendingApproval: ToolApprovalNeededEvent | null;
+  pendingQuestion: AskQuestionEvent | null;
   isLoadingSession: boolean;
   loadError: string | null;
   isReasoning: boolean;
@@ -71,6 +72,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   messageCursor: null,
   iterationLimitPaused: null,
   pendingApproval: null,
+  pendingQuestion: null,
   isLoadingSession: false,
   loadError: null,
   isReasoning: false,
@@ -267,6 +269,7 @@ interface ChatStore {
   loadAgentProvider: (agentId: string) => string | null;
   continueExecution: (agentId: string) => Promise<void>;
   resolveApproval: (agentId: string) => void;
+  resolveQuestion: (agentId: string) => void;
   loadAgentModel: (agentId: string) => Promise<string | null>;
   loadConversationHistory: (agentId: string) => Promise<void>;
   loadSessionMessages: (
@@ -993,6 +996,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (!sessionId) return;
     set((state) => updateSessionState(state, agentId, sessionId, { pendingApproval: null }));
   },
+  resolveQuestion: (agentId: string) => {
+    const sessionId = getAgentState(get(), agentId).activeSessionId;
+    if (!sessionId) return;
+    set((state) => updateSessionState(state, agentId, sessionId, { pendingQuestion: null }));
+  },
   loadAgentModel: async (agentId: string): Promise<string | null> => {
     try {
       const resp = await fetch(`${getGatewayUrl()}/api/agents/${agentId}/model`);
@@ -1286,7 +1294,7 @@ function convertConversationEntry(entry: ConversationEntry, agentId: string): Ch
 
 const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
-  "done", "error", "tool_approval_needed", "iteration_limit_paused",
+  "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
   "context_usage", "session_state_changed", "interrupted",
 ]);
 
@@ -1756,6 +1764,14 @@ function handleMessageEvent(
       }
       break;
 
+    case "ask_question":
+      if (sid) {
+        set((state) => updateSessionState(state, agentId, sid, {
+          pendingQuestion: data as unknown as AskQuestionEvent,
+        }));
+      }
+      break;
+
     case "memory_updated":
       console.log("[WS] Memory updated event:", data);
       break;
@@ -1811,6 +1827,7 @@ function handleMessageEvent(
             // When status transitions TO Idle from non-Idle, clear pending flags
             if (prev.sessionStatus?.status !== "idle" && status.status === "idle") {
               sessionPatch.pendingApproval = null;
+              sessionPatch.pendingQuestion = null;
               sessionPatch.iterationLimitPaused = null;
             }
 

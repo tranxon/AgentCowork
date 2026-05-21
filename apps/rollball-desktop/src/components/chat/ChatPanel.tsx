@@ -20,6 +20,7 @@ import remarkGfm from "remark-gfm";
 import type { ChatMessage, VaultKeyEntry, ModelInfo } from "../../lib/types";
 import { ThinkBlock } from "./ThinkBlock";
 import { ExploreBlock } from "./ExploreBlock";
+import { AskQuestionCard } from "./AskQuestionCard";
 import { SessionTabBar } from "./SessionTabBar";
 import { SkillsPanel } from "../skills/SkillsPanel";
 import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
@@ -50,6 +51,7 @@ export function ChatPanel() {
   const thinkingMessageId = sessionState?.thinkingMessageId ?? null;
   const iterationLimitPaused = sessionState?.iterationLimitPaused ?? null;
   const pendingApproval = sessionState?.pendingApproval ?? null;
+  const pendingQuestion = sessionState?.pendingQuestion ?? null;
   const isReasoning = sessionState?.isReasoning ?? false;
   const isLoadingSession = sessionState?.isLoadingSession ?? false;
   const loadError = sessionState?.loadError ?? null;
@@ -508,6 +510,25 @@ export function ChatPanel() {
     usePermissionStore.getState().clearAll();
   };
 
+  // Ask question answer: send answer to Gateway API, then clear pendingQuestion
+  const handleQuestionAnswer = async (requestId: string, answer: string) => {
+    if (!selectedAgentId) return;
+    const agentId = String(selectedAgentId);
+    const sessionId = useSessionStore.getState().currentSessionId;
+    try {
+      const url = `${getGatewayUrl()}/api/agents/${encodeURIComponent(agentId)}/question`;
+      await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ request_id: requestId, answer, session_id: sessionId }),
+      });
+    } catch (err) {
+      console.error("[ChatPanel] Failed to send question answer:", err);
+    }
+    // Clear pending question state regardless of result
+    useChatStore.getState().resolveQuestion(agentId);
+  };
+
   // Auto-send queued messages when agent finishes execution
   useEffect(() => {
     if (!sending && queuedMessages.length > 0 && selectedAgentId) {
@@ -717,6 +738,15 @@ export function ChatPanel() {
                 </span>
               </button>
             </div>
+          )}
+          {/* Ask question card — shown when LLM asks the user a question */}
+          {pendingQuestion && (
+            <AskQuestionCard
+              event={pendingQuestion}
+              agentId={selectedAgentId ?? ""}
+              sessionId={currentSessionId}
+              onAnswer={handleQuestionAnswer}
+            />
           )}
           <div ref={messagesEndRef} />
         </div>

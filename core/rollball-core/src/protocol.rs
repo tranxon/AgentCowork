@@ -655,6 +655,10 @@ pub struct AvailableTool {
     /// (e.g. ["filesystem:read:<path>", "network:<url>"])
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub required_permissions: Vec<String>,
+    /// If true, this tool cannot be disabled by the user or filtered out
+    /// by manifest declarations. It is always available to the LLM.
+    #[serde(default)]
+    pub always_on: bool,
 }
 
 /// Response for GET /api/agents/{id}/tools.

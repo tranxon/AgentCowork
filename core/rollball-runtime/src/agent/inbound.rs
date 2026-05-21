@@ -72,6 +72,16 @@ pub enum InboundMessage {
         /// Optional reason for denial
         reason: Option<String>,
     },
+    /// User's answer to an ask_user_question prompt.
+    /// Delivered by Gateway after the user selects an option or types free text.
+    QuestionAnswer {
+        /// The request ID (matches ChunkEvent::AskQuestion)
+        request_id: String,
+        /// The user's answer:
+        /// - If they chose a pre-defined option: the option's label
+        /// - If they typed free text (via "Other"): their free-text input
+        answer: String,
+    },
 }
 
 impl InboundMessage {
@@ -130,6 +140,17 @@ impl InboundMessage {
             }
             InboundMessage::ApprovalDecision { .. } => {
                 // Approval decisions don't need size limits
+            }
+            InboundMessage::QuestionAnswer { answer, .. } => {
+                if answer.len() > MAX_INBOUND_PAYLOAD_SIZE {
+                    tracing::warn!(
+                        original_len = answer.len(),
+                        max = MAX_INBOUND_PAYLOAD_SIZE,
+                        "Truncating oversized inbound QuestionAnswer"
+                    );
+                    *answer = truncate_to_bytes(answer, MAX_INBOUND_PAYLOAD_SIZE);
+                    truncated = true;
+                }
             }
         }
         (self, truncated)

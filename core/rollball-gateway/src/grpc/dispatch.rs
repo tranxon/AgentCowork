@@ -58,6 +58,16 @@ pub async fn dispatch_grpc_request(
                 ).await;
             }
 
+            // C3: Intercept ask_question from Runtime (ask_user_question tool).
+            // Forward to Desktop App via BridgeEvent::AskQuestion — the user's
+            // answer flows back via the HTTP question endpoint + gRPC push
+            // (same unified push architecture as tool_approval_needed).
+            if req.action == "ask_question" && req.target == "http-api" {
+                return handle_ask_question_grpc(
+                    &params, bridge_tx,
+                ).await;
+            }
+
             // S1.14: Check if this is a session response from Runtime
             if req.action == "session_response" {
                 if let Some(pending) = session_pending {
@@ -430,4 +440,56 @@ async fn handle_session_response_grpc(
             "Session response has no pending request — may have timed out"
         );
     }
+}
+
+/// Handle ask_question IntentSend from Runtime (C3).
+///
+/// Forwards the question to the Desktop App via BridgeEvent::AskQuestion
+/// over WebSocket. The user's answer flows back via the HTTP question
+/// endpoint, which pushes a `question_answer` IntentReceived back to
+/// the Runtime (same unified push architecture as tool_approval_needed).
+///
+/// Unlike tool_approval_needed, there is no oneshot to await — the
+/// answer is delivered to the Runtime via the push path only.
+async fn handle_ask_question_grpc(
+    params: &serde_json::Value,
+    bridge_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+) -> proto::ServerMessage {
+    let request_id = params
+        .get("request_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let agent_id = params
+        .get("agent_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+
+    tracing::info!(
+        request_id = %request_id,
+        agent_id = %agent_id,
+        "Ask question requested from Runtime"
+    );
+
+    // Forward to Desktop App via WebSocket
+    if let Some(tx_bridge) = bridge_tx {
+        let event = BridgeEvent {
+            agent_id: agent_id.to_string(),
+            message_id: request_id.to_string(),
+            event_type: crate::http::routes::BridgeEventType::AskQuestion,
+            payload: params.clone(),
+        };
+        if let Err(e) = tx_bridge.send(event) {
+            tracing::warn!(
+                request_id = %request_id,
+                error = %e,
+                "Failed to send AskQuestion bridge event — no Desktop App subscribers"
+            );
+        }
+    } else {
+        tracing::warn!("No bridge channel — cannot forward ask_question event");
+    }
+
+    // Return immediately — the answer flows back via the push path:
+    // HTTP question endpoint → IntentReceived push → Runtime InboundMessage::QuestionAnswer
+    proto::ServerMessage { request_id: 0, payload: None }
 }

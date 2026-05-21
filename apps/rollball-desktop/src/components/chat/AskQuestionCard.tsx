@@ -1,0 +1,136 @@
+import { useState } from "react";
+import { MessageCircleQuestion } from "lucide-react";
+import type { AskQuestionEvent } from "../../lib/types";
+
+interface AskQuestionCardProps {
+  event: AskQuestionEvent;
+  agentId: string;
+  sessionId?: string | null;
+  onAnswer: (requestId: string, answer: string) => void;
+}
+
+/**
+ * AskQuestionCard: renders an ask_user_question prompt with options + "Other" textarea.
+ *
+ * Design:
+ * - Shows question title (if present) and question text
+ * - Options rendered as radio buttons with optional descriptions
+ * - Last option is always "Other" which reveals a textarea for free-text input
+ * - Submit button uses accent color, inline with the card (no modal/dialog)
+ * - Disabled after submission
+ */
+export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
+  const [selected, setSelected] = useState<string | null>(null);
+  const [otherText, setOtherText] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+
+  const isOtherSelected = selected === "__other__";
+  const canSubmit = !submitted && (selected !== null) && (!isOtherSelected || otherText.trim().length > 0);
+
+  const handleSubmit = () => {
+    if (!canSubmit) return;
+    const answer = isOtherSelected ? otherText.trim() : selected!;
+    setSubmitted(true);
+    onAnswer(event.request_id, answer);
+  };
+
+  return (
+    <div
+      className="my-1.5 max-w-[var(--content-max-width)] rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 dark:border-zinc-700 dark:bg-zinc-800/40"
+    >
+      {/* Header */}
+      <div className="flex items-start gap-1.5 mb-1.5">
+        <MessageCircleQuestion
+          className="h-3.5 w-3.5 shrink-0 mt-0.5"
+          style={{ color: "var(--color-accent)" }}
+        />
+        <div className="min-w-0 flex-1">
+          {event.title && (
+            <div className="text-xs font-medium text-zinc-800 dark:text-zinc-200 mb-0.5">
+              {event.title}
+            </div>
+          )}
+          <div className="text-xs text-zinc-700 dark:text-zinc-300">
+            {event.question}
+          </div>
+        </div>
+      </div>
+
+      {/* Options */}
+      <div className="ml-5 space-y-0.5">
+        {event.options.map((opt, idx) => (
+          <label
+            key={idx}
+            className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors cursor-pointer
+              ${submitted ? "opacity-60 pointer-events-none" : "hover:bg-zinc-100 dark:hover:bg-zinc-700/50"}
+              ${selected === opt.label ? "bg-zinc-100 dark:bg-zinc-700/50" : ""}`}
+          >
+            <input
+              type="radio"
+              name={`question-${event.request_id}`}
+              value={opt.label}
+              checked={selected === opt.label}
+              disabled={submitted}
+              onChange={() => setSelected(opt.label)}
+              className="shrink-0 h-3 w-3"
+              style={{ accentColor: "var(--color-accent)" }}
+            />
+            <span className="font-medium text-zinc-800 dark:text-zinc-200">{opt.label}</span>
+            {opt.description && (
+              <span className="text-zinc-500 dark:text-zinc-400">— {opt.description}</span>
+            )}
+          </label>
+        ))}
+
+        {/* Other option */}
+        <label
+          className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors cursor-pointer
+            ${submitted ? "opacity-60 pointer-events-none" : "hover:bg-zinc-100 dark:hover:bg-zinc-700/50"}
+            ${isOtherSelected ? "bg-zinc-100 dark:bg-zinc-700/50" : ""}`}
+        >
+          <input
+            type="radio"
+            name={`question-${event.request_id}`}
+            value="__other__"
+            checked={isOtherSelected}
+            disabled={submitted}
+            onChange={() => setSelected("__other__")}
+            className="shrink-0 h-3 w-3"
+            style={{ accentColor: "var(--color-accent)" }}
+          />
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">Other</span>
+        </label>
+
+        {/* Other textarea */}
+        {isOtherSelected && !submitted && (
+          <textarea
+            className="mt-1 ml-4 w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder-zinc-500"
+            style={{ outlineColor: "var(--color-accent)" }}
+            rows={1}
+            placeholder="Type your answer..."
+            value={otherText}
+            onChange={(e) => setOtherText(e.target.value)}
+            autoFocus
+          />
+        )}
+      </div>
+
+      {/* Submit button */}
+      <div className="ml-5 mt-1.5 flex items-center gap-2">
+        <button
+          disabled={!canSubmit}
+          onClick={handleSubmit}
+          className="rounded px-3 py-0.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ backgroundColor: "var(--color-accent)" }}
+        >
+          {submitted ? "Submitted" : "Submit"}
+        </button>
+        {submitted && (
+          <span className="text-[10px] text-zinc-500 dark:text-zinc-400">
+            Answer sent
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}

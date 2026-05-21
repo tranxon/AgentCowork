@@ -2114,6 +2114,39 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
                         }
 
 
+                        crate::agent::loop_::ChunkEvent::AskQuestion { request_id, question, options, title } => {
+
+
+                            let params = serde_json::json!({
+
+
+                                "request_id": request_id,
+
+
+                                "question": question,
+
+
+                                "options": options,
+
+
+                                "title": title,
+
+
+                                "agent_id": agent_id,
+
+
+                                "session_id": sid,
+
+
+                            });
+
+
+                            relay_intent(&outbound_tx, "ask_question", &params).await;
+
+
+                        }
+
+
                     }
 
 
@@ -3504,6 +3537,104 @@ async fn process_gateway_recv(
 
 
                                 tracing::warn!(session_id = %target_session_id, "Approval decision target session not found");
+
+
+                            }
+
+
+                        }
+
+
+                        return LoopAction::Continue;
+
+
+                    }
+
+
+                    if action == "question_answer" {
+
+
+                        let request_id = params.get("request_id")
+
+
+                            .and_then(|v| v.as_str())
+
+
+                            .unwrap_or("")
+
+
+                            .to_string();
+
+                        let answer = params.get("answer")
+
+
+                            .and_then(|v| v.as_str())
+
+
+                            .unwrap_or("")
+
+
+                            .to_string();
+
+
+                        tracing::info!(
+
+
+                            request_id = %request_id,
+
+                            answer_preview = %answer.chars().take(80).collect::<String>(),
+
+
+                            session_id = %target_session_id,
+
+
+                            "Routing question_answer to session"
+
+
+                        );
+
+
+                        // Route directly to AgentLoop's inbound channel to
+
+                        // unblock `await_question_answer()` immediately.
+
+                        match session_manager.get_session(&target_session_id) {
+
+
+                            Some(handle) => {
+
+
+                                if let Err(e) = handle.send_inbound(
+
+
+                                    InboundMessage::QuestionAnswer {
+
+
+                                        request_id,
+
+
+                                        answer,
+
+
+                                    },
+
+
+                                ) {
+
+
+                                    tracing::warn!("Failed to deliver question answer to AgentLoop: {}", e);
+
+
+                                }
+
+
+                            }
+
+
+                            None => {
+
+
+                                tracing::warn!(session_id = %target_session_id, "Question answer target session not found");
 
 
                             }

@@ -18,6 +18,7 @@
 //! | content_search | filesystem:read:<path> |
 //! | intent_send | intent:send:<target> |
 //! | rag_query | rag:query + network:<rag_url> (conditional) |
+//! | ask_user_question | (no permission — LLM-initiated, always allowed) |
 
 pub mod memory_recall;
 pub mod memory_store;
@@ -32,6 +33,7 @@ pub mod glob_search;
 pub mod content_search;
 pub mod intent_send;
 pub mod rag_query;
+pub mod ask_user_question;
 
 use rollball_core::tools::traits::Tool;
 use std::sync::Arc;
@@ -81,6 +83,7 @@ pub fn all_builtin_tools(
         Arc::new(glob_search::GlobSearchTool::new(resolver)),
         Arc::new(content_search::ContentSearchTool::new(resolver)),
         Arc::new(intent_send::IntentSendTool::new()),
+        Arc::new(ask_user_question::AskUserQuestionTool::new()),
     ];
 
     // Append platform-specific shell tools

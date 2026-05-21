@@ -509,6 +509,8 @@ pub fn build_tool_definitions_from_names(
     tool_specs: &[(String, serde_json::Value)],
 ) -> Vec<serde_json::Value> {
     const SHELL_NAMES: &[&str] = &["shell", "bash", "powershell"];
+    /// Tools that must always be present in LLM context regardless of active_tools
+    const ALWAYS_ON_TOOLS: &[&str] = &["ask_user_question"];
 
     // Empty list → all tools available
     if active_tool_names.is_empty() {
@@ -553,6 +555,15 @@ pub fn build_tool_definitions_from_names(
         }
     }
 
+    // Third pass: always include always-on tools (e.g. ask_user_question)
+    // These cannot be removed by active_tools configuration
+    for (name, schema) in tool_specs {
+        if ALWAYS_ON_TOOLS.contains(&name.as_str()) && !seen.contains(name.as_str()) {
+            seen.insert(name.as_str());
+            defs.push(schema.clone());
+        }
+    }
+
     defs
 }
 
@@ -568,6 +579,8 @@ pub fn build_tool_definitions(
 ) -> Vec<serde_json::Value> {
     /// Shell tool names that are interchangeable in manifest declarations.
     const SHELL_NAMES: &[&str] = &["shell", "bash", "powershell"];
+    /// Tools that must always be present in LLM context regardless of active_tools
+    const ALWAYS_ON_TOOLS: &[&str] = &["ask_user_question"];
 
     // No tool declarations → all tools available (consistent with Registry.activate)
     if manifest.tools.is_empty() {
@@ -609,6 +622,15 @@ pub fn build_tool_definitions(
                 seen.insert(name.as_str());
                 defs.push(schema.clone());
             }
+        }
+    }
+
+    // Third pass: always include always-on tools (e.g. ask_user_question)
+    // These cannot be removed by active_tools configuration
+    for (name, schema) in tool_specs {
+        if ALWAYS_ON_TOOLS.contains(&name.as_str()) && !seen.contains(name.as_str()) {
+            seen.insert(name.as_str());
+            defs.push(schema.clone());
         }
     }
 

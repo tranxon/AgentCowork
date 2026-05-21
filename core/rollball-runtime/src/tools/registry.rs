@@ -33,6 +33,11 @@ use crate::tools::wrappers::{PathGuardedTool, RateLimitedTool};
 
 use crate::tools::workspace_resolver::{WorkspaceDir, WorkspaceAccess, WorkspaceResolver};
 
+/// Tools that cannot be disabled — always available regardless of manifest
+/// or user configuration. These are foundational capabilities the LLM must
+/// always have access to (e.g. asking the user a question).
+const ALWAYS_ON_TOOLS: &[&str] = &["ask_user_question"];
+
 
 
 
@@ -179,26 +184,13 @@ impl ToolRegistry {
 
 
             self.tools
-
-
                 .iter()
-
-
                 .filter(|tool| {
-
-
                     manifest.has_tool(&tool.name())
-
-
                         || is_shell_alias(&tool.name(), manifest)
-
-
+                        || ALWAYS_ON_TOOLS.contains(&tool.name().as_str())
                 })
-
-
                 .cloned()
-
-
                 .collect()
 
 

@@ -30,6 +30,7 @@ use crate::config::RuntimeConfig;
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
 use crate::security::approval_gate::ApprovalRequest;
+use crate::tools::builtin::ask_user_question::{AskUserQuestionTool, QuestionOption};
 
 /// User's decision on a tool approval request.
 #[derive(Debug, Clone)]
@@ -153,6 +154,19 @@ pub enum ChunkEvent {
     Error {
         message: String,
         message_id: String,
+    },
+    /// LLM asks the user a question with pre-defined options.
+    /// The Desktop App renders an AskQuestionCard with options + "Other" textarea;
+    /// the Runtime pauses until Gateway delivers an InboundMessage::QuestionAnswer.
+    AskQuestion {
+        /// Unique request ID (correlates with the answer)
+        request_id: String,
+        /// The question text
+        question: String,
+        /// Pre-defined options for the user
+        options: Vec<QuestionOption>,
+        /// Optional title/header for the question card
+        title: Option<String>,
     },
     /// Session lifecycle status changed (ADR-014).
     /// Emitted whenever SessionState::status transitions, so the frontend
@@ -1333,7 +1347,45 @@ impl AgentLoop {
             )
             .await;
 
-            let executed_results = self.execute_tools_parallel(&calls_to_execute).await;
+            // ⑤.2 Intercept ask_user_question calls — these require user interaction
+            // and cannot be executed in parallel with other tools. They are processed
+            // sequentially: emit ChunkEvent::AskQuestion → wait for QuestionAnswer.
+            let mut ask_question_results: Vec<(usize, String)> = Vec::new();
+            let mut parallel_calls: Vec<(usize, ToolCall)> = Vec::new();
+            for (idx, tc) in calls_to_execute.into_iter().enumerate() {
+                if tc.function.name == "ask_user_question" {
+                    let result = self.handle_ask_user_question(&tc).await;
+                    ask_question_results.push((idx, result));
+                } else {
+                    parallel_calls.push((idx, tc));
+                }
+            }
+
+            // Execute non-question tools in parallel
+            let calls_for_parallel: Vec<ToolCall> = parallel_calls.iter().map(|(_, tc)| tc.clone()).collect();
+            let parallel_results = self.execute_tools_parallel(&calls_for_parallel).await;
+
+            // Merge results: ask_question results + parallel results, mapped back to original indices
+            // Build a map from original index → result for ask_question calls
+            let ask_result_map: std::collections::HashMap<usize, String> =
+                ask_question_results.into_iter().collect();
+
+            // Reconstruct executed_results in the order matching calls_for_parallel
+            // Then map back to the original calls_to_execute indices
+            let mut final_results: Vec<(usize, String)> = Vec::new();
+            for (parallel_idx, result) in parallel_results.into_iter().enumerate() {
+                if let Some((orig_idx, _)) = parallel_calls.get(parallel_idx) {
+                    final_results.push((*orig_idx, result));
+                }
+            }
+            // Add ask_question results
+            for (orig_idx, result) in &ask_result_map {
+                final_results.push((*orig_idx, result.clone()));
+            }
+            // Sort by original index to maintain order
+            final_results.sort_by_key(|(idx, _)| *idx);
+
+            let executed_results: Vec<String> = final_results.into_iter().map(|(_, r)| r).collect();
 
             // Merge executed results with pre-blocked results, preserving original order
             let mut tool_results: Vec<String> = Vec::with_capacity(deduped_calls.len());
@@ -1562,6 +1614,11 @@ impl AgentLoop {
                     // approval pause; during normal drain, ignore.
                     tracing::debug!("Ignoring deferred ApprovalDecision");
                 }
+                InboundMessage::QuestionAnswer { .. } => {
+                    // Question answers arrive via inbound channel during
+                    // question wait; during normal drain, ignore.
+                    tracing::debug!("Ignoring deferred QuestionAnswer");
+                }
             }
         }
 
@@ -1608,6 +1665,10 @@ impl AgentLoop {
                 InboundMessage::ApprovalDecision { .. } => {
                     // Approval decisions are only meaningful during approval pause.
                     tracing::debug!("Ignoring ApprovalDecision during normal drain");
+                }
+                InboundMessage::QuestionAnswer { .. } => {
+                    // Question answers are only meaningful during question wait.
+                    tracing::debug!("Ignoring QuestionAnswer during normal drain");
                 }
             }
         }
@@ -1839,6 +1900,143 @@ impl AgentLoop {
             risk_level: req.risk_level.label().to_string(),
             reason: req.reason.clone(),
         });
+    }
+
+    /// Handle an ask_user_question tool call.
+    ///
+    /// Validates the params, emits ChunkEvent::AskQuestion, transitions
+    /// status to WaitingApproval, and blocks until the user responds.
+    /// Returns the user's answer as a tool result string.
+    async fn handle_ask_user_question(&mut self, tc: &rollball_core::providers::traits::ToolCall) -> String {
+
+        // Validate params
+        let params: serde_json::Value = match serde_json::from_str(&tc.function.arguments) {
+            Ok(p) => p,
+            Err(e) => {
+                return format!("Error: ask_user_question arguments are not valid JSON: {}", e);
+            }
+        };
+
+        let parsed = match AskUserQuestionTool::validate_params(&params) {
+            Ok(p) => p,
+            Err(e) => {
+                return format!("Error: ask_user_question invalid params: {}", e);
+            }
+        };
+
+        // Generate unique request ID
+        let request_id = format!(
+            "q-{}",
+            self.approval_next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+
+        tracing::info!(
+            request_id = %request_id,
+            question = %parsed.question,
+            options_count = parsed.options.len(),
+            "AskUserQuestion: emitting AskQuestion event and waiting for answer"
+        );
+
+        // Emit ChunkEvent::AskQuestion
+        let _ = self.core.try_send_chunk(ChunkEvent::AskQuestion {
+            request_id: request_id.clone(),
+            question: parsed.question.clone(),
+            options: parsed.options,
+            title: parsed.title.clone(),
+        });
+
+        // Transition to WaitingApproval
+        self.transition_status(SessionStatus::WaitingApproval {
+            request_id: request_id.clone(),
+        });
+
+        // Wait for the user's answer
+        let answer = self.await_question_answer(&request_id).await;
+
+        // Transition back to Streaming (the loop will continue)
+        self.transition_status(SessionStatus::Streaming { message_id: None });
+
+        tracing::info!(
+            request_id = %request_id,
+            answer_preview = %answer.chars().take(100).collect::<String>(),
+            "AskUserQuestion: received answer"
+        );
+
+        // Return the answer as the tool result
+        answer
+    }
+
+    /// Await user's answer to an ask_user_question prompt.
+    ///
+    /// Blocks the main loop on `inbound_rx` without timeout until the
+    /// matching `InboundMessage::QuestionAnswer` arrives. Non-matching
+    /// messages are buffered in `deferred_inbound` for later processing.
+    async fn await_question_answer(&mut self, request_id: &str) -> String {
+        loop {
+            tokio::select! {
+                msg = self.inbound_rx.recv() => {
+                    match msg {
+                        Some(InboundMessage::QuestionAnswer {
+                            request_id: rid,
+                            answer,
+                        }) if rid == request_id => {
+                            return answer;
+                        }
+                        Some(InboundMessage::QuestionAnswer {
+                            request_id: rid,
+                            answer,
+                        }) => {
+                            // Answer for a different question — buffer it
+                            tracing::debug!(
+                                expected = %request_id,
+                                got = %rid,
+                                "Buffering question answer for different request"
+                            );
+                            self.session.deferred_inbound.push(InboundMessage::QuestionAnswer {
+                                request_id: rid,
+                                answer,
+                            });
+                        }
+                        Some(InboundMessage::Interrupt { reason }) => {
+                            tracing::info!(
+                                reason = %reason,
+                                request_id = %request_id,
+                                "Question wait interrupted, returning cancelled"
+                            );
+                            return "[Cancelled: user interrupted]".to_string();
+                        }
+                        Some(other) => {
+                            tracing::debug!(
+                                ?other,
+                                "Buffering non-question message during question wait"
+                            );
+                            self.session.deferred_inbound.push(other);
+                        }
+                        None => {
+                            tracing::warn!(
+                                request_id = %request_id,
+                                "Inbound channel closed during question wait, returning cancelled"
+                            );
+                            return "[Cancelled: channel closed]".to_string();
+                        }
+                    }
+                }
+                // Also process concurrent approval requests
+                approval_req = self.approval_rx.recv() => {
+                    match approval_req {
+                        Some((req, decision_tx)) => {
+                            tracing::info!(
+                                "Queuing concurrent approval request while waiting for question answer"
+                            );
+                            self.handle_approval_request(req, decision_tx).await;
+                        }
+                        None => {
+                            tracing::warn!("Approval channel closed during question wait");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Handle an approval request received on the approval_rx channel.
