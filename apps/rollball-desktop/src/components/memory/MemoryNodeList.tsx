@@ -14,48 +14,11 @@ interface MemoryNodeListProps {
   onPageChange: (page: number) => void;
 }
 
-const typeColors: Record<string, { bg: string; text: string; darkBg: string; darkText: string }> = {
-  Knowledge: {
-    bg: "bg-blue-100",
-    text: "text-blue-800",
-    darkBg: "dark:bg-blue-900",
-    darkText: "dark:text-blue-200",
-  },
-  Episodic: {
-    bg: "bg-green-100",
-    text: "text-green-800",
-    darkBg: "dark:bg-green-900",
-    darkText: "dark:text-green-200",
-  },
-  Procedural: {
-    bg: "bg-purple-100",
-    text: "text-purple-800",
-    darkBg: "dark:bg-purple-900",
-    darkText: "dark:text-purple-200",
-  },
-  Autobiographical: {
-    bg: "bg-orange-100",
-    text: "text-orange-800",
-    darkBg: "dark:bg-orange-900",
-    darkText: "dark:text-orange-200",
-  },
-};
+const accentBg = "bg-[var(--color-accent)]/10 dark:bg-[var(--color-accent)]/20";
+const accentText = "text-[var(--color-accent)]";
 
-function getTypeColor(nodeType: string) {
-  return (
-    typeColors[nodeType] ?? {
-      bg: "bg-zinc-100",
-      text: "text-zinc-800",
-      darkBg: "dark:bg-zinc-800",
-      darkText: "dark:text-zinc-200",
-    }
-  );
-}
-
-function getDecayColor(score: number): string {
-  if (score <= 0.3) return "bg-green-500";
-  if (score <= 0.7) return "bg-amber-500";
-  return "bg-red-500";
+function getTypeColor(_nodeType: string) {
+  return { bg: accentBg, text: accentText, darkBg: "", darkText: "" };
 }
 
 function formatDate(ts: number): string {
@@ -133,8 +96,6 @@ export function MemoryNodeList({
                       "rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
                       colors.bg,
                       colors.text,
-                      colors.darkBg,
-                      colors.darkText,
                     )}
                   >
                     {node.node_type}
@@ -143,7 +104,7 @@ export function MemoryNodeList({
                     className={cn(
                       "text-[10px] font-medium",
                       node.status === "active"
-                        ? "text-green-600 dark:text-green-400"
+                        ? accentText
                         : "text-zinc-400 dark:text-zinc-500",
                     )}
                   >
@@ -160,17 +121,7 @@ export function MemoryNodeList({
                 <div className="flex items-center gap-2 text-[11px] text-zinc-400 dark:text-zinc-500">
                   <span>Confidence: {(node.confidence * 100).toFixed(0)}%</span>
 
-                  {/* Decay score bar */}
-                  <div className="flex items-center gap-1">
-                    <span>Decay:</span>
-                    <div className="h-1 w-12 overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">
-                      <div
-                        className={cn("h-full rounded-full", getDecayColor(node.decay_score))}
-                        style={{ width: `${node.decay_score * 100}%` }}
-                      />
-                    </div>
-                    <span>{node.decay_score.toFixed(2)}</span>
-                  </div>
+                  <span>Decay: {node.decay_score.toFixed(2)}</span>
 
                   <span className="ml-auto">{formatDate(node.created_at)}</span>
                 </div>

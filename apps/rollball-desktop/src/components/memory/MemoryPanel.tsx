@@ -153,12 +153,11 @@ export function MemoryPanel() {
       {stats && (
         <div className="grid grid-cols-2 gap-2 border-b border-zinc-200 px-3 py-2 sm:grid-cols-4 dark:border-zinc-800">
           <StatCard label="Total Nodes" value={stats.total_nodes} />
-          <StatCard label="Active" value={stats.by_status["Active"] ?? 0} color="green" />
-          <StatCard label="Dormant" value={stats.by_status["Dormant"] ?? 0} color="amber" />
+          <StatCard label="Active" value={stats.by_status["Active"] ?? 0} />
+          <StatCard label="Dormant" value={stats.by_status["Dormant"] ?? 0} />
           <StatCard
             label="Health"
             value={stats.index_health}
-            color={stats.index_health === "healthy" ? "green" : stats.index_health === "degraded" ? "amber" : "red"}
           />
         </div>
       )}
@@ -211,25 +210,14 @@ export function MemoryPanel() {
 function StatCard({
   label,
   value,
-  color,
 }: {
   label: string;
   value: string | number;
-  color?: "green" | "amber" | "red";
 }) {
-  const valueColor =
-    color === "green"
-      ? "text-green-700 dark:text-green-400"
-      : color === "amber"
-        ? "text-amber-700 dark:text-amber-400"
-        : color === "red"
-          ? "text-red-700 dark:text-red-400"
-          : "text-zinc-900 dark:text-zinc-100";
-
   return (
     <div className="rounded border border-zinc-200 p-2 dark:border-zinc-700">
       <p className="text-[10px] text-zinc-500 dark:text-zinc-400">{label}</p>
-      <p className={cn("mt-0.5 text-xs font-semibold", valueColor)}>{value}</p>
+      <p className="mt-0.5 text-xs font-semibold text-[var(--color-accent)]">{value}</p>
     </div>
   );
 }

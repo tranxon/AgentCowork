@@ -189,7 +189,7 @@ export function ResultsPanel({ width, isDebugMode = false }: ResultsPanelProps &
     <div className="flex flex-col border-l border-zinc-200 bg-zinc-50 transition-[width] duration-250 ease-in-out dark:border-zinc-800 dark:bg-zinc-900" style={{ width }}>
       {/* Header with tabs */}
       <div className="border-b border-zinc-200 dark:border-zinc-800">
-        <div className="flex items-center px-3 pt-2">
+        <div className="flex items-center px-3 pt-1.5">
           <div className="flex gap-0">
             {isDebugMode && (
               <TabButton
@@ -516,7 +516,7 @@ function TabButton({
     <button
       onClick={onClick}
       className={cn(
-        "border-b-2 px-3 py-2 text-xs font-medium transition-colors",
+        "border-b-2 px-3 py-1.5 text-xs font-medium transition-colors",
         active
           ? "border-[var(--color-accent)] text-[var(--color-accent)] dark:border-[var(--color-accent)] dark:text-[var(--color-accent)]"
           : "border-transparent text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300",

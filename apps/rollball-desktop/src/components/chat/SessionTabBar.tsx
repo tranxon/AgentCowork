@@ -326,7 +326,7 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
   if (!agent) return null;
 
   return (
-    <div className="flex items-center bg-[#FAFAFA] dark:bg-zinc-900 select-none px-0.5 gap-0.5 mt-0.5 border-b border-zinc-200 dark:border-zinc-700">
+    <div className="flex items-center bg-[#FAFAFA] dark:bg-zinc-900 select-none px-0.5 gap-0.5 mt-1 border-b border-zinc-200 dark:border-zinc-800">
       {/* Left scroll arrow */}
       {canScrollLeft && (
         <button

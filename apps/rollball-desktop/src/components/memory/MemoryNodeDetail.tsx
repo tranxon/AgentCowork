@@ -8,48 +8,15 @@ interface MemoryNodeDetailProps {
   onDelete: (nodeId: number) => void;
 }
 
-const typeColors: Record<string, { bg: string; text: string; darkBg: string; darkText: string }> = {
-  Knowledge: {
-    bg: "bg-blue-100",
-    text: "text-blue-800",
-    darkBg: "dark:bg-blue-900",
-    darkText: "dark:text-blue-200",
-  },
-  Episodic: {
-    bg: "bg-green-100",
-    text: "text-green-800",
-    darkBg: "dark:bg-green-900",
-    darkText: "dark:text-green-200",
-  },
-  Procedural: {
-    bg: "bg-purple-100",
-    text: "text-purple-800",
-    darkBg: "dark:bg-purple-900",
-    darkText: "dark:text-purple-200",
-  },
-  Autobiographical: {
-    bg: "bg-orange-100",
-    text: "text-orange-800",
-    darkBg: "dark:bg-orange-900",
-    darkText: "dark:text-orange-200",
-  },
-};
+const accentBg = "bg-[var(--color-accent)]/10 dark:bg-[var(--color-accent)]/20";
+const accentText = "text-[var(--color-accent)]";
 
-function getTypeColor(nodeType: string) {
-  return (
-    typeColors[nodeType] ?? {
-      bg: "bg-zinc-100",
-      text: "text-zinc-800",
-      darkBg: "dark:bg-zinc-800",
-      darkText: "dark:text-zinc-200",
-    }
-  );
+function getTypeColor(_nodeType: string) {
+  return { bg: accentBg, text: accentText, darkBg: "", darkText: "" };
 }
 
-function getDecayColor(score: number): string {
-  if (score <= 0.3) return "bg-green-500";
-  if (score <= 0.7) return "bg-amber-500";
-  return "bg-red-500";
+function getDecayColor(_score: number): string {
+  return "bg-[var(--color-accent)]";
 }
 
 function getDecayLabel(score: number): string {
@@ -92,8 +59,6 @@ export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailPr
               "rounded px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider",
               colors.bg,
               colors.text,
-              colors.darkBg,
-              colors.darkText,
             )}
           >
             {node.node_type}
@@ -126,11 +91,7 @@ export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailPr
             <span
               className={cn(
                 "text-[11px] font-medium",
-                node.decay_score <= 0.3
-                  ? "text-green-600 dark:text-green-400"
-                  : node.decay_score <= 0.7
-                    ? "text-amber-600 dark:text-amber-400"
-                    : "text-red-600 dark:text-red-400",
+                accentText,
               )}
             >
               {getDecayLabel(node.decay_score)}
