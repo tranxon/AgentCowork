@@ -82,7 +82,7 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
   return (
     <div
       ref={ref}
-      className="absolute left-0 top-full mt-1 w-72 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800 z-50"
+      className="absolute right-0 top-full mt-1 w-72 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800 z-50"
     >
       {/* Header with total count */}
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
