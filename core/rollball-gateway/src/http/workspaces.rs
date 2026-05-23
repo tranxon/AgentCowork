@@ -1,7 +1,7 @@
 //! Workspace directory management API
 //!
 //! Manages additional directories that agents can access beyond their workspace.
-//! Configuration is stored in `{install_path}/workspace/.agent_workspaces.json`
+//! Configuration is stored in `{install_path}/workspace/config/.agent_workspaces.json`
 
 use axum::{
     extract::{Path, State},
@@ -365,6 +365,7 @@ fn escape_markdown_cell(s: &str) -> String {
 pub fn workspace_config_path(install_path: &str) -> std::path::PathBuf {
     StdPath::new(install_path)
         .join("workspace")
+        .join("config")
         .join(".agent_workspaces.json")
 }
 
@@ -593,7 +594,7 @@ pub fn format_workspace_context(workspaces: &[&WorkspaceDir], primary_workspace:
 
 /// Resolve workspace context for an agent, suitable for IPC push.
 ///
-/// Reads the agent's workspace config from `{install_path}/workspace/.agent_workspaces.json`,
+/// Reads the agent's workspace config from `{install_path}/workspace/config/.agent_workspaces.json`,
 /// computes which workspaces to inject, formats the context text, and returns
 /// the push payload (context_text, current_workspace_id, current_workspace_path).
 ///

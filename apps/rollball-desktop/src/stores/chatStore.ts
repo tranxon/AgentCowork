@@ -252,7 +252,7 @@ interface ChatStore {
 
   // ---- Actions ----
   connectStream: (agentId: string, gatewayUrl: string) => void;
-  sendMessage: (content: string, agentId: string, command?: string, documentIds?: string[], documents?: Array<{id: string; filename: string; format: string; size: number; path?: string}>, imageParts?: Array<{url: string; width: number; height: number}>) => Promise<void>;
+  sendMessage: (content: string, agentId: string, command?: string, documentIds?: string[], documents?: Array<{ id: string; filename: string; format: string; size: number; path?: string }>, imageParts?: Array<{ url: string; width: number; height: number }>) => Promise<void>;
   stopCurrentMessage: () => Promise<void>;
   sendInterrupt: () => void;
   disconnectStream: (agentId?: string) => void;
@@ -643,13 +643,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const sessionId = agent.activeSessionId;
         const sessionPatch = sessionId
           ? updateSessionState(state, agentId, sessionId, {
-              streamingMessageId: null,
-              streamBuffer: "",
-              thinkingMessageId: null,
-              isInThinkPhase: false,
-              isReasoning: false,
-              pendingSend: false,
-            })
+            streamingMessageId: null,
+            streamBuffer: "",
+            thinkingMessageId: null,
+            isInThinkPhase: false,
+            isReasoning: false,
+            pendingSend: false,
+          })
           : {};
         return {
           wsMap: newMap,
@@ -688,7 +688,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string, agentId: string, command?: string, documentIds?: string[], documents?: Array<{id: string; filename: string; format: string; size: number; path?: string}>, imageParts?: Array<{url: string; width: number; height: number}>) => {
+  sendMessage: async (content: string, agentId: string, command?: string, documentIds?: string[], documents?: Array<{ id: string; filename: string; format: string; size: number; path?: string }>, imageParts?: Array<{ url: string; width: number; height: number }>) => {
     const ws = get().wsMap[agentId];
     const sessionId = useSessionStore.getState().currentSessionId;
 
@@ -733,12 +733,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // Build multimodal content_parts when images are attached
     const contentParts = imageParts && imageParts.length > 0
       ? [
-          { type: "text", text: content },
-          ...imageParts.map((img) => ({
-            type: "image_url",
-            image_url: { url: img.url, width: img.width, height: img.height },
-          })),
-        ]
+        { type: "text", text: content },
+        ...imageParts.map((img) => ({
+          type: "image_url",
+          image_url: { url: img.url, width: img.width, height: img.height },
+        })),
+      ]
       : undefined;
 
     const sendViaWs = (socket: WebSocket) => {
@@ -902,12 +902,12 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           wsMap: newMap,
           ...(sessionId
             ? updateSessionState(state, agentId, sessionId, {
-                streamingMessageId: null,
-                streamBuffer: "",
-                thinkingMessageId: null,
-                isInThinkPhase: false,
-                pendingSend: false,
-              })
+              streamingMessageId: null,
+              streamBuffer: "",
+              thinkingMessageId: null,
+              isInThinkPhase: false,
+              pendingSend: false,
+            })
             : {}),
         };
       });
@@ -1149,7 +1149,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
       console.log(`[ChatStore] Loaded ${data.messages?.length ?? 0} messages for session ${sessionId}`);
 
-      const converted = (data.messages ?? []).map((e) => convertConversationEntry(e, agentId));
+      const converted = mergeDocumentUploads(data.messages ?? [], agentId);
 
       set((state) => {
         if (state.loadSequence !== seq) {
@@ -1326,6 +1326,57 @@ function convertConversationEntry(entry: ConversationEntry, agentId: string): Ch
   }
 
   return base;
+}
+
+/**
+ * Merge document_upload entries into their following user messages,
+ * and strip document-enriched content (appended by backend doc_reader)
+ * from user message content.
+ *
+ * Backend persists document uploads as separate system-role entries with
+ * metadata.type === "document_upload", and appends document parsed text to
+ * the user message content. This reverses both to match the frontend's
+ * optimistic message format (documents array inline in user message).
+ */
+function mergeDocumentUploads(entries: ConversationEntry[], agentId: string): ChatMessage[] {
+  const ENRICHMENT_TEXT = "The following documents were uploaded by the user.";
+  const result: ChatMessage[] = [];
+  let pendingDocs: ChatMessage["documents"] = [];
+
+  for (const entry of entries) {
+    // Collect document_upload entries to merge into the following user message
+    if (entry.metadata?.type === "document_upload") {
+      const meta = entry.metadata;
+      pendingDocs.push({
+        filename: (meta.filename as string) || "",
+        format: (meta.format as string) || "unknown",
+        size: meta.size_bytes as number | undefined,
+        documentId: meta.document_id as string | undefined,
+      });
+      continue;
+    }
+
+    const msg = convertConversationEntry(entry, agentId);
+
+    // Attach pending document info to the next user message
+    if (msg.type === "user" && pendingDocs.length > 0) {
+      msg.documents = pendingDocs;
+      pendingDocs = [];
+
+      // Strip enriched document content from user message content
+      if (msg.content) {
+        const idx = msg.content.indexOf(ENRICHMENT_TEXT);
+        if (idx !== -1) {
+          // Strip from the enrichment text start, handling optional "\n\n" prefix
+          msg.content = msg.content.substring(0, idx).replace(/\n\n$/, "");
+        }
+      }
+    }
+
+    result.push(msg);
+  }
+
+  return result;
 }
 
 // ── WebSocket event handler — routes by event.session_id ──────────────

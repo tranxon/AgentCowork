@@ -24,6 +24,7 @@ interactive-cli = ["dialoguer"]
 rollball-core.workspace = true
 rollball-memory.workspace = true
 rollball-grafeo.workspace = true
+rollball-mcp.workspace = true
 grafeo-common.workspace = true
 grafeo-core.workspace = true
 async-trait.workspace = true

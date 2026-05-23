@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use rollball_core::tools::traits::Tool;
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
 
@@ -149,6 +150,7 @@ impl SessionTask {
         identity_context: Option<String>,
         override_model: Option<String>,
         protocol_type: rollball_core::protocol::ProtocolType,
+        mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
@@ -158,7 +160,11 @@ impl SessionTask {
         let debug_ctrl = core.debug_ctrl().cloned();
         let rewind_notify = core.debug_rewind_notify().cloned();
         let resume_notify = core.debug_resume_notify().cloned();
-        let core_for_session = core.clone_for_session(chunk_tx.clone(), session_id.clone());
+        let mut core_for_session = core.clone_for_session(chunk_tx.clone(), session_id.clone());
+        // Merge MCP tool wrappers into the session's tool dispatch list
+        if let Some(ref mcp) = mcp_tools {
+            core_for_session.tools.extend(mcp.clone());
+        }
         let (agent_loop, agent_inbound_tx) =
             AgentLoop::from_core_and_session(core_for_session, session);
 

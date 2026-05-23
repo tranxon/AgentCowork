@@ -591,6 +591,7 @@ fn is_memory_result(msg: &proto::ClientMessage) -> bool {
             | Some(proto::client_message::Payload::MemoryStatsResult(_))
             | Some(proto::client_message::Payload::MemoryConsolidateResult(_))
             | Some(proto::client_message::Payload::MemoryDeleteResult(_))
+            | Some(proto::client_message::Payload::ConfigSnapshot(_))
     )
 }
 

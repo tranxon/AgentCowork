@@ -551,8 +551,9 @@ pub async fn get_agent_model(
     let gw = state.gateway_state.read().await;
 
     // Verify agent exists
-    let info = gw.installed_agents.get(&agent_id)
-        .ok_or_else(|| ApiError::not_found(&format!("Agent not found: {}", agent_id)))?;
+    if !gw.installed_agents.contains_key(&agent_id) {
+        return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
+    }
 
     // Resolve provider and models from Gateway config / Vault
     let default_provider = gw.config.as_ref()
@@ -577,29 +578,29 @@ pub async fn get_agent_model(
         .or(vault_entry.default_model.clone())
         .unwrap_or_default();
 
-    // Try reading per-agent model preference from workspace
-    let workspace = std::path::Path::new(&info.install_path).join("workspace");
-    let model_path = workspace.join(".agent_model.json");
-    let (active_model, active_provider) = if model_path.exists() {
-        match std::fs::read_to_string(&model_path) {
-            Ok(content) => {
-                // Parse both "model" and "provider" fields
-                if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let model = obj.get("model")
-                        .and_then(|v| v.as_str())
-                        .map(|m| m.to_string());
-                    let provider = obj.get("provider")
-                        .and_then(|v| v.as_str())
-                        .map(|p| p.to_string());
-                    (model, provider)
-                } else {
-                    (None, None)
+    // Per-agent model preference is owned by the Agent Runtime
+    // (workspace/config/agent_model.json). The Gateway queries it via
+    // QueryConfig IPC when the Runtime is connected.
+    let (active_model, active_provider) = {
+        if let Some(ref grpc_mgr) = state.grpc_session_mgr {
+            let query = rollball_core::proto::server_message::Payload::QueryConfig(
+                rollball_core::proto::QueryConfig {
+                    request_id: uuid::Uuid::new_v4().to_string(),
+                },
+            );
+            match crate::http::memory_api::grpc_memory_roundtrip(grpc_mgr, &agent_id, query).await {
+                Some(response) => {
+                    if let Some(rollball_core::proto::client_message::Payload::ConfigSnapshot(snap)) = response.payload {
+                        (snap.model, snap.provider)
+                    } else {
+                        (None, None)
+                    }
                 }
+                None => (None, None),
             }
-            Err(_) => (None, None),
+        } else {
+            (None, None)
         }
-    } else {
-        (None, None)
     };
 
     // Resolve vault entry: prefer per-agent provider, fallback to default
@@ -852,6 +853,7 @@ pub async fn update_agent_config(
     let req_system_prompt_override = req.system_prompt_override.clone();
     let req_active_tools = req.active_tools.clone();
     let req_shell_approval_threshold = req.shell_approval_threshold;
+    let req_mcp_servers = req.mcp_servers.clone();
     let updated = AgentConfigOverride {
         max_output_tokens: req.max_output_tokens.or(existing.max_output_tokens),
         max_iterations: req.max_iterations.or(existing.max_iterations),
@@ -865,6 +867,9 @@ pub async fn update_agent_config(
         shell_approval_threshold: req
             .shell_approval_threshold
             .or(existing.shell_approval_threshold),
+        mcp_servers: req
+            .mcp_servers
+            .or(existing.mcp_servers),
     };
 
     // Save to disk
@@ -888,6 +893,9 @@ pub async fn update_agent_config(
                     system_prompt_override: req_system_prompt_override,
                     active_tools: req_active_tools,
                     shell_approval_threshold: req_shell_approval_threshold.map(|t| format!("{:?}", t).to_lowercase()),
+                    mcp_servers: req_mcp_servers,
+                    model: None,
+                    provider: None,
                 })
                 .await;
             if !push_result {

@@ -853,30 +853,10 @@ pub async fn resolve_llm_config_for_agent(
     match state_guard.vault.get_provider(&provider_name) {
         Ok(entry) => {
             // Model resolution: per-agent preference > config default > Vault default > None
-            // 1. Check per-agent model preference from workspace .agent_model.json
-            let (per_agent_model, per_agent_provider) = state_guard.installed_agents.get(agent_id)
-                .and_then(|info| {
-                    let workspace = std::path::Path::new(&info.install_path).join("workspace");
-                    let model_path = workspace.join(".agent_model.json");
-                    if model_path.exists() {
-                        std::fs::read_to_string(&model_path).ok()
-                            .and_then(|content| {
-                                serde_json::from_str::<serde_json::Value>(&content).ok()
-                                    .map(|obj| {
-                                        let model = obj.get("model")
-                                            .and_then(|v| v.as_str())
-                                            .map(|m| m.to_string());
-                                        let provider = obj.get("provider")
-                                            .and_then(|v| v.as_str())
-                                            .map(|p| p.to_string());
-                                        (model, provider)
-                                    })
-                            })
-                    } else {
-                        None
-                    }
-                })
-                .unwrap_or((None, None));
+            // 1. Per-agent model preference is owned by the Agent Runtime
+            //    (workspace/config/agent_model.json). The Gateway will query it via
+            //    QueryConfig IPC when the Runtime is connected.
+            let (per_agent_model, per_agent_provider): (Option<String>, Option<String>) = (None, None);
 
             // 2. Cross-provider resolution: if the per-agent preference
             //    specifies a DIFFERENT provider than the default, look up

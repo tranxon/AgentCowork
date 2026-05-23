@@ -11,6 +11,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use rollball_core::protocol::McpServerConfigDef;
 use rollball_core::ShellApprovalThreshold;
 
 use crate::error::GatewayError;
@@ -38,6 +39,9 @@ pub struct AgentConfigOverride {
     /// Shell command approval threshold (None = use default Medium).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_approval_threshold: Option<ShellApprovalThreshold>,
+    /// MCP server configurations (None = keep current).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<McpServerConfigDef>>,
 }
 
 /// Effective (merged) config returned to API consumers.
@@ -60,6 +64,9 @@ pub struct AgentConfigResponse {
     pub active_tools: Vec<String>,
     /// Effective shell approval threshold
     pub shell_approval_threshold: ShellApprovalThreshold,
+    /// Effective MCP server configurations
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServerConfigDef>,
 }
 
 /// PUT request body for updating agent config.
@@ -77,6 +84,8 @@ pub struct UpdateAgentConfigRequest {
     pub active_tools: Option<Vec<String>>,
     #[serde(default)]
     pub shell_approval_threshold: Option<ShellApprovalThreshold>,
+    #[serde(default)]
+    pub mcp_servers: Option<Vec<McpServerConfigDef>>,
 }
 
 /// Default global values used as fallback when no override exists.
@@ -168,5 +177,8 @@ pub fn get_effective_config(
         shell_approval_threshold: over
             .and_then(|o| o.shell_approval_threshold)
             .unwrap_or(DEFAULT_SHELL_APPROVAL_THRESHOLD),
+        mcp_servers: over
+            .and_then(|o| o.mcp_servers.clone())
+            .unwrap_or_default(),
     }
 }

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "rollball-core",
+    "rollball-mcp",
     "rollball-memory",
     "rollball-runtime",
     "rollball-gateway",
@@ -137,6 +138,7 @@ wasmtime-wasi = "29"
 
 # Internal crate references
 rollball-core = { path = "rollball-core" }
+rollball-mcp = { path = "rollball-mcp" }
 rollball-memory = { path = "rollball-memory" }
 rollball-grafeo = { path = "rollball-grafeo" }
 rollball-runtime = { path = "rollball-runtime" }

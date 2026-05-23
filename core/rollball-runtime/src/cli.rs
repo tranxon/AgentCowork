@@ -1177,7 +1177,7 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
     // On cold start, restore that preference if the model is still available.
 
 
-    if let Some((saved_model, _saved_provider)) = load_agent_model(&config.work_dir) {
+    if let Some((saved_model, saved_provider)) = load_agent_model(&config.work_dir) {
 
 
         if available_models.contains(&saved_model) {
@@ -1213,24 +1213,45 @@ async fn async_main(config: RuntimeConfig, log_reload_handle: Option<LogReloadHa
         } else {
 
 
+            // Model not in default provider's list — could be from a
+            // different provider that was selected in a previous session.
+            // Do NOT delete agent_model.json; the saved preference is
+            // still valid and will be used when the correct provider is
+            // resolved (e.g., after a model_switch or LLMConfigDelivery).
             tracing::warn!(
 
 
                 saved_model = %saved_model,
 
 
-                available = ?available_models,
+                saved_provider = ?saved_provider,
 
 
-                "Saved model no longer available, removing .agent_model.json"
+                default_provider_models = ?available_models,
+
+
+                "Saved model not in default provider's model list "
 
 
             );
+            // Still restore the saved model — trust the user's preference.
+            // The provider mismatch will be resolved when the Gateway delivers
+            // LLMConfigDelivery for the correct provider via model_switch.
+            tracing::info!(
 
 
-            remove_agent_model(&config.work_dir);
+                saved_model = %saved_model,
 
 
+                saved_provider = ?saved_provider,
+
+
+                "Restoring saved model despite provider mismatch"
+
+
+            );
+            context_builder.set_override_model(saved_model.clone());
+            resolved_model = saved_model;
         }
 
 
@@ -2892,6 +2913,8 @@ async fn run_gateway_loop(
 
     tracing::info!("Gateway message loop started (pure routing mode)");
 
+    use rollball_core::proto;
+    use rollball_core::proto::server_message::Payload as ServerPayload;
 
     // Main message loop — receive messages from Gateway and route them.
 
@@ -2965,37 +2988,67 @@ async fn run_gateway_loop(
                         Some((request_id, payload)) => {
 
 
-                            // Spawn to a separate task so Grafeo queries don't block
+                            // Handle QueryConfig inline (no Grafeo needed)
+                            if let ServerPayload::QueryConfig(_q) = &payload {
+                                let (current_model, current_provider) =
+                                    load_agent_model(&work_dir).unwrap_or((String::new(), None));
+                                let overrides = &session_manager.runtime_overrides;
+
+                                let snapshot = proto::client_message::Payload::ConfigSnapshot(
+                                    proto::ConfigSnapshot {
+                                        request_id: String::new(),
+                                        model: if current_model.is_empty() { None } else { Some(current_model) },
+                                        provider: current_provider,
+                                        max_output_tokens: overrides.max_output_tokens,
+                                        max_iterations: overrides.max_iterations,
+                                        temperature: overrides.temperature,
+                                        system_prompt_override: overrides.system_prompt_override.clone().unwrap_or_default(),
+                                        active_tools: overrides.active_tools.clone().unwrap_or_default(),
+                                        shell_approval_threshold: overrides.shell_approval_threshold.clone().unwrap_or_default(),
+                                    },
+                                );
+
+                                let response = proto::ClientMessage {
+                                    request_id,
+                                    payload: Some(snapshot),
+                                };
+                                let outbound = grpc_client.outbound_sender();
+                                if let Err(e) = outbound.send(response).await {
+                                    tracing::error!("Failed to send ConfigSnapshot: {}", e);
+                                }
+                            } else {
+                                // Spawn to a separate task so Grafeo queries don't block
 
 
-                            // the select! loop from processing Gateway messages (session
+                                // the select! loop from processing Gateway messages (session
 
 
-                            // refresh, etc.). The task holds cloned Arc/Sender handles.
+                                // refresh, etc.). The task holds cloned Arc/Sender handles.
 
 
-                            let store_opt = session_manager.memory_store().cloned();
+                                let store_opt = session_manager.memory_store().cloned();
 
 
-                            let outbound = grpc_client.outbound_sender();
+                                let outbound = grpc_client.outbound_sender();
 
 
-                            tokio::spawn(spawn_memory_query_handler(
+                                tokio::spawn(spawn_memory_query_handler(
 
 
-                                store_opt,
+                                    store_opt,
 
 
-                                outbound,
+                                    outbound,
 
 
-                                request_id,
+                                    request_id,
 
 
-                                payload,
+                                    payload,
 
 
-                            ));
+                                ));
+                            }
 
 
                         }
@@ -4727,26 +4780,15 @@ async fn process_gateway_recv(
 
 
                     GatewayResponse::RuntimeConfigUpdate {
-
-
                         max_output_tokens,
-
-
                         max_iterations,
-
-
                         temperature,
-
-
                         system_prompt_override,
-
-
                         active_tools,
-
-
                         shell_approval_threshold,
-
-
+                        mcp_servers,
+                        model,
+                        provider,
                     } => {
 
 
@@ -4766,6 +4808,8 @@ async fn process_gateway_recv(
 
 
                             shell_approval_threshold = ?shell_approval_threshold,
+
+                            mcp_server_count = mcp_servers.as_ref().map(|s| s.len()),
 
 
                             "Received RuntimeConfigUpdate from Gateway — applying to current and future sessions"
@@ -4811,6 +4855,26 @@ async fn process_gateway_recv(
 
 
                         );
+
+
+                        // Handle MCP server config changes: connect, disconnect, or reconnect.
+                        if let Some(mcp_configs) = mcp_servers {
+                            session_manager.apply_mcp_servers(mcp_configs).await;
+                        }
+
+                        // Handle model/provider switch from Gateway (same pattern as model_switch action)
+                        if model.is_some() || provider.is_some() {
+                            if let Some(ref model_name) = model {
+                                let provider_ref = provider.as_deref();
+                                save_agent_model(&work_dir, model_name, provider_ref);
+                                session_manager.update_model_override(model_name.clone());
+                            }
+                            tracing::info!(
+                                model = ?model,
+                                provider = ?provider,
+                                "Model/provider override applied from RuntimeConfigUpdate"
+                            );
+                        }
 
 
                         // Hot-rebuild tool definitions when active_tools changes.
@@ -7093,7 +7157,7 @@ fn resolve_skill_mode(
 /// in the LLMConfigDelivery.models list.
 
 
-const AGENT_MODEL_FILE: &str = ".agent_model.json";
+const AGENT_MODEL_FILE: &str = "config/agent_model.json";
 
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -7261,6 +7325,12 @@ fn save_agent_model(work_dir: &str, model: &str, provider: Option<&str>) {
     let path = std::path::Path::new(work_dir).join(AGENT_MODEL_FILE);
 
 
+    // Ensure parent directory exists (config/ may not exist yet)
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+
+
     match serde_json::to_string_pretty(&entry) {
 
 
@@ -7306,6 +7376,16 @@ fn save_agent_model(work_dir: &str, model: &str, provider: Option<&str>) {
 /// model list (e.g. provider was changed or model was removed).
 
 
+///
+
+
+/// NOTE: This function is intentionally NOT called automatically.
+
+
+/// agent_model.json is the user's preference — never auto-delete it.
+
+
+#[allow(dead_code)]
 fn remove_agent_model(work_dir: &str) {
 
 
