@@ -52,12 +52,13 @@ pub struct StdioTransport {
 
 impl StdioTransport {
     pub fn new(config: &McpServerConfig) -> Result<Self> {
+        let server_name = config.name.clone();
         let mut child = Command::new(&config.command)
             .args(&config.args)
             .envs(&config.env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::inherit())
+            .stderr(std::process::Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("failed to spawn MCP server `{}`", config.name))?;
@@ -71,6 +72,17 @@ impl StdioTransport {
             .take()
             .ok_or_else(|| anyhow!("no stdout on MCP server `{}`", config.name))?;
         let stdout_lines = BufReader::new(stdout).lines();
+
+        // Capture stderr in a background task and forward to tracing
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                let reader = BufReader::new(stderr);
+                let mut lines = reader.lines();
+                while let Ok(Some(line)) = lines.next_line().await {
+                    tracing::debug!(target: "mcp::stderr", server = %server_name, "{}", line);
+                }
+            });
+        }
 
         Ok(Self {
             _child: child,
@@ -385,9 +397,9 @@ async fn read_first_jsonrpc_from_sse_response(
 /// Create a transport based on config.
 pub fn create_transport(config: &McpServerConfig) -> Result<Box<dyn McpTransportConn>> {
     match config.transport {
-        crate::config::McpTransport::Stdio => Ok(Box::new(StdioTransport::new(config)?)),
-        crate::config::McpTransport::Http => Ok(Box::new(HttpTransport::new(config)?)),
-        crate::config::McpTransport::Sse => {
+        crate::config::McpTransportDef::Stdio => Ok(Box::new(StdioTransport::new(config)?)),
+        crate::config::McpTransportDef::Http => Ok(Box::new(HttpTransport::new(config)?)),
+        crate::config::McpTransportDef::Sse => {
             // SSE transport uses the same HTTP client path for streamable HTTP
             Ok(Box::new(HttpTransport::new(config)?))
         }
@@ -397,13 +409,13 @@ pub fn create_transport(config: &McpServerConfig) -> Result<Box<dyn McpTransport
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::McpTransport;
+    use crate::config::McpTransportDef;
 
     #[test]
     fn test_create_transport_stdio_fails_with_no_command() {
         let config = McpServerConfig {
             name: "test".into(),
-            transport: McpTransport::Stdio,
+            transport: McpTransportDef::Stdio,
             command: "".into(),
             ..Default::default()
         };
@@ -414,7 +426,7 @@ mod tests {
     fn test_create_transport_http_requires_url() {
         let config = McpServerConfig {
             name: "test".into(),
-            transport: McpTransport::Http,
+            transport: McpTransportDef::Http,
             ..Default::default()
         };
         assert!(create_transport(&config).is_err());
@@ -424,7 +436,7 @@ mod tests {
     fn test_create_transport_http_with_url_succeeds() {
         let config = McpServerConfig {
             name: "test".into(),
-            transport: McpTransport::Http,
+            transport: McpTransportDef::Http,
             url: Some("http://localhost:9999/mcp".into()),
             ..Default::default()
         };

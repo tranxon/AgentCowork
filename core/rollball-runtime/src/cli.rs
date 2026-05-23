@@ -3002,9 +3002,9 @@ async fn run_gateway_loop(
                                         max_output_tokens: overrides.max_output_tokens,
                                         max_iterations: overrides.max_iterations,
                                         temperature: overrides.temperature,
-                                        system_prompt_override: overrides.system_prompt_override.clone().unwrap_or_default(),
+                                        system_prompt_override: overrides.system_prompt_override.clone(),
                                         active_tools: overrides.active_tools.clone().unwrap_or_default(),
-                                        shell_approval_threshold: overrides.shell_approval_threshold.clone().unwrap_or_default(),
+                                        shell_approval_threshold: overrides.shell_approval_threshold.clone(),
                                     },
                                 );
 

@@ -131,7 +131,7 @@ export function SkillsPanel() {
 
         {/* Dropdown menu */}
         {open && (
-          <div className="absolute bottom-full left-0 mb-2 w-72 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
+          <div className="absolute bottom-full left-0 mb-1 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
             {/* Skills list */}
             <div className="max-h-56 overflow-y-auto py-1">
               {loading && skills.length === 0 ? (
@@ -156,7 +156,7 @@ export function SkillsPanel() {
                         }}
                         className={cn(
                           "flex w-full items-center gap-2 px-2 py-1.5 text-left transition-colors",
-                            "hover:bg-zinc-50 dark:hover:bg-zinc-700/50",
+                          "hover:bg-zinc-50 dark:hover:bg-zinc-700/50",
                         )}
                       >
                         <Wrench className={cn("h-3.5 w-3.5 shrink-0")} style={isActive ? { color: "var(--color-accent)" } : { color: "" }} />
@@ -189,15 +189,13 @@ export function SkillsPanel() {
             <div className="border-t border-zinc-200 dark:border-zinc-700" />
 
             {/* Import Skills button */}
-            <div className="p-2">
-              <button
-                onClick={handleImportClick}
-                className="mx-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-                Import Skills
-              </button>
-            </div>
+            <button
+              onClick={handleImportClick}
+              className="mx-1.5 mt-2 mb-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              Import Skills
+            </button>
           </div>
         )}
       </div>

@@ -39,11 +39,14 @@ pub struct AgentCore {
     pub(crate) manifest: rollball_core::AgentManifest,
     /// LLM Provider
     pub(crate) provider: Arc<dyn Provider>,
-    /// Tool registry
+    /// Tool registry — built-in tools only (used as base for rebuilding).
     pub(crate) tools: Vec<Arc<dyn Tool>>,
     /// MCP (Model Context Protocol) tool wrappers, populated when MCP servers
-    /// have been connected. These are merged into [`tools`] at dispatch time.
+    /// have been connected. These are merged into [`all_tools`] at rebuild time.
     pub(crate) mcp_tools: Option<Vec<Arc<dyn Tool>>>,
+    /// Merged tool list for dispatch — always contains built-in + MCP tools.
+    /// Rebuilt once when MCP tools change, instead of per-dispatch merge.
+    pub(crate) all_tools: Vec<Arc<dyn Tool>>,
     /// Model capabilities from Gateway, keyed by model name.
     /// When Gateway delivers capabilities for a model, they are stored here
     /// so that ContextBuilder can look them up at build() time.
@@ -133,8 +136,9 @@ impl AgentCore {
             config,
             manifest,
             provider,
-            tools,
+            tools: tools.clone(),
             mcp_tools: None,
+            all_tools: tools,
             gateway_model_capabilities: HashMap::new(),
             max_output_tokens_limit: 32_768,
             temperature_override: None,
@@ -152,6 +156,18 @@ impl AgentCore {
             shell_approval_threshold,
             status_tx: None,
         }
+    }
+
+    /// Rebuild the merged `all_tools` list from built-in `tools` + `mcp_tools`.
+    ///
+    /// Call this after MCP tools change (connect/disconnect) so that
+    /// `all_tools` is always up-to-date for dispatch without per-call merging.
+    pub(crate) fn rebuild_all_tools(&mut self) {
+        let mut merged = self.tools.clone();
+        if let Some(ref mcp) = self.mcp_tools {
+            merged.extend(mcp.clone());
+        }
+        self.all_tools = merged;
     }
 
     /// Access the runtime configuration.
@@ -377,6 +393,7 @@ impl AgentCore {
             provider: self.provider.clone(),
             tools: self.tools.clone(),
             mcp_tools: self.mcp_tools.clone(),
+            all_tools: self.all_tools.clone(),
             gateway_model_capabilities: self.gateway_model_capabilities.clone(),
             max_output_tokens_limit: self.max_output_tokens_limit,
             temperature_override: self.temperature_override,

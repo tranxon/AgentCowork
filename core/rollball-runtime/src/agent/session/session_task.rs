@@ -161,10 +161,9 @@ impl SessionTask {
         let rewind_notify = core.debug_rewind_notify().cloned();
         let resume_notify = core.debug_resume_notify().cloned();
         let mut core_for_session = core.clone_for_session(chunk_tx.clone(), session_id.clone());
-        // Merge MCP tool wrappers into the session's tool dispatch list
-        if let Some(ref mcp) = mcp_tools {
-            core_for_session.tools.extend(mcp.clone());
-        }
+        // Set MCP tools and rebuild the merged dispatch list
+        core_for_session.mcp_tools = mcp_tools;
+        core_for_session.rebuild_all_tools();
         let (agent_loop, agent_inbound_tx) =
             AgentLoop::from_core_and_session(core_for_session, session);
 

@@ -508,9 +508,9 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                         max_output_tokens: max_output_tokens.clone(),
                         max_iterations: max_iterations.clone(),
                         temperature: temperature.clone(),
-                        system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
+                        system_prompt_override: system_prompt_override.clone(),
                         active_tools: active_tools.clone().unwrap_or_default(),
-                        shell_approval_threshold: shell_approval_threshold.clone().unwrap_or_default(),
+                        shell_approval_threshold: shell_approval_threshold.clone(),
                     },
                 ))
             }

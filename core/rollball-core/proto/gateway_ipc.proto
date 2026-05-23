@@ -152,9 +152,9 @@ message ConfigSnapshot {
   optional uint64 max_output_tokens = 4;
   optional uint32 max_iterations = 5;
   optional float temperature = 6;
-  string system_prompt_override = 7;
+  optional string system_prompt_override = 7;
   repeated string active_tools = 8;
-  string shell_approval_threshold = 9;
+  optional string shell_approval_threshold = 9;
 }
 
 message IntentReceived          { string from = 1; string action = 2; string params_json = 3; string command = 4; }

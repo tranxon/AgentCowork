@@ -46,7 +46,7 @@ export function WorkspaceSelector() {
     await setCurrentWorkspace(selectedAgentId, dir.id);
     setOpen(false);
   };
-  
+
   const handleBrowse = async () => {
     try {
       const selected = await dialog.open({ directory: true });
@@ -69,7 +69,7 @@ export function WorkspaceSelector() {
       // User cancelled
     }
   };
-  
+
   const handleDelete = useCallback(async (id: string, name: string) => {
     if (!selectedAgentId || deletingId) return;
     setDeletingId(id);
@@ -90,7 +90,7 @@ export function WorkspaceSelector() {
     }
     setConfirmDelete(null);
   }, [selectedAgentId, gatewayUrl, addToast, fetchWorkspaces, deletingId]);
-  
+
   const handleToggleAccess = useCallback(async (dir: WorkspaceDir) => {
     if (!selectedAgentId) return;
     const newAccess = dir.access === "read-only" ? "read-write" : "read-only";
@@ -136,11 +136,11 @@ export function WorkspaceSelector() {
           <span className="max-w-[120px] truncate">
             {currentWorkspaceId
               ? (() => {
-                  const w = workspaces.find((ws) => ws.id === currentWorkspaceId);
-                  if (!w) return "Workspace";
-                  const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
-                  return name.length > 24 ? name.slice(0, 24) + "..." : name;
-                })()
+                const w = workspaces.find((ws) => ws.id === currentWorkspaceId);
+                if (!w) return "Workspace";
+                const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
+                return name.length > 24 ? name.slice(0, 24) + "..." : name;
+              })()
               : "Workspace"}
           </span>
           <ChevronDown className="h-3 w-3 text-zinc-400" />
@@ -148,7 +148,7 @@ export function WorkspaceSelector() {
 
         {/* Dropdown menu */}
         {open && (
-          <div className="absolute bottom-full left-0 mb-2 w-80 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
+          <div className="absolute bottom-full left-0 mb-1 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
             {/* Workspace list */}
             <div className="max-h-56 overflow-y-auto py-1">
               {loading ? (
@@ -163,7 +163,7 @@ export function WorkspaceSelector() {
                     const isCurrent = dir.id === currentWorkspaceId;
                     const isDeleting = confirmDelete === dir.id;
                     const displayName = dir.alias || dir.path.split(/[\\/]/).filter(Boolean).pop() || dir.path;
-            
+
                     return (
                       <div
                         key={dir.id}
@@ -184,9 +184,48 @@ export function WorkspaceSelector() {
                             </div>
                           </div>
                         </button>
-            
-                        {/* Action buttons: access toggle + delete */}
+
+                        {/* Action buttons: delete (reversible) + access toggle */}
                         <div className="flex shrink-0 items-center gap-1">
+                          {/* Delete button */}
+                          {isDeleting ? (
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void handleDelete(dir.id, displayName);
+                                }}
+                                disabled={deletingId !== null}
+                                className="rounded px-2 py-0.5 text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                                style={{ backgroundColor: "var(--color-accent)" }}
+                              >
+                                删除
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDelete(null);
+                                }}
+                                className="rounded bg-zinc-200 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-300 dark:bg-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-500"
+                              >
+                                取消
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmDelete(dir.id);
+                              }}
+                              disabled={deletingId !== null}
+                              className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                              style={{}}
+                              title="Remove workspace"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          )}
+
                           {/* Access toggle button */}
                           <button
                             onClick={(e) => {
@@ -208,43 +247,6 @@ export function WorkspaceSelector() {
                               </>
                             )}
                           </button>
-            
-                          {/* Delete button */}
-                          {isDeleting ? (
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  void handleDelete(dir.id, displayName);
-                                }}
-                                disabled={deletingId !== null}
-                                className="rounded bg-red-500 px-2 py-0.5 text-xs text-white hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed"
-                              >
-                                删除
-                              </button>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setConfirmDelete(null);
-                                }}
-                                className="rounded bg-zinc-200 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-300 dark:bg-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-500"
-                              >
-                                取消
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmDelete(dir.id);
-                              }}
-                              disabled={deletingId !== null}
-                              className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Remove workspace"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          )}
                         </div>
                       </div>
                     );
@@ -257,15 +259,13 @@ export function WorkspaceSelector() {
             <div className="border-t border-zinc-200 dark:border-zinc-700" />
 
             {/* Add workspace button */}
-            <div className="p-2">
-              <button
-                onClick={handleBrowse}
-                className="mx-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-              >
-                <FolderPlus className="h-3.5 w-3.5" />
-                Add Workspace
-              </button>
-            </div>
+            <button
+              onClick={handleBrowse}
+              className="mx-1.5 mt-2 mb-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+              Add Workspace
+            </button>
           </div>
         )}
       </div>

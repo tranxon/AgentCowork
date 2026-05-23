@@ -641,7 +641,7 @@ pub enum GatewayResponse {
 ///
 /// This is the wire format for MCP server configs. Both Gateway and Runtime
 /// convert to/from their own internal representations as needed.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct McpServerConfigDef {
     pub name: String,
     #[serde(default)]

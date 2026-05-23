@@ -131,7 +131,7 @@ function GatewayTab() {
               {urlDraft !== gatewayUrl && (
                 <button
                   onClick={handleUrlSave}
-                  className="rounded-md px-3 py-2 text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
+                  className="rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
                 >
                   Apply
                 </button>
@@ -171,7 +171,7 @@ function GatewayTab() {
           <button
             onClick={handleTest}
             disabled={testing}
-            className="rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+            className="rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
           >
             {testing ? "Testing..." : "Test Connection"}
           </button>
@@ -382,7 +382,7 @@ function AppearanceTab() {
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <button
           onClick={() => setShowResetConfirm(true)}
-          className="rounded-lg btn-solid px-3 py-1.5 text-xs"
+          className="rounded-lg btn-solid px-3 py-[var(--ui-btn-py)] text-xs"
         >
           Reset to defaults
         </button>
@@ -447,28 +447,36 @@ function GeneralTab() {
           <label className="block mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
             Log Level
           </label>
-          <select
-            value={currentLogLevel}
-            onChange={async (e) => {
-              const val = e.target.value;
-              try {
-                await fetch(`${getGatewayUrl()}/api/config`, {
-                  method: "PUT",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ log_level: val }),
-                });
-                setConfig((prev) => (prev ? { ...prev, log_level: val } : prev));
-                setLogLevel(val);
-              } catch { /* ignore */ }
-            }}
-            className={selectBase}
-          >
-            <option value="trace">trace</option>
-            <option value="debug">debug</option>
-            <option value="info">info</option>
-            <option value="warn">warn</option>
-            <option value="error">error</option>
-          </select>
+          <div>
+            <select
+              value={currentLogLevel}
+              onChange={async (e) => {
+                const val = e.target.value;
+                try {
+                  await fetch(`${getGatewayUrl()}/api/config`, {
+                    method: "PUT",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ log_level: val }),
+                  });
+                  setConfig((prev) => (prev ? { ...prev, log_level: val } : prev));
+                  setLogLevel(val);
+                } catch { /* ignore */ }
+              }}
+              className="w-[5.5rem] appearance-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+              style={{
+                backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                backgroundPosition: 'right 0.5rem center',
+                backgroundRepeat: 'no-repeat',
+                backgroundSize: '1.5em 1.5em',
+              }}
+            >
+              <option value="trace">trace</option>
+              <option value="debug">debug</option>
+              <option value="info">info</option>
+              <option value="warn">warn</option>
+              <option value="error">error</option>
+            </select>
+          </div>
         </div>
 
         {/* Log file size */}
@@ -509,7 +517,7 @@ function GeneralTab() {
         <button
           onClick={() => setShowDeleteConfirm(true)}
           disabled={deleting}
-          className="rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          className="rounded-lg btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
         >
           {deleting ? "Deleting..." : "Delete all logs"}
         </button>
@@ -527,13 +535,13 @@ function GeneralTab() {
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
-                  className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                  className="rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleDeleteLogs}
-                  className="btn-accent rounded-md px-3 py-1.5 text-xs font-medium"
+                  className="btn-accent rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium"
                 >
                   Confirm Delete
                 </button>

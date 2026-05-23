@@ -534,6 +534,8 @@ impl SessionManager {
 
         if configs.is_empty() {
             tracing::info!("SessionManager: disconnecting all MCP servers");
+            // Disconnect existing MCP connections to release resources
+            self.mcp_manager.disconnect().await;
             self.mcp_tools = None;
             // Rebuild full_tool_specs without MCP tools
             self.rebuild_full_tool_specs_with_mcp();
@@ -550,6 +552,9 @@ impl SessionManager {
             }
             return;
         }
+
+        // Disconnect previous MCP connections before connecting new ones
+        self.mcp_manager.disconnect().await;
 
         let (registry, wrappers, _specs) = self.mcp_manager.connect(&configs).await;
 
@@ -589,8 +594,8 @@ impl SessionManager {
         // We store these separately to avoid losing them on rebuild.
         let mut specs = self.config.full_tool_specs.clone();
 
-        // Remove any previous MCP entries (prefixed with server names containing "__")
-        specs.retain(|(name, _)| !name.contains("__"));
+        // Remove any previous MCP entries (prefixed with "mcp:")
+        specs.retain(|(name, _)| !name.starts_with("mcp:"));
 
         // Add current MCP tool specs
         if let Some(ref wrappers) = self.mcp_tools {

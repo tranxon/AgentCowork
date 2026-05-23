@@ -9,27 +9,7 @@ use std::sync::Arc;
 use rollball_core::protocol::McpServerConfigDef;
 use rollball_core::tools::traits::Tool;
 use rollball_mcp::client::McpRegistry;
-use rollball_mcp::config::{McpServerConfig, McpTransport};
 use rollball_mcp::wrapper::McpToolWrapper;
-
-/// Converts a wire-format [`McpServerConfigDef`] (from rollball-core) into
-/// the rollball-mcp crate's [`McpServerConfig`].
-fn convert_config(def: &McpServerConfigDef) -> McpServerConfig {
-    McpServerConfig {
-        name: def.name.clone(),
-        transport: match def.transport {
-            rollball_core::protocol::McpTransportDef::Stdio => McpTransport::Stdio,
-            rollball_core::protocol::McpTransportDef::Http => McpTransport::Http,
-            rollball_core::protocol::McpTransportDef::Sse => McpTransport::Sse,
-        },
-        url: def.url.clone(),
-        command: def.command.clone(),
-        args: def.args.clone(),
-        env: def.env.clone(),
-        headers: def.headers.clone(),
-        tool_timeout_secs: def.tool_timeout_secs,
-    }
-}
 
 /// MCP connection manager.
 ///
@@ -47,7 +27,7 @@ impl McpManager {
 
     /// Connect to MCP servers and create tool wrappers.
     ///
-    /// - `configs`: list of MCP server configurations (wire format).
+    /// - `configs`: list of MCP server configurations.
     ///
     /// Returns a tuple of:
     ///   - `Arc<McpRegistry>` — shared registry for tool dispatch
@@ -60,19 +40,14 @@ impl McpManager {
         &mut self,
         configs: &[McpServerConfigDef],
     ) -> (Arc<McpRegistry>, Vec<McpToolWrapper>, Vec<(String, serde_json::Value)>) {
-        let mcp_configs: Vec<McpServerConfig> = configs.iter().map(convert_config).collect();
-
-        let registry = match McpRegistry::connect_all(&mcp_configs).await {
-            Ok(reg) => Arc::new(reg),
-            Err(e) => {
-                tracing::error!("MCP manager: failed to connect to any server: {:#}", e);
-                Arc::new(
-                    McpRegistry::connect_all(&[])
-                        .await
-                        .unwrap_or_else(|_| panic!("empty connect_all must not fail")),
-                )
-            }
-        };
+        // McpServerConfigDef is now the single source of truth for MCP config,
+        // shared between rollball-core (wire format) and rollball-mcp (runtime).
+        // No conversion needed — the same type flows through both crates.
+        let registry = Arc::new(
+            McpRegistry::connect_all(configs)
+                .await
+                .expect("connect_all is non-fatal and should never fail"),
+        );
 
         // Build tool wrappers and specs from the registry
         let mut wrappers = Vec::new();
@@ -80,7 +55,7 @@ impl McpManager {
 
         for prefixed_name in registry.tool_names() {
             let prefixed = prefixed_name.clone();
-            if let Some(def) = registry.get_tool_def(&prefixed).await {
+            if let Some(def) = registry.get_tool_def(&prefixed) {
                 let wrapper = McpToolWrapper::new(prefixed.clone(), def, registry.clone());
                 let spec = wrapper.spec();
                 let serialized = serde_json::to_value(&spec).unwrap_or_default();
@@ -108,6 +83,19 @@ impl McpManager {
     pub fn is_connected(&self) -> bool {
         self.registry.as_ref().map_or(false, |r| !r.is_empty())
     }
+
+    /// Disconnect from all MCP servers and release resources.
+    ///
+    /// Closes transport connections (kills stdio child processes, releases
+    /// HTTP connection pools). After calling disconnect, the manager is
+    /// reset to the empty state and `connect()` must be called again before
+    /// using MCP tools.
+    pub async fn disconnect(&mut self) {
+        if let Some(registry) = self.registry.take() {
+            registry.disconnect().await;
+            tracing::info!("MCP manager: disconnected from all servers");
+        }
+    }
 }
 
 impl Default for McpManager {
@@ -120,44 +108,6 @@ impl Default for McpManager {
 mod tests {
     use super::*;
     use rollball_core::protocol::McpTransportDef;
-
-    #[test]
-    fn convert_config_basic_stdio() {
-        let def = McpServerConfigDef {
-            name: "test-server".to_string(),
-            transport: McpTransportDef::Stdio,
-            url: None,
-            command: "test-cmd".to_string(),
-            args: vec!["--verbose".to_string()],
-            env: Default::default(),
-            headers: Default::default(),
-            tool_timeout_secs: Some(30),
-        };
-        let cfg = convert_config(&def);
-        assert_eq!(cfg.name, "test-server");
-        assert_eq!(cfg.command, "test-cmd");
-        assert_eq!(cfg.args, vec!["--verbose"]);
-        assert_eq!(cfg.tool_timeout_secs, Some(30));
-        assert!(matches!(cfg.transport, McpTransport::Stdio));
-        assert!(cfg.url.is_none());
-    }
-
-    #[test]
-    fn convert_config_http_transport() {
-        let def = McpServerConfigDef {
-            name: "http-srv".to_string(),
-            transport: McpTransportDef::Http,
-            url: Some("http://localhost:8080/mcp".to_string()),
-            command: String::new(),
-            args: vec![],
-            env: Default::default(),
-            headers: Default::default(),
-            tool_timeout_secs: None,
-        };
-        let cfg = convert_config(&def);
-        assert!(matches!(cfg.transport, McpTransport::Http));
-        assert_eq!(cfg.url, Some("http://localhost:8080/mcp".to_string()));
-    }
 
     #[test]
     fn mcp_manager_default_is_not_connected() {
@@ -174,5 +124,27 @@ mod tests {
         assert!(wrappers.is_empty());
         assert!(specs.is_empty());
         assert!(!mgr.is_connected());
+    }
+
+    #[test]
+    fn config_def_is_shared_type() {
+        // McpServerConfigDef is now used directly by rollball-mcp,
+        // no separate conversion step needed.
+        let def = McpServerConfigDef {
+            name: "test-server".to_string(),
+            transport: McpTransportDef::Stdio,
+            url: None,
+            command: "test-cmd".to_string(),
+            args: vec!["--verbose".to_string()],
+            env: Default::default(),
+            headers: Default::default(),
+            tool_timeout_secs: Some(30),
+        };
+        assert_eq!(def.name, "test-server");
+        assert_eq!(def.command, "test-cmd");
+        assert_eq!(def.args, vec!["--verbose"]);
+        assert_eq!(def.tool_timeout_secs, Some(30));
+        assert!(matches!(def.transport, McpTransportDef::Stdio));
+        assert!(def.url.is_none());
     }
 }

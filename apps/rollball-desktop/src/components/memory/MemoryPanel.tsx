@@ -87,7 +87,7 @@ export function MemoryPanel() {
           <button
             onClick={handleConsolidate}
             disabled={loading}
-            className="inline-flex items-center gap-1 rounded-md btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
           >
             <Zap className="h-3 w-3" />
             Consolidate
@@ -95,7 +95,7 @@ export function MemoryPanel() {
           <button
             onClick={handleRefresh}
             disabled={loading}
-            className="inline-flex items-center gap-1 rounded-md btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
           >
             <RefreshCw className={cn("h-3 w-3", loading && "animate-spin")} />
             Refresh
@@ -110,7 +110,7 @@ export function MemoryPanel() {
           value={filters.keyword}
           onChange={(e) => setFilters({ keyword: e.target.value })}
           placeholder="Search nodes..."
-          className="min-w-[160px] flex-1 rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:focus:border-zinc-500"
+          className="min-w-[160px] flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:focus:border-zinc-500"
         />
         <select
           value={filters.type}
@@ -124,7 +124,13 @@ export function MemoryPanel() {
                 | "Autobiographical",
             })
           }
-          className="rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          className="appearance-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+            backgroundPosition: 'right 0.5rem center',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: '1.5em 1.5em',
+          }}
         >
           <option value="All">All Types</option>
           <option value="Knowledge">Knowledge</option>
@@ -139,7 +145,13 @@ export function MemoryPanel() {
               timeRange: e.target.value as "1h" | "1d" | "7d" | "30d" | "all",
             })
           }
-          className="rounded border border-zinc-200 bg-white px-2 py-1 text-[11px] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          className="appearance-none rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+            backgroundPosition: 'right 0.5rem center',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: '1.5em 1.5em',
+          }}
         >
           <option value="all">All Time</option>
           <option value="1h">Last Hour</option>
