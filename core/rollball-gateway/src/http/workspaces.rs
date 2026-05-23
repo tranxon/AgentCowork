@@ -93,54 +93,58 @@ async fn get_cached_config(state: &AppState, agent_id: &str) -> Option<Workspace
 }
 
 /// Helper: push WorkspaceConfigUpdate to Runtime and update the cache.
+///
+/// ADR-009: IPC push is synchronous — we await the result before updating
+/// the in-memory cache. This avoids TOCTOU where the cache shows a config
+/// that Runtime never received (e.g. channel closed mid-push).
 async fn push_and_cache(state: &AppState, agent_id: &str, config: &WorkspaceConfig) -> Result<(), String> {
     let config_json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    // Update in-memory cache
+    // Push to Runtime via IPC first — only update cache on success
+    if let Some(ref session_mgr) = state.session_mgr {
+        let push_tx = {
+            let mgr = session_mgr.lock().await;
+            mgr.find_by_agent_id(agent_id)
+                .and_then(|(_, session)| session.push_sender().cloned())
+        };
+        if let Some(push_tx) = push_tx {
+            let push_msg = rollball_core::protocol::GatewayResponse::WorkspaceConfigUpdate {
+                config_json: config_json.clone(),
+            };
+            if push_tx.send(push_msg).await.is_err() {
+                tracing::warn!(
+                    "Failed to push WorkspaceConfigUpdate to agent={} (channel closed)",
+                    agent_id
+                );
+                return Err(format!(
+                    "Agent {} is not reachable (IPC channel closed), cannot update workspace",
+                    agent_id
+                ));
+            }
+            tracing::info!(
+                "Pushed WorkspaceConfigUpdate to agent={}",
+                agent_id
+            );
+        } else {
+            // Agent has no active IPC session — cannot update workspace
+            return Err(format!(
+                "Agent {} has no active IPC session, cannot update workspace",
+                agent_id
+            ));
+        }
+    } else {
+        return Err("No session manager available".to_string());
+    }
+
+    // IPC push succeeded — now update in-memory cache
     {
         let mut gw = state.gateway_state.write().await;
         if let Some(info) = gw.running_agents.get_mut(agent_id) {
-            info.workspace_config_json = Some(config_json.clone());
-        } else {
-            return Err("Agent not running".to_string());
+            info.workspace_config_json = Some(config_json);
         }
     }
 
-    // Push to Runtime via IPC
-    if let Some(ref session_mgr) = state.session_mgr {
-        let session_mgr = session_mgr.clone();
-        let agent_id = agent_id.to_string();
-        let config_json = config_json.clone();
-        tokio::spawn(async move {
-            let push_tx = {
-                let mgr = session_mgr.lock().await;
-                mgr.find_by_agent_id(&agent_id)
-                    .and_then(|(_, session)| session.push_sender().cloned())
-            };
-            if let Some(push_tx) = push_tx {
-                let push_msg = rollball_core::protocol::GatewayResponse::WorkspaceConfigUpdate {
-                    config_json,
-                };
-                if push_tx.send(push_msg).await.is_err() {
-                    tracing::warn!(
-                        "Failed to push WorkspaceConfigUpdate to agent={} (channel closed)",
-                        agent_id
-                    );
-                } else {
-                    tracing::info!(
-                        "Pushed WorkspaceConfigUpdate to agent={}",
-                        agent_id
-                    );
-                }
-            } else {
-                tracing::debug!(
-                    "Agent {} has no active IPC session, skipping WorkspaceConfigUpdate push",
-                    agent_id
-                );
-            }
-        });
-    }
     Ok(())
 }
 
@@ -152,13 +156,30 @@ pub async fn list_workspaces(
     Path(agent_id): Path<String>,
 ) -> Result<Json<WorkspaceListResponse>, (StatusCode, Json<ApiError>)> {
     // ADR-009 v2: Read from RunningAgentInfo in-memory cache
-    let config = get_cached_config(&state, &agent_id).await
-        .ok_or_else(|| ApiError::not_found("Agent not running or no workspace config available"))?;
+    // If agent is running → return its workspace config
+    // If agent exists but not running → return empty list (per ADR-009)
+    // If agent doesn't exist → return 404
+    let config = get_cached_config(&state, &agent_id).await;
 
-    Ok(Json(WorkspaceListResponse {
-        agent_id,
-        workspaces: config.additional_dirs,
-    }))
+    match config {
+        Some(cfg) => Ok(Json(WorkspaceListResponse {
+            agent_id,
+            workspaces: cfg.additional_dirs,
+        })),
+        None => {
+            // Check if agent exists (installed but not running)
+            let gw = state.gateway_state.read().await;
+            if gw.installed_agents.contains_key(&agent_id) {
+                // Agent exists but not running → empty list per ADR-009
+                Ok(Json(WorkspaceListResponse {
+                    agent_id,
+                    workspaces: vec![],
+                }))
+            } else {
+                Err(ApiError::not_found("Agent not found"))
+            }
+        }
+    }
 }
 
 /// `POST /api/agents/{agent_id}/workspaces` — add a workspace directory

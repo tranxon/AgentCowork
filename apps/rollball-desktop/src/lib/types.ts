@@ -610,17 +610,7 @@ export interface McpServerConfigDef {
 }
 
 /** MCP catalog entry response (env values with sensitive fields masked) */
-export interface McpCatalogEntryResponse {
-  /** The server config (env values may be masked with "••••") */
-  [key: string]: unknown; // flattened McpServerConfigDef
-  name: string;
-  transport: McpTransportDef;
-  url?: string;
-  command: string;
-  args: string[];
-  env: Record<string, string>;
-  headers?: Record<string, string>;
-  tool_timeout_secs?: number;
+export interface McpCatalogEntryResponse extends McpServerConfigDef {
   /** Whether this entry has sensitive env vars that are masked */
   has_secrets: boolean;
 }

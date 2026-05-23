@@ -34,6 +34,38 @@ pub enum WorkspaceAccess {
     ReadWrite,
 }
 
+impl WorkspaceAccess {
+    /// Convert to the string representation used in JSON serialization.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            WorkspaceAccess::ReadOnly => "read-only",
+            WorkspaceAccess::ReadWrite => "read-write",
+        }
+    }
+}
+
+impl std::fmt::Display for WorkspaceAccess {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl serde::Serialize for WorkspaceAccess {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(self.as_str())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for WorkspaceAccess {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        match s.as_str() {
+            "read-write" => Ok(WorkspaceAccess::ReadWrite),
+            _ => Ok(WorkspaceAccess::ReadOnly),
+        }
+    }
+}
+
 /// A single workspace directory entry
 #[derive(Clone, Debug)]
 pub struct WorkspaceDir {
@@ -249,7 +281,7 @@ pub struct WorkspaceDirFull {
     pub path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
-    pub access: String,
+    pub access: WorkspaceAccess,
     pub added_at: String,
     #[serde(default)]
     pub is_current: bool,
@@ -261,22 +293,31 @@ pub struct WorkspaceDirFull {
 
 /// Full workspace config (mirrors Gateway's WorkspaceConfig for file persistence).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct WorkspaceConfigFull {
-    version: String,
+pub struct WorkspaceConfigFull {
+    pub version: String,
     #[serde(default)]
-    additional_dirs: Vec<WorkspaceDirFull>,
+    pub additional_dirs: Vec<WorkspaceDirFull>,
 }
 
 /// Write workspace config JSON to `.agent_workspaces.json` atomically (tmp + rename).
+///
+/// On Windows, `std::fs::rename` fails if the target file exists and is open
+/// (e.g. another thread calling `reload`). We work around this by removing
+/// the old file first. The tmp path uses the full base name so it's clear
+/// which file the temp belongs to.
 pub fn write_workspace_config(work_dir: &str, config_json: &str) -> Result<(), String> {
     let config_dir = Path::new(work_dir).join("config");
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create config dir: {}", e))?;
 
     let config_path = config_dir.join(".agent_workspaces.json");
-    let tmp_path = config_path.with_extension("json.tmp");
+    let tmp_path = config_dir.join(".agent_workspaces.json.tmp");
     std::fs::write(&tmp_path, config_json)
         .map_err(|e| format!("Failed to write temp config: {}", e))?;
+    // Windows: rename fails if target exists and is open, so remove first.
+    // On Unix this is a no-op if the rename succeeds, but the remove is
+    // harmless and ensures Windows compatibility.
+    let _ = std::fs::remove_file(&config_path);
     std::fs::rename(&tmp_path, &config_path)
         .map_err(|e| format!("Failed to rename config: {}", e))?;
 

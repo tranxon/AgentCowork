@@ -375,16 +375,31 @@ async fn hot_push_mcp_config(state: &AppState) {
 
     // Build per-agent merged server lists (skip agents with no MCP)
     // Returns Vec<(agent_id, merged_servers)>
+    //
+    // Note: `load_agent_config` does synchronous file I/O. We run it on a
+    // blocking thread to avoid starving the tokio runtime when many agents
+    // are running concurrently.
+    let data_dir_clone = data_dir.clone();
+    let agent_ids_clone = agent_ids.clone();
+    let per_agent_configs: Vec<(String, Vec<McpServerConfigDef>)> =
+        tokio::task::spawn_blocking(move || {
+            let mut results = Vec::new();
+            for agent_id in &agent_ids_clone {
+                let per_agent = agent_config::load_agent_config(&data_dir_clone, agent_id)
+                    .unwrap_or(None);
+                let active_servers = match &per_agent {
+                    Some(cfg) => cfg.mcp_servers.clone().unwrap_or_default(),
+                    None => Vec::new(),
+                };
+                results.push((agent_id.clone(), active_servers));
+            }
+            results
+        })
+        .await
+        .unwrap_or_default();
+
     let mut push_targets: Vec<(String, Vec<McpServerConfigDef>)> = Vec::new();
-    for agent_id in &agent_ids {
-        let per_agent = agent_config::load_agent_config(&data_dir, agent_id)
-            .unwrap_or(None);
-
-        let active_servers = match &per_agent {
-            Some(cfg) => cfg.mcp_servers.clone().unwrap_or_default(),
-            None => Vec::new(),
-        };
-
+    for (agent_id, active_servers) in per_agent_configs {
         if active_servers.is_empty() {
             continue; // Skip agents with no MCP servers
         }
@@ -399,7 +414,7 @@ async fn hot_push_mcp_config(state: &AppState) {
             })
             .collect();
 
-        push_targets.push((agent_id.clone(), merged));
+        push_targets.push((agent_id, merged));
     }
 
     if push_targets.is_empty() {

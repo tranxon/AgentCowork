@@ -1,8 +1,8 @@
-//! MCP preset registry — curated list of popular MCP servers
-//!
-//! These presets are frontend-only definitions that help users quickly
-//! add common MCP servers to their catalog. Each preset defines the
-//! server config template, required env vars (API keys), and install hints.
+// MCP preset registry — curated list of popular MCP servers
+//
+// These presets are frontend-only definitions that help users quickly
+// add common MCP servers to their catalog. Each preset defines the
+// server config template, required env vars (API keys), and install hints.
 
 import type { McpPresetDef } from "./types";
 
