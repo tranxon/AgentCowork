@@ -124,7 +124,7 @@ fn load_workspace_dirs(work_dir: &str) -> (Vec<WorkspaceDir>, Option<usize>) {
         is_current: bool,
     }
 
-    let config_path = Path::new(work_dir).join(".agent_workspaces.json");
+    let config_path = Path::new(work_dir).join("config").join(".agent_workspaces.json");
 
     if !config_path.exists() {
         tracing::warn!(
@@ -261,7 +261,7 @@ mod tests {
                 }
             ]
         }"#;
-        std::fs::write(dir.path().join(".agent_workspaces.json"), config).unwrap();
+        std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
         assert_eq!(resolver.current_dir(), "D:\\projects\\my-project");
@@ -287,7 +287,7 @@ mod tests {
                 }
             ]
         }"#;
-        std::fs::write(dir.path().join(".agent_workspaces.json"), config).unwrap();
+        std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
         // No is_current=true, so falls back to agent_home

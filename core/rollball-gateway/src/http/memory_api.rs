@@ -128,7 +128,7 @@ pub struct ConsolidateResponse {
 ///
 /// Returns `Some(ClientMessage)` on success, `None` if the agent is not
 /// connected, the response times out, or the sender is dropped.
-async fn grpc_memory_roundtrip(
+pub(crate) async fn grpc_memory_roundtrip(
     grpc_mgr: &SharedGrpcSessionMgr,
     agent_id: &str,
     query: rollball_core::proto::server_message::Payload,

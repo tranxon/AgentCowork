@@ -41,6 +41,9 @@ pub struct AgentCore {
     pub(crate) provider: Arc<dyn Provider>,
     /// Tool registry
     pub(crate) tools: Vec<Arc<dyn Tool>>,
+    /// MCP (Model Context Protocol) tool wrappers, populated when MCP servers
+    /// have been connected. These are merged into [`tools`] at dispatch time.
+    pub(crate) mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     /// Model capabilities from Gateway, keyed by model name.
     /// When Gateway delivers capabilities for a model, they are stored here
     /// so that ContextBuilder can look them up at build() time.
@@ -131,6 +134,7 @@ impl AgentCore {
             manifest,
             provider,
             tools,
+            mcp_tools: None,
             gateway_model_capabilities: HashMap::new(),
             max_output_tokens_limit: 32_768,
             temperature_override: None,
@@ -372,6 +376,7 @@ impl AgentCore {
             manifest: self.manifest.clone(),
             provider: self.provider.clone(),
             tools: self.tools.clone(),
+            mcp_tools: self.mcp_tools.clone(),
             gateway_model_capabilities: self.gateway_model_capabilities.clone(),
             max_output_tokens_limit: self.max_output_tokens_limit,
             temperature_override: self.temperature_override,

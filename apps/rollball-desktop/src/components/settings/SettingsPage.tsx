@@ -26,7 +26,7 @@ export function SettingsPage({ initialTab = "profile" }: { initialTab?: Settings
       className="flex flex-1 flex-col bg-zinc-50 dark:bg-zinc-900"
     >
       {/* Tabs */}
-      <div className="flex gap-1 border-b border-zinc-200 px-6 pt-3 dark:border-zinc-800">
+      <div className="flex gap-1 border-b border-zinc-200 px-6 pt-2 dark:border-zinc-800">
         {tabs.map((tab) => (
           <button
             key={tab.id}
@@ -116,66 +116,66 @@ function GatewayTab() {
         <h2 className="mb-3 text-xs font-medium">Gateway Connection</h2>
 
         <div className="space-y-3">
-        <div>
-          <label className="mb-1 block text-xs text-zinc-500">Gateway URL</label>
-          <div className="flex gap-2">
-            <input
-              type="text"
-              value={urlDraft}
-              onChange={(e) => setUrlDraft(e.target.value)}
-              onBlur={handleUrlSave}
-              onKeyDown={handleUrlKeyDown}
-              placeholder={DEFAULT_GATEWAY_URL}
-              className={`flex-1 ${inputBase}`}
-            />
-            {urlDraft !== gatewayUrl && (
-              <button
-                onClick={handleUrlSave}
-                className="rounded-md px-3 py-2 text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
-              >
-                Apply
-              </button>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-zinc-400">
-            Set the Gateway HTTP API address. Default: {DEFAULT_GATEWAY_URL}
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-zinc-500">Status</span>
-          <span
-            className={cn(
-              "h-2 w-2 rounded-full",
-              status === "connected" ? "bg-[var(--color-accent)]" : status === "error" ? "bg-red-500" : "bg-zinc-400",
-            )}
-          />
-          <span className={cn(
-            status === "connected" ? "text-[var(--color-accent)]" :
-            status === "error" ? "text-red-600 dark:text-red-400" :
-            "text-zinc-500"
-          )}>
-            {status === "connected" ? "Connected" : status === "error" ? "Error" : "Disconnected"}
-          </span>
-        </div>
-
-        {health && (
-          <>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="text-zinc-500">Version</span>
-              <span>{health.version}</span>
+          <div>
+            <label className="mb-1 block text-xs text-zinc-500">Gateway URL</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={urlDraft}
+                onChange={(e) => setUrlDraft(e.target.value)}
+                onBlur={handleUrlSave}
+                onKeyDown={handleUrlKeyDown}
+                placeholder={DEFAULT_GATEWAY_URL}
+                className={`flex-1 ${inputBase}`}
+              />
+              {urlDraft !== gatewayUrl && (
+                <button
+                  onClick={handleUrlSave}
+                  className="rounded-md px-3 py-2 text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
+                >
+                  Apply
+                </button>
+              )}
             </div>
-          </>
-        )}
+            <p className="mt-1 text-xs text-zinc-400">
+              Set the Gateway HTTP API address. Default: {DEFAULT_GATEWAY_URL}
+            </p>
+          </div>
 
-        <button
-          onClick={handleTest}
-          disabled={testing}
-          className="rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-        >
-          {testing ? "Testing..." : "Test Connection"}
-        </button>
-      </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="text-zinc-500">Status</span>
+            <span
+              className={cn(
+                "h-2 w-2 rounded-full",
+                status === "connected" ? "bg-[var(--color-accent)]" : status === "error" ? "bg-red-500" : "bg-zinc-400",
+              )}
+            />
+            <span className={cn(
+              status === "connected" ? "text-[var(--color-accent)]" :
+                status === "error" ? "text-red-600 dark:text-red-400" :
+                  "text-zinc-500"
+            )}>
+              {status === "connected" ? "Connected" : status === "error" ? "Error" : "Disconnected"}
+            </span>
+          </div>
+
+          {health && (
+            <>
+              <div className="flex items-center gap-2 text-xs">
+                <span className="text-zinc-500">Version</span>
+                <span>{health.version}</span>
+              </div>
+            </>
+          )}
+
+          <button
+            onClick={handleTest}
+            disabled={testing}
+            className="rounded-md btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+          >
+            {testing ? "Testing..." : "Test Connection"}
+          </button>
+        </div>
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
@@ -212,7 +212,7 @@ function RuntimeRow({ agent }: { agent: AgentListResponse }) {
           setModelInfo({ provider: data.provider, model: data.model });
         }
       })
-      .catch(() => {});
+      .catch(() => { });
     return () => { cancelled = true; };
   }, [agent.agent_id]);
 
@@ -380,26 +380,26 @@ function AppearanceTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-      <button
-        onClick={() => setShowResetConfirm(true)}
-        className="rounded-lg btn-solid px-3 py-1.5 text-xs"
-      >
-        Reset to defaults
-      </button>
+        <button
+          onClick={() => setShowResetConfirm(true)}
+          className="rounded-lg btn-solid px-3 py-1.5 text-xs"
+        >
+          Reset to defaults
+        </button>
 
-      <ConfirmDialog
-        open={showResetConfirm}
-        title="Reset Appearance"
-        message="确定要重置所有外观设置为默认值吗？包括主题、字体大小、内容宽度、透明度和高亮色。"
-        confirmLabel="Reset"
-        destructive
-        onConfirm={() => {
-          setTheme("system"); setFontSize(0.875); setContentWidth(90); setOpacity(1.0); setAccentColor("#3b82f6");
-          setShowResetConfirm(false);
-        }}
-        onCancel={() => setShowResetConfirm(false)}
-      />
-    </div>
+        <ConfirmDialog
+          open={showResetConfirm}
+          title="Reset Appearance"
+          message="确定要重置所有外观设置为默认值吗？包括主题、字体大小、内容宽度、透明度和高亮色。"
+          confirmLabel="Reset"
+          destructive
+          onConfirm={() => {
+            setTheme("system"); setFontSize(0.875); setContentWidth(90); setOpacity(1.0); setAccentColor("#3b82f6");
+            setShowResetConfirm(false);
+          }}
+          onCancel={() => setShowResetConfirm(false)}
+        />
+      </div>
     </div>
   );
 }
@@ -422,7 +422,7 @@ function GeneralTab() {
           setLogFileSizeMb(cfg.log_file_size_mb);
         }
       })
-      .catch(() => {});
+      .catch(() => { });
   }, [setLogLevel, setLogFileSizeMb]);
 
   const currentLogLevel = config?.log_level || logLevel || "info";

@@ -72,7 +72,11 @@ impl AgentLoop {
         let handles: Vec<tokio::task::JoinHandle<()>> = all_indices
             .iter()
             .map(|&idx| {
-                let tools = self.core.tools.clone();
+                let mut tools = self.core.tools.clone();
+                // Merge MCP tool wrappers into the dispatch list
+                if let Some(ref mcp) = self.core.mcp_tools {
+                    tools.extend(mcp.clone());
+                }
                 let tc = tool_calls[idx].clone();
                 let tx = tx.clone();
                 let approval_handle = approval_handle.clone();

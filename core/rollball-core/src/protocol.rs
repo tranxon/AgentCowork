@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::HashMap;
 
 use crate::budget::UsageReport;
 use crate::identity::IdentityEntry;
@@ -281,6 +282,39 @@ pub enum GatewayRequest {
     DeleteSession {
         /// Session identifier to delete
         session_id: String,
+    },
+    /// Config snapshot response (Runtime → Gateway)
+    ///
+    /// Sent by Runtime in response to GatewayResponse::QueryConfig.
+    /// Carries the current per-agent configuration stored in
+    /// workspace/config/agent_config.json and agent_model.json.
+    ConfigSnapshot {
+        /// Correlating request ID from QueryConfig
+        request_id: String,
+        /// Current model name (from workspace/config/agent_model.json)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Current provider name (from workspace/config/agent_model.json)
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+        /// Max output tokens override
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_output_tokens: Option<u64>,
+        /// Max iterations override
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_iterations: Option<u32>,
+        /// Temperature override
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        temperature: Option<f32>,
+        /// System prompt override
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        system_prompt_override: Option<String>,
+        /// Active tool names
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        active_tools: Option<Vec<String>>,
+        /// Shell approval threshold
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shell_approval_threshold: Option<String>,
     },
 }
 
@@ -572,6 +606,27 @@ pub enum GatewayResponse {
         /// "low" | "medium" (default) | "high" | "never"
         #[serde(default, skip_serializing_if = "Option::is_none")]
         shell_approval_threshold: Option<String>,
+        /// MCP server configurations.
+        /// Some(vec![]) means no MCP servers; None means keep current.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mcp_servers: Option<Vec<McpServerConfigDef>>,
+        /// Model name override (e.g. "gpt-4o", "claude-sonnet-4-20250514").
+        /// When set, the Runtime switches to this model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        /// Provider name override (e.g. "openai", "anthropic").
+        /// When set together with `model`, the Runtime switches provider and model.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider: Option<String>,
+    },
+    /// Query config request (Gateway → Runtime)
+    ///
+    /// Gateway sends this to the Runtime to query the current per-agent
+    /// configuration stored in workspace/config/. The Runtime responds
+    /// with GatewayRequest::ConfigSnapshot.
+    QueryConfig {
+        /// Request ID for correlating the response
+        request_id: String,
     },
     /// Unknown or unrecognized message from Gateway.
     ///
@@ -580,6 +635,39 @@ pub enum GatewayResponse {
     /// messages so the agent loop can log and discard it without confusing
     /// it with a legitimate UsageReportAck or other response.
     Unknown {},
+}
+
+/// MCP server configuration definition (transport-agnostic, shared between Gateway and Runtime).
+///
+/// This is the wire format for MCP server configs. Both Gateway and Runtime
+/// convert to/from their own internal representations as needed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpServerConfigDef {
+    pub name: String,
+    #[serde(default)]
+    pub transport: McpTransportDef,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    #[serde(default)]
+    pub tool_timeout_secs: Option<u64>,
+}
+
+/// MCP transport type (wire format).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTransportDef {
+    #[default]
+    Stdio,
+    Http,
+    Sse,
 }
 
 /// Session info DTO for IPC responses (S1.14)

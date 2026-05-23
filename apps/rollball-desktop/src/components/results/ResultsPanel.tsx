@@ -197,7 +197,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
       </div>
       {/* Header with tabs */}
       <div className="border-b border-zinc-200 pt-px dark:border-zinc-800">
-        <div className="flex items-center px-3 pt-1.5">
+        <div className="flex items-center px-3 pt-1">
           <div className="flex gap-0">
             {isDebugMode && (
               <TabButton

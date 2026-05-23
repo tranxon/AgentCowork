@@ -1049,6 +1049,21 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
             }
         }
         Some(ServerPayload::RuntimeConfigUpdate(rcu)) => {
+            let mcp_servers: Option<Vec<rollball_core::protocol::McpServerConfigDef>> =
+                if rcu.mcp_servers_json.is_empty() {
+                    None
+                } else {
+                    let parsed: Vec<rollball_core::protocol::McpServerConfigDef> = rcu
+                        .mcp_servers_json
+                        .iter()
+                        .filter_map(|s| serde_json::from_str(s).ok())
+                        .collect();
+                    if parsed.is_empty() {
+                        None
+                    } else {
+                        Some(parsed)
+                    }
+                };
             GatewayResponse::RuntimeConfigUpdate {
                 max_output_tokens: rcu.max_output_tokens,
                 max_iterations: rcu.max_iterations,
@@ -1068,8 +1083,14 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 } else {
                     Some(rcu.shell_approval_threshold)
                 },
+                mcp_servers,
+                model: rcu.model,
+                provider: rcu.provider,
             }
         }
+        Some(ServerPayload::QueryConfig(q)) => GatewayResponse::QueryConfig {
+            request_id: q.request_id,
+        },
 
         // Response messages (request_id > 0) — included for robustness
         Some(ServerPayload::AgentHelloResult(r)) => GatewayResponse::AgentHelloResult {
@@ -1240,6 +1261,7 @@ fn is_memory_query_payload(msg: &proto::ServerMessage) -> bool {
             | Some(ServerPayload::MemoryStatsQuery(_))
             | Some(ServerPayload::MemoryConsolidateQuery(_))
             | Some(ServerPayload::MemoryDeleteQuery(_))
+            | Some(ServerPayload::QueryConfig(_))
     )
 }
 

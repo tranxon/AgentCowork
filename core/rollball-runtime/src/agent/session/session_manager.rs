@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::protocol::ProtocolType;
+use rollball_core::tools::traits::Tool;
 use rollball_core::Budget;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -20,6 +21,7 @@ use crate::agent::session::session_task::{SessionMessage, SessionTask};
 use crate::agent::session_state::{SessionState, SessionStatus};
 use crate::conversation::ConversationSession;
 use crate::error::{Result, RuntimeError};
+use crate::tools::mcp_manager::McpManager;
 
 /// Configuration for SessionManager.
 #[derive(Debug, Clone)]
@@ -165,7 +167,7 @@ pub struct SessionManager {
     config: SessionManagerConfig,
     /// Runtime config overrides (accumulated from Gateway pushes) that
     /// must be re-applied to every newly created session.
-    runtime_overrides: RuntimeConfigOverrides,
+    pub runtime_overrides: RuntimeConfigOverrides,
     /// Cached workspace context (from AgentHello or Gateway push) that
     /// must be re-applied to every newly created session.
     workspace_context: Option<String>,
@@ -176,6 +178,11 @@ pub struct SessionManager {
     /// when an incoming message does not specify an explicit session_id.
     /// Owned here (not in cli.rs) so SessionManager is the single source of truth.
     current_session_id: String,
+    /// MCP tool wrappers, built when MCP servers are connected.
+    /// Merged into each new session's tools at creation time.
+    mcp_tools: Option<Vec<Arc<dyn Tool>>>,
+    /// MCP connection manager.
+    mcp_manager: McpManager,
 }
 
 impl SessionManager {
@@ -192,6 +199,8 @@ impl SessionManager {
             workspace_context: None,
             cached_llm: None,
             current_session_id: initial_session_id,
+            mcp_tools: None,
+            mcp_manager: McpManager::new(),
         }
     }
 
@@ -241,6 +250,7 @@ impl SessionManager {
             self.config.identity_context.clone(),
             self.config.override_model.clone(),
             self.config.protocol_type.clone(),
+            self.mcp_tools.clone(),
         );
 
         // ADR-014: Create watch channel for session status
@@ -505,6 +515,93 @@ impl SessionManager {
         self.broadcast(SessionMessage::UpdateActiveTools {
             tool_definitions,
         })
+    }
+
+    /// Apply MCP server configuration changes from Gateway RuntimeConfigUpdate.
+    ///
+    /// Connects to (or disconnects from) MCP servers and updates:
+    ///   - `self.mcp_tools` — the tool wrappers for dispatch
+    ///   - `self.config.full_tool_specs` — LLM-facing tool definitions
+    ///   - `self.config.tool_definitions` — current active tool definitions
+    ///
+    /// When `configs` is `Some(vec![])`, all MCP servers are disconnected.
+    /// When `configs` is `Some(non_empty)`, MCP servers are (re)connected.
+    pub async fn apply_mcp_servers(
+        &mut self,
+        configs: Vec<rollball_core::protocol::McpServerConfigDef>,
+    ) {
+        use rollball_core::tools::traits::Tool;
+
+        if configs.is_empty() {
+            tracing::info!("SessionManager: disconnecting all MCP servers");
+            self.mcp_tools = None;
+            // Rebuild full_tool_specs without MCP tools
+            self.rebuild_full_tool_specs_with_mcp();
+            // Rebuild tool_definitions from the updated specs
+            if let Some(ref active_tools) = self.runtime_overrides.active_tools {
+                let rebuilt = crate::agent::context::build_tool_definitions_from_names(
+                    active_tools,
+                    &self.config.full_tool_specs,
+                );
+                self.config.tool_definitions = rebuilt.clone();
+                self.broadcast(SessionMessage::UpdateActiveTools {
+                    tool_definitions: rebuilt,
+                });
+            }
+            return;
+        }
+
+        let (registry, wrappers, _specs) = self.mcp_manager.connect(&configs).await;
+
+        // Store MCP tool wrappers (Arc<dyn Tool>) for dispatch
+        let mcp_tool_arcs: Vec<Arc<dyn Tool>> = wrappers
+            .into_iter()
+            .map(|w| Arc::new(w) as Arc<dyn Tool>)
+            .collect();
+        self.mcp_tools = Some(mcp_tool_arcs);
+
+        // Update full_tool_specs to include MCP tool specs
+        self.rebuild_full_tool_specs_with_mcp();
+
+        // Update tool_definitions to include MCP tools
+        if let Some(ref active_tools) = self.runtime_overrides.active_tools {
+            let rebuilt = crate::agent::context::build_tool_definitions_from_names(
+                active_tools,
+                &self.config.full_tool_specs,
+            );
+            self.config.tool_definitions = rebuilt.clone();
+            self.broadcast(SessionMessage::UpdateActiveTools {
+                tool_definitions: rebuilt,
+            });
+        }
+
+        tracing::info!(
+            server_count = registry.server_count(),
+            tool_count = registry.tool_count(),
+            "SessionManager: MCP servers applied"
+        );
+    }
+
+    /// Rebuild `full_tool_specs` by merging the original built-in specs with
+    /// any currently connected MCP tool specs.
+    fn rebuild_full_tool_specs_with_mcp(&mut self) {
+        // Start from the original built-in tool specs (stored at init time).
+        // We store these separately to avoid losing them on rebuild.
+        let mut specs = self.config.full_tool_specs.clone();
+
+        // Remove any previous MCP entries (prefixed with server names containing "__")
+        specs.retain(|(name, _)| !name.contains("__"));
+
+        // Add current MCP tool specs
+        if let Some(ref wrappers) = self.mcp_tools {
+            for tool in wrappers {
+                let tool_spec = tool.spec();
+                let serialized = serde_json::to_value(&tool_spec).unwrap_or_default();
+                specs.push((tool_spec.name, serialized));
+            }
+        }
+
+        self.config.full_tool_specs = specs;
     }
 
     /// Cache LLM config (provider, capabilities, limit) from LLMConfigDelivery

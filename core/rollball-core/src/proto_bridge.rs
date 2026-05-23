@@ -489,6 +489,31 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                     proto::DeleteSessionRequest { session_id: session_id.clone() },
                 ))
             }
+            protocol::GatewayRequest::ConfigSnapshot {
+                request_id: snap_request_id,
+                model,
+                provider,
+                max_output_tokens,
+                max_iterations,
+                temperature,
+                system_prompt_override,
+                active_tools,
+                shell_approval_threshold,
+            } => {
+                Some(proto::client_message::Payload::ConfigSnapshot(
+                    proto::ConfigSnapshot {
+                        request_id: snap_request_id.clone(),
+                        model: model.clone(),
+                        provider: provider.clone(),
+                        max_output_tokens: max_output_tokens.clone(),
+                        max_iterations: max_iterations.clone(),
+                        temperature: temperature.clone(),
+                        system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
+                        active_tools: active_tools.clone().unwrap_or_default(),
+                        shell_approval_threshold: shell_approval_threshold.clone().unwrap_or_default(),
+                    },
+                ))
+            }
         };
 
         proto::ClientMessage {
@@ -777,7 +802,19 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 system_prompt_override,
                 active_tools,
                 shell_approval_threshold,
+                mcp_servers,
+                model,
+                provider,
             } => {
+                let mcp_servers_json: Vec<String> = mcp_servers
+                    .as_ref()
+                    .map(|servers| {
+                        servers
+                            .iter()
+                            .map(|s| serde_json::to_string(s).unwrap_or_default())
+                            .collect()
+                    })
+                    .unwrap_or_default();
                 Some(proto::server_message::Payload::RuntimeConfigUpdate(
                     proto::RuntimeConfigUpdate {
                         max_output_tokens: max_output_tokens.clone(),
@@ -786,7 +823,15 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
                         active_tools: active_tools.clone().unwrap_or_default(),
                         shell_approval_threshold: shell_approval_threshold.clone().unwrap_or_default(),
+                        mcp_servers_json,
+                        model: model.clone(),
+                        provider: provider.clone(),
                     },
+                ))
+            }
+            protocol::GatewayResponse::QueryConfig { request_id: q_request_id } => {
+                Some(proto::server_message::Payload::QueryConfig(
+                    proto::QueryConfig { request_id: q_request_id.clone() },
                 ))
             }
             // Unknown messages have no proto representation — they are

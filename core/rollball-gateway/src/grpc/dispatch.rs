@@ -200,6 +200,23 @@ pub async fn dispatch_grpc_request(
             GatewayResponse::CurrentSessionId { session_id: None }
         }
 
+        Some(proto::client_message::Payload::ConfigSnapshot(snap)) => {
+            // ConfigSnapshot is a response to QueryConfig.
+            // The pending request mechanism will route this to the caller.
+            // For now, the gRPC server handles ConfigSnapshot via the pending
+            // request map in the session manager (same as Memory responses).
+            tracing::debug!(
+                request_id = snap.request_id,
+                model = ?snap.model,
+                provider = ?snap.provider,
+                "Received ConfigSnapshot from Runtime"
+            );
+            return proto::ServerMessage {
+                request_id,
+                payload: None,
+            };
+        }
+
         Some(proto::client_message::Payload::StreamChunk(req)) => {
             // Stream chunks target the HTTP/WebSocket client — forward via bridge
             if req.target == "http-ws" || req.target == "http-api" {
