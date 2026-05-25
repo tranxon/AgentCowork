@@ -281,7 +281,7 @@ export interface ContextUsageInfo {
 }
 
 /** Navigation view type */
-export type NavView = "chat" | "settings";
+export type NavView = "chat" | "harness" | "settings";
 
 /** Theme type */
 export type Theme = "light" | "dark" | "system";
