@@ -87,7 +87,7 @@ pub struct WorkspaceDir {
 /// Central resolver for workspace directories.
 ///
 /// Constructed once at startup from the agent's `work_dir`.
-/// Reads `.agent_workspaces.json` to discover user-configured directories.
+/// Reads `agent_workspaces.json` to discover user-configured directories.
 ///
 /// Does NOT manage "current directory" — that is per-session state
 /// owned by `SessionManager`.
@@ -95,14 +95,14 @@ pub struct WorkspaceDir {
 pub struct WorkspaceResolver {
     /// Agent install dir (for logs, conversations, memory, identity)
     agent_home: String,
-    /// All allowed dirs from .agent_workspaces.json + fallbacks
+    /// All allowed dirs from agent_workspaces.json + fallbacks
     allowed_dirs: Vec<WorkspaceDir>,
 }
 
 impl WorkspaceResolver {
     /// Build a resolver from the agent's work_dir.
     ///
-    /// Reads `.agent_workspaces.json` from `work_dir` to discover
+    /// Reads `agent_workspaces.json` from `work_dir` to discover
     /// user-configured workspace directories.
     pub fn new(work_dir: &str) -> Self {
         let allowed_dirs = load_workspace_dirs(work_dir);
@@ -112,7 +112,7 @@ impl WorkspaceResolver {
         }
     }
 
-    /// Reload the resolver from disk (re-reads .agent_workspaces.json).
+    /// Reload the resolver from disk (re-reads agent_workspaces.json).
     ///
     /// Used after receiving a `WorkspaceConfigUpdate` from Gateway, which
     /// writes the updated config to disk before calling this.
@@ -159,7 +159,7 @@ impl WorkspaceResolver {
     }
 }
 
-/// Load workspace directories from `.agent_workspaces.json`.
+/// Load workspace directories from `agent_workspaces.json`.
 fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
     #[derive(Deserialize)]
     #[allow(dead_code)]
@@ -181,13 +181,13 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
         last_active: bool,
     }
 
-    let config_path = Path::new(work_dir).join("config").join(".agent_workspaces.json");
+    let config_path = Path::new(work_dir).join("config").join("agent_workspaces.json");
 
     if !config_path.exists() {
         tracing::warn!(
             work_dir,
             config_path = %config_path.display(),
-            "No .agent_workspaces.json found, using work_dir as default"
+            "No agent_workspaces.json found, using work_dir as default"
         );
         return fallback_dirs(work_dir);
     }
@@ -235,7 +235,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                     work_dir,
                     count = dirs.len(),
                     dirs = ?dirs.iter().map(|d| d.path.as_str()).collect::<Vec<_>>(),
-                    "Loaded workspace directories from .agent_workspaces.json"
+                    "Loaded workspace directories from agent_workspaces.json"
                 );
 
                 dirs
@@ -244,7 +244,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                 tracing::error!(
                     work_dir,
                     error = %e,
-                    "Failed to parse .agent_workspaces.json, using work_dir as default"
+                    "Failed to parse agent_workspaces.json, using work_dir as default"
                 );
                 fallback_dirs(work_dir)
             }
@@ -253,7 +253,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
             tracing::error!(
                 work_dir,
                 error = %e,
-                "Failed to read .agent_workspaces.json, using work_dir as default"
+                "Failed to read agent_workspaces.json, using work_dir as default"
             );
             fallback_dirs(work_dir)
         }
@@ -316,7 +316,7 @@ pub struct WorkspaceConfigFull {
     pub additional_dirs: Vec<WorkspaceDirFull>,
 }
 
-/// Write workspace config JSON to `.agent_workspaces.json` atomically (tmp + rename).
+/// Write workspace config JSON to `agent_workspaces.json` atomically (tmp + rename).
 ///
 /// On Windows, `std::fs::rename` fails if the target file exists and is open
 /// (e.g. another thread calling `reload`). We work around this by removing
@@ -327,8 +327,8 @@ pub fn write_workspace_config(work_dir: &str, config_json: &str) -> Result<(), S
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create config dir: {}", e))?;
 
-    let config_path = config_dir.join(".agent_workspaces.json");
-    let tmp_path = config_dir.join(".agent_workspaces.json.tmp");
+    let config_path = config_dir.join("agent_workspaces.json");
+    let tmp_path = config_dir.join("agent_workspaces.json.tmp");
     std::fs::write(&tmp_path, config_json)
         .map_err(|e| format!("Failed to write temp config: {}", e))?;
     // Windows: rename fails if target exists and is open, so remove first.
@@ -340,7 +340,7 @@ pub fn write_workspace_config(work_dir: &str, config_json: &str) -> Result<(), S
 
     tracing::info!(
         work_dir,
-        "Wrote .agent_workspaces.json from Gateway WorkspaceConfigUpdate"
+        "Wrote agent_workspaces.json from Gateway WorkspaceConfigUpdate"
     );
     Ok(())
 }
@@ -555,7 +555,7 @@ mod tests {
             ]
         }"#;
         std::fs::create_dir_all(dir.path().join("config")).unwrap();
-        std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
+        std::fs::write(dir.path().join("config").join("agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
         assert_eq!(resolver.agent_home(), dir.path().to_str().unwrap());
@@ -588,7 +588,7 @@ mod tests {
             ]
         }"#;
         std::fs::create_dir_all(dir.path().join("config")).unwrap();
-        std::fs::write(dir.path().join("config").join(".agent_workspaces.json"), config).unwrap();
+        std::fs::write(dir.path().join("config").join("agent_workspaces.json"), config).unwrap();
 
         let resolver = WorkspaceResolver::new(dir.path().to_str().unwrap());
 

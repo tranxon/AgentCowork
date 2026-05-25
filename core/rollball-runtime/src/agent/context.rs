@@ -15,7 +15,7 @@ pub struct ContextBuilder {
     system_prompt: String,
     /// Identity context (from Gateway injection)
     identity_context: Option<String>,
-    /// Workspace context (self-formatted from .agent_workspaces.json)
+    /// Workspace context (self-formatted from agent_workspaces.json)
     workspace_context: Option<String>,
     /// Environment info override (for debug patching).
     /// When set, takes precedence over auto-detected platform info.

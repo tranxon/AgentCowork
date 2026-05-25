@@ -11,7 +11,7 @@ Five violations were identified:
 
 | ID | File | Operation | Path |
 |----|------|-----------|------|
-| V1 | `workspaces.rs` | READ + WRITE | `{install_path}/workspace/config/.agent_workspaces.json` |
+| V1 | `workspaces.rs` | READ + WRITE | `{install_path}/workspace/config/agent_workspaces.json` |
 | V2 | `agents.rs` | READ + WRITE | `{install_path}/manifest.toml` |
 | V3 | `agents.rs` | READ | `{install_path}/prompts/*.md` |
 | V4 | `lifecycle/manager.rs` | WRITE | `{install_path}/workspace/.identity_delivery.json` |
@@ -47,7 +47,7 @@ This eliminates the need for dual-path code (IPC + file fallback) entirely.
 
 | Violation | Strategy | Detail |
 |-----------|----------|--------|
-| V1 | IPC push + Runtime persist | Gateway sends `WorkspaceContextUpdate` with full config; Runtime writes `.agent_workspaces.json` itself. Stopped → return empty list. Fix bug: `update_workspace` missing IPC push. |
+| V1 | IPC push + Runtime persist | Gateway sends `WorkspaceContextUpdate` with full config; Runtime writes `agent_workspaces.json` itself. Stopped → return empty list. Fix bug: `update_workspace` missing IPC push. |
 | V2 | Remove `write_manifest_tools` | `active_tools` persistence already exists in per-agent config (`{data_dir}/agent_configs/{id}.json`). Delete `write_manifest_tools()`. `read_manifest_tools()` remains as install-time discovery fallback only (no write-back). Stopped → return empty tools. |
 | V3 | Remove `read_system_prompt` | System prompt is Runtime-internal. Gateway has no business reading it. Stopped → return null. Running → system prompt comes from per-agent config override (`system_prompt_override`). |
 | V4 | `AgentHelloResult` delivery | Delete `std::fs::write(.identity_delivery.json)` in `start_agent()`. Add `identity_entries: Vec<IdentityEntry>` to `AgentHelloResult`. Runtime receives identity after IPC handshake and injects into system prompt. |

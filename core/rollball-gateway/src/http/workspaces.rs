@@ -4,7 +4,7 @@
 //!
 //! **ADR-009 (v2)**: Gateway is pure pass-through for workspace config.
 //! No persistence to disk. Workspace config is maintained by Agent Runtime
-//! (in `.agent_workspaces.json`). Gateway caches the config in `RunningAgentInfo`
+//! (in `agent_workspaces.json`). Gateway caches the config in `RunningAgentInfo`
 //! (in-memory only, cleared on disconnect) to serve HTTP API requests.
 //! CRUD operations serialize the full config → push `WorkspaceConfigUpdate` via IPC.
 //! Agent must be running (HTTP API returns 409 if not).

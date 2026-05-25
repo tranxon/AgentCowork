@@ -1,5 +1,4 @@
 //! rollball-runtime CLI entry point
-
 use clap::Parser;
 use rollball_runtime::cli::Cli;
 

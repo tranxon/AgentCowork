@@ -26,7 +26,7 @@
 | 列表 CRUD 广播 | 不广播，仅更新当前 session；切换到前台时重新格式化 context |
 | `current_dir()` 归属 | 从 `WorkspaceResolver` 移至 `SessionManager` |
 | IPC 新增消息 | `SetSessionWorkspace`（Gateway → Runtime，指定 session_id + workspace_id） |
-| `.agent_workspaces.json` 的 `is_current` | 降级为 `last_active`（仅记录，不驱动 context 格式化） |
+| `agent_workspaces.json` 的 `is_current` | 降级为 `last_active`（仅记录，不驱动 context 格式化） |
 
 ---
 
@@ -102,7 +102,7 @@ pub is_current: bool,
 pub last_active: bool,
 ```
 
-**`.agent_workspaces.json` 解析**：
+**`agent_workspaces.json` 解析**：
 - `load_workspace_dirs()` 不再返回 `current_dir_index`
 - `WorkspaceResolver` 不再有 `current_dir_index` 字段
 
@@ -237,7 +237,7 @@ pub fn format_workspace_context_for_session(
 **修改 `WorkspaceConfigUpdate` 处理**：
 ```rust
 GatewayResponse::WorkspaceConfigUpdate { config_json } => {
-    // 1. Write config to .agent_workspaces.json
+    // 1. Write config to agent_workspaces.json
     write_workspace_config(work_dir, &config_json)?;
 
     // 2. Reload WorkspaceResolver (hot-reload path whitelist)
@@ -537,12 +537,12 @@ useEffect(() => {
 AgentHello 响应后，不再调用 `session_manager.set_workspace_context(fallback)` 广播。改为：
 
 1. 初始 session 创建时，`session_workspaces` 默认为 `"__agent_home__"`
-2. `.agent_workspaces.json` 存在时：读取列表，但 `is_current` 仅用于填充 `last_active`（向前兼容），不影响 context
+2. `agent_workspaces.json` 存在时：读取列表，但 `is_current` 仅用于填充 `last_active`（向前兼容），不影响 context
 3. 初始 session 首次 build context 时，由 `SessionManager` 按 session 的 workspace 格式化
 
 **兼容旧数据**：
-- 如果 `.agent_workspaces.json` 中有 `is_current: true` 的条目 → 初始 session 选中该 workspace（不是 fallback 到 agent home）
-- 写入新的 `.agent_workspaces.json` 时，`is_current` 改为 `last_active`（只保留最后一个 is_current 为 true 的条目）
+- 如果 `agent_workspaces.json` 中有 `is_current: true` 的条目 → 初始 session 选中该 workspace（不是 fallback 到 agent home）
+- 写入新的 `agent_workspaces.json` 时，`is_current` 改为 `last_active`（只保留最后一个 is_current 为 true 的条目）
 
 ---
 

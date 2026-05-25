@@ -1,5 +1,4 @@
 //! Error types for rollball-runtime
-
 use thiserror::Error;
 
 #[derive(Debug, Error)]

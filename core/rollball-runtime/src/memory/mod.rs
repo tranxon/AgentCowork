@@ -1,5 +1,4 @@
 //! Memory module (Grafeo client)
-
 pub mod manager;
 
 pub use manager::{
