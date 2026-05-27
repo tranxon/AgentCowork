@@ -619,19 +619,21 @@ impl SessionManager {
             // Disconnect existing MCP connections to release resources
             self.mcp_manager.disconnect().await;
             self.mcp_tools = None;
+            // Notify all sessions that MCP tools are gone
+            self.broadcast(SessionMessage::UpdateMcpTools { mcp_tools: None });
             // Rebuild full_tool_specs without MCP tools
             self.rebuild_full_tool_specs_with_mcp();
-            // Rebuild tool_definitions from the updated specs
-            if let Some(ref active_tools) = self.runtime_overrides.active_tools {
-                let rebuilt = crate::agent::context::build_tool_definitions_from_names(
-                    active_tools,
-                    &self.config.full_tool_specs,
-                );
-                self.config.tool_definitions = rebuilt.clone();
-                self.broadcast(SessionMessage::UpdateActiveTools {
-                    tool_definitions: rebuilt,
-                });
-            }
+            // Rebuild tool_definitions from the updated specs.
+            // When active_tools is None → use all available tools.
+            let active_tools_ref = self.runtime_overrides.active_tools.as_deref().unwrap_or(&[]);
+            let rebuilt = crate::agent::context::build_tool_definitions_from_names(
+                active_tools_ref,
+                &self.config.full_tool_specs,
+            );
+            self.config.tool_definitions = rebuilt.clone();
+            self.broadcast(SessionMessage::UpdateActiveTools {
+                tool_definitions: rebuilt,
+            });
             return;
         }
 
@@ -645,7 +647,13 @@ impl SessionManager {
             .into_iter()
             .map(|w| Arc::new(w) as Arc<dyn Tool>)
             .collect();
-        self.mcp_tools = Some(mcp_tool_arcs);
+        self.mcp_tools = Some(mcp_tool_arcs.clone());
+
+        // Push MCP tools to all existing sessions so AgentCore.all_tools
+        // is updated for both LLM dispatch and debug snapshot capture.
+        self.broadcast(SessionMessage::UpdateMcpTools {
+            mcp_tools: Some(mcp_tool_arcs),
+        });
 
         // Update full_tool_specs to include MCP tool specs
         self.rebuild_full_tool_specs_with_mcp();

@@ -168,7 +168,7 @@ export const MCP_PRESETS: McpPresetDef[] = [
     category: "browser",
     transport: "stdio",
     command: "npx",
-    args: ["-y", "@anthropic/mcp-playwright"],
+    args: ["-y", "@playwright/mcp"],
     requiredEnv: [],
     optionalEnv: {},
     installHint: "npx auto-installs. Launches headless browser.",

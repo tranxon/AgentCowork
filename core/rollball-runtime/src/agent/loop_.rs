@@ -1286,6 +1286,19 @@ impl AgentLoop {
             // Debug: create context snapshot and push onContextBuilt event
             self.capture_context_snapshot(context_builder, debug_iter).await;
 
+            // Merge MCP tool definitions into the LLM request right before
+            // injection. MCP tools are kept separate from active_tools and
+            // only mixed here (LLM injection) + in debug snapshot capture.
+            if let Some(ref mut tools) = chat_request.tools {
+                for tool in &self.core.all_tools {
+                    let spec = tool.spec();
+                    if spec.name.starts_with("mcp:") {
+                        let val = serde_json::to_value(&spec).unwrap_or_default();
+                        tools.push(val);
+                    }
+                }
+            }
+
             // ③ Call LLM with streaming (S1.5)
             let response = self.call_llm_streaming(&chat_request, context_builder).await?;
 
@@ -2478,13 +2491,21 @@ impl AgentLoop {
 
         use crate::debug::controller::{ContextSnapshot, ContextSnapshotSections, SectionContent};
 
-        // Build tool_definitions string from JSON values
-        let tool_defs_str = context_builder
+        // Build tool_definitions string: merge ContextBuilder's built-in tools
+        // with MCP tools from AgentCore. MCP tools are only mixed at display time
+        // (debug panel) and at LLM injection time, not in active_tools/tool_definitions.
+        let mut all_defs: Vec<serde_json::Value> = context_builder
             .tool_definitions()
-            .map(|defs| {
-                serde_json::Value::Array(defs.to_vec()).to_string()
-            })
+            .map(|defs| defs.to_vec())
             .unwrap_or_default();
+        for tool in &self.core.all_tools {
+            let spec = tool.spec();
+            if spec.name.starts_with("mcp:") {
+                let val = serde_json::to_value(&spec).unwrap_or_default();
+                all_defs.push(val);
+            }
+        }
+        let tool_defs_str = serde_json::Value::Array(all_defs).to_string();
 
         // Build skill_instructions from the ContextBuilder.
         // Skill instructions are injected via ContextBuilder.set_skill_instructions()
