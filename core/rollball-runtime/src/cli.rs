@@ -974,6 +974,26 @@ async fn async_main(
             }
         }
 
+        // ── MCP server auto-connect at startup ──
+        // Load persisted MCP server config from agent_mcp.json and connect to
+        // servers proactively.  Without this, MCP tools are only injected when
+        // the user modifies MCP settings through the Settings UI (which triggers
+        // RuntimeConfigUpdate → apply_mcp_servers).
+        {
+            let mcp_configs = crate::agent_config::load_agent_mcp_config(
+                std::path::Path::new(&config.work_dir),
+            )
+            .unwrap_or_default()
+            .unwrap_or_default();
+            if !mcp_configs.is_empty() {
+                tracing::info!(
+                    mcp_count = mcp_configs.len(),
+                    "Auto-connecting to persisted MCP servers at startup"
+                );
+                session_manager.apply_mcp_servers(mcp_configs).await;
+            }
+        }
+
         // Step 9.8: Send workspace config snapshot to Gateway (in-memory cache only).
         // Gateway does NOT persist workspace config — it caches this for HTTP API responses
         // (list_workspaces, etc.) and discards it when the agent disconnects.

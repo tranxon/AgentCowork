@@ -41,3 +41,4 @@ ref-repo/
 
 # Legacy (before repo restructure)
 /cargo-check-output.txtnul
+.playwright-mcp/

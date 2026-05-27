@@ -43,6 +43,39 @@ pub trait McpTransportConn: Send + Sync {
 
 // ── Stdio Transport ──────────────────────────────────────────────────────
 
+/// Spawn an MCP server command, with Windows fallback for extension-less
+/// commands (e.g. `npx` from NVM symlinks).  On Windows, if the raw command
+/// fails to spawn and lacks a file extension, retry with `.cmd` appended.
+fn spawn_mcp_command(
+    command: &str,
+    args: &[String],
+    env: &std::collections::HashMap<String, String>,
+) -> Result<Child> {
+    let build_cmd = |cmd: &str| -> std::io::Result<Child> {
+        let mut c = Command::new(cmd);
+        c.args(args).envs(env)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .kill_on_drop(true);
+        c.spawn()
+    };
+
+    let result = build_cmd(command);
+
+    // On Windows, commands without extension (like NVM `npx` symlink)
+    // can't be spawned directly.  Retry with `.cmd` suffix.
+    #[cfg(windows)]
+    if result.is_err() && !command.contains('.') {
+        let cmd_ext = format!("{command}.cmd");
+        if let Ok(child) = build_cmd(&cmd_ext) {
+            return Ok(child);
+        }
+    }
+
+    result.map_err(Into::into)
+}
+
 /// Stdio-based transport (spawn local process).
 pub struct StdioTransport {
     _child: Child,
@@ -53,14 +86,7 @@ pub struct StdioTransport {
 impl StdioTransport {
     pub fn new(config: &McpServerConfig) -> Result<Self> {
         let server_name = config.name.clone();
-        let mut child = Command::new(&config.command)
-            .args(&config.args)
-            .envs(&config.env)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()
+        let mut child = spawn_mcp_command(&config.command, &config.args, &config.env)
             .with_context(|| format!("failed to spawn MCP server `{}`", config.name))?;
 
         let stdin = child

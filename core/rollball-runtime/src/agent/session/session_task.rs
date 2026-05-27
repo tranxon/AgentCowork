@@ -19,7 +19,7 @@ use crate::agent::session_state::SessionState;
 use crate::debug::controller::DebugController;
 
 /// Messages that can be sent to a SessionTask.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum SessionMessage {
     /// User chat message to process
     ChatMessage {
@@ -69,6 +69,12 @@ pub enum SessionMessage {
     UpdateActiveTools {
         tool_definitions: Vec<serde_json::Value>,
     },
+    /// Update MCP tools on AgentCore (hot-push when MCP servers connect/disconnect).
+    /// Refreshes `AgentCore.all_tools` so LLM injection and debug snapshot capture
+    /// pick up the latest MCP tool list.
+    UpdateMcpTools {
+        mcp_tools: Option<Vec<Arc<dyn Tool>>>,
+    },
     /// Update the title of the session's conversation
     UpdateSessionTitle { title: String },
     /// Persist the per-session workspace_id to the JSONL conversation file
@@ -77,6 +83,72 @@ pub enum SessionMessage {
     Interrupt { reason: String },
     /// Stop the session gracefully
     Stop,
+}
+
+impl std::fmt::Debug for SessionMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SessionMessage::ChatMessage { content, message_id, skill_instructions, documents, content_parts } => f
+                .debug_struct("ChatMessage")
+                .field("content", &content.chars().take(64).collect::<String>())
+                .field("message_id", message_id)
+                .field("has_skill", &skill_instructions.is_some())
+                .field("has_docs", &documents.is_some())
+                .field("has_content_parts", &content_parts.is_some())
+                .finish(),
+            SessionMessage::ContinueExecution => f.debug_tuple("ContinueExecution").finish(),
+            SessionMessage::ModelSwitch { model } => f.debug_struct("ModelSwitch").field("model", model).finish(),
+            SessionMessage::UpdateProvider { provider_name, protocol_type, api_key, base_url, model } => f
+                .debug_struct("UpdateProvider")
+                .field("provider_name", provider_name)
+                .field("protocol_type", protocol_type)
+                .field("has_api_key", &api_key.is_some())
+                .field("base_url", base_url)
+                .field("model", model)
+                .finish(),
+            SessionMessage::UpdateCapabilities { caps } => f
+                .debug_struct("UpdateCapabilities")
+                .field("caps", caps)
+                .finish(),
+            SessionMessage::UpdateMaxOutputTokens { limit } => f
+                .debug_struct("UpdateMaxOutputTokens")
+                .field("limit", limit)
+                .finish(),
+            SessionMessage::UpdateRuntimeConfig { max_output_tokens, max_iterations, temperature, system_prompt_override, shell_approval_threshold } => f
+                .debug_struct("UpdateRuntimeConfig")
+                .field("max_output_tokens", max_output_tokens)
+                .field("max_iterations", max_iterations)
+                .field("temperature", temperature)
+                .field("has_system_prompt", &system_prompt_override.is_some())
+                .field("shell_approval_threshold", shell_approval_threshold)
+                .finish(),
+            SessionMessage::UpdateWorkspaceContext { context_text } => f
+                .debug_struct("UpdateWorkspaceContext")
+                .field("len", &context_text.len())
+                .finish(),
+            SessionMessage::UpdateActiveTools { tool_definitions } => f
+                .debug_struct("UpdateActiveTools")
+                .field("count", &tool_definitions.len())
+                .finish(),
+            SessionMessage::UpdateMcpTools { mcp_tools } => f
+                .debug_struct("UpdateMcpTools")
+                .field("mcp_tool_count", &mcp_tools.as_ref().map(|t| t.len()).unwrap_or(0))
+                .finish(),
+            SessionMessage::UpdateSessionTitle { title } => f
+                .debug_struct("UpdateSessionTitle")
+                .field("title", title)
+                .finish(),
+            SessionMessage::SetWorkspaceId { workspace_id } => f
+                .debug_struct("SetWorkspaceId")
+                .field("workspace_id", workspace_id)
+                .finish(),
+            SessionMessage::Interrupt { reason } => f
+                .debug_struct("Interrupt")
+                .field("reason", reason)
+                .finish(),
+            SessionMessage::Stop => f.debug_tuple("Stop").finish(),
+        }
+    }
 }
 
 /// Independent execution actor for a single session.
@@ -457,7 +529,8 @@ impl SessionTask {
                         let mut guard = ctrl.lock().await;
                         match guard.state {
                             crate::debug::controller::DebugState::Paused
-                            | crate::debug::controller::DebugState::Stepping => {
+                            | crate::debug::controller::DebugState::Stepping
+                            | crate::debug::controller::DebugState::Stopped => {
                                 let old_state = guard.state.clone();
                                 guard.state = crate::debug::controller::DebugState::Running;
                                 let iteration = guard.iteration;
@@ -619,6 +692,15 @@ impl SessionTask {
                         "SessionTask: updating active tools"
                     );
                     context_builder.set_tool_definitions(tool_definitions);
+                }
+                Some(SessionMessage::UpdateMcpTools { mcp_tools }) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        mcp_tool_count = mcp_tools.as_ref().map(|t| t.len()).unwrap_or(0),
+                        "SessionTask: updating MCP tools on AgentCore"
+                    );
+                    agent_loop.core.mcp_tools = mcp_tools;
+                    agent_loop.core.rebuild_all_tools();
                 }
                 Some(SessionMessage::UpdateSessionTitle { title }) => {
                     tracing::info!(
