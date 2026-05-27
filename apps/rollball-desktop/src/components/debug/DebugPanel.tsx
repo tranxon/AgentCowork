@@ -19,6 +19,7 @@ import {
   Edit3,
   Check,
   X,
+  Copy,
 } from "lucide-react";
 
 interface SectionContentType {
@@ -131,7 +132,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
   useEffect(() => {
     if (!connected) return;
     const interval = setInterval(() => {
-      getState().catch(() => {});
+      getState().catch(() => { });
     }, 1000);
     return () => clearInterval(interval);
   }, [connected, getState]);
@@ -479,8 +480,8 @@ export function SnapshotNode({
                   <div className="mx-3 mb-1 rounded border border-zinc-200 bg-zinc-100/50 px-2 py-1.5 dark:border-zinc-700 dark:bg-zinc-800/50">
                     {/* Inline editing mode */}
                     {editingSection &&
-                    editingSection.iteration === snapshot.iteration &&
-                    editingSection.section === sectionKey ? (
+                      editingSection.iteration === snapshot.iteration &&
+                      editingSection.section === sectionKey ? (
                       <div className="flex flex-col gap-1.5">
                         <textarea
                           value={editingSection.current}
@@ -502,6 +503,14 @@ export function SnapshotNode({
                           >
                             <X className="h-2.5 w-2.5" />
                             Cancel
+                          </button>
+                          <button
+                            onClick={() => navigator.clipboard.writeText(editingSection.current)}
+                            title="Copy content"
+                            className="ml-auto flex items-center gap-0.5 rounded px-2 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                          >
+                            <Copy className="h-2.5 w-2.5" />
+                            Copy
                           </button>
                         </div>
                       </div>
