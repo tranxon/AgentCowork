@@ -118,6 +118,15 @@ export function ChatPanel() {
   const [showImageUnsupportedDialog, setShowImageUnsupportedDialog] = useState(false);
   const [imageCapableModels, setImageCapableModels] = useState<ModelEntry[]>([]);
   const [hasLlmConfig, setHasLlmConfig] = useState<boolean | null>(null); // null = checking
+  const [todosCollapsed, setTodosCollapsed] = useState(false);
+
+  // Auto-collapse todo list when all tasks are completed
+  useEffect(() => {
+    if (todos.length === 0) return;
+    if (todos.every(t => t.status === "completed")) {
+      setTodosCollapsed(true);
+    }
+  }, [todos]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef<number>(0);
@@ -1042,40 +1051,50 @@ export function ChatPanel() {
           Shows current task list from todo_write tool calls. */}
         {todos.length > 0 && (
           <div className="mx-5 mb-0 rounded-t-lg border border-b-0 border-zinc-200 dark:border-zinc-800 bg-zinc-50/80 dark:bg-zinc-800/60 overflow-hidden">
-            <div className="flex items-center px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800">
+            <button
+              className="flex items-center w-full px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-700/30 transition-colors"
+              onClick={() => setTodosCollapsed(!todosCollapsed)}
+            >
+              {todosCollapsed ? (
+                <ChevronRight className="h-3 w-3 mr-1 text-zinc-400 dark:text-zinc-500 shrink-0" />
+              ) : (
+                <ChevronDown className="h-3 w-3 mr-1 text-zinc-400 dark:text-zinc-500 shrink-0" />
+              )}
               <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                任务列表 ({todos.length})
+                任务列表 ({todos.filter(t => t.status === "completed").length}/{todos.length})
               </span>
-            </div>
-            <div className="max-h-[7.5rem] overflow-y-auto">
-              {todos.map((item) => {
-                const statusMark = item.status === "completed" ? "x" : item.status === "in_progress" ? "-" : " ";
-                const isCompleted = item.status === "completed";
-                return (
-                  <div
-                    key={item.id}
-                    className="flex items-start gap-1.5 px-2.5 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700/40 border-b border-zinc-100 dark:border-zinc-700/30 last:border-b-0"
-                  >
-                    <span className={cn(
-                      "shrink-0 text-[10px] mt-0.5 select-none font-mono",
-                      isCompleted ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500 dark:text-zinc-400"
-                    )}>
-                      [{statusMark}]
-                    </span>
-                    <span className={cn(
-                      "flex-1 min-w-0 text-xs leading-relaxed",
-                      isCompleted
-                        ? "text-zinc-400 dark:text-zinc-500 line-through"
-                        : item.status === "in_progress"
-                          ? "text-zinc-700 dark:text-zinc-200 font-medium"
-                          : "text-zinc-600 dark:text-zinc-300"
-                    )}>
-                      {item.content}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
+            </button>
+            {!todosCollapsed && (
+              <div className="max-h-[7.5rem] overflow-y-auto">
+                {todos.map((item) => {
+                  const statusMark = item.status === "completed" ? "x" : item.status === "in_progress" ? "-" : " ";
+                  const isCompleted = item.status === "completed";
+                  return (
+                    <div
+                      key={item.id}
+                      className="flex items-start gap-1.5 px-2.5 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700/40 border-b border-zinc-100 dark:border-zinc-700/30 last:border-b-0"
+                    >
+                      <span className={cn(
+                        "shrink-0 text-[10px] mt-0.5 select-none font-mono",
+                        isCompleted ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500 dark:text-zinc-400"
+                      )}>
+                        [{statusMark}]
+                      </span>
+                      <span className={cn(
+                        "flex-1 min-w-0 text-xs leading-relaxed",
+                        isCompleted
+                          ? "text-zinc-400 dark:text-zinc-500 line-through"
+                          : item.status === "in_progress"
+                            ? "text-zinc-700 dark:text-zinc-200 font-medium"
+                            : "text-zinc-600 dark:text-zinc-300"
+                      )}>
+                        {item.content}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 

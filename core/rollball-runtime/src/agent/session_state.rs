@@ -27,7 +27,7 @@ pub struct TodoItem {
 
 /// Status of a todo item.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum TodoStatus {
     /// Task not yet started
     Pending,

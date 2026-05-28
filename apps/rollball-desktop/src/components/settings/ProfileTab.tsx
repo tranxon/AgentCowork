@@ -209,6 +209,9 @@ export function ProfileTab() {
                   backgroundRepeat: 'no-repeat',
                   backgroundSize: '1.5em 1.5em',
                   paddingRight: '2rem',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  MozAppearance: 'none',
                 }}
               >
                 {LANGUAGES.map((l) => (
@@ -233,6 +236,9 @@ export function ProfileTab() {
                   backgroundRepeat: 'no-repeat',
                   backgroundSize: '1.5em 1.5em',
                   paddingRight: '2rem',
+                  appearance: 'none',
+                  WebkitAppearance: 'none',
+                  MozAppearance: 'none',
                 }}
               >
                 {TIMEZONES.map((tz) => (
