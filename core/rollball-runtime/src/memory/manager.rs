@@ -438,14 +438,12 @@ impl MemoryManager {
         Ok(())
     }
 
-    /// Record a distilled episode into Grafeo.
+    /// Record a distilled/compacted episode into Grafeo.
     ///
-    /// Converts a `DistilledEpisode` (produced by LLM-based semantic
-    /// extraction) into a Grafeo Episode node with structured metadata.
-    /// The `consolidated` flag is set to `false` — it will be marked
-    /// `true` by a later offline consolidation pass.
+    /// Per [ADR-011], the episode contains a natural-language summary.
+    /// The summary text IS the distillation result.
     pub fn record_distilled(&self, store: &GrafeoStore, episode: &DistilledEpisode) -> Result<()> {
-        let mut props = vec![
+        let props = vec![
             ("session_id", Value::from(episode.session_id.as_str())),
             ("role", Value::from("distilled")),
             ("content", Value::from(episode.summary.as_str())),
@@ -457,37 +455,12 @@ impl MemoryManager {
                 )),
             ),
             ("consolidated", Value::from(false)),
-            (
-                "importance",
-                Value::from(f64::from(episode.importance)),
-            ),
+            ("importance", Value::from(0.7_f64)),
             (
                 "source_session_id",
                 Value::from(episode.source_session_id.as_str()),
             ),
-            (
-                "distill_offset",
-                Value::from(i64::from(episode.distill_offset)),
-            ),
         ];
-
-        // Add optional fields
-        if let Some(ref decision) = episode.decision {
-            props.push(("decision", Value::from(decision.as_str())));
-        }
-        if let Some(ref tool_summary) = episode.tool_summary {
-            props.push(("tool_summary", Value::from(tool_summary.as_str())));
-        }
-
-        // Store intent_type
-        props.push(("intent_type", Value::from(episode.intent_type.as_str())));
-
-        // Store keywords as JSON array
-        if !episode.keywords.is_empty() {
-            let keywords_json = serde_json::to_string(&episode.keywords)
-                .map_err(RuntimeError::Json)?;
-            props.push(("keywords", Value::from(keywords_json.as_str())));
-        }
 
         store
             .store_node(labels::EPISODIC, props)
@@ -495,7 +468,7 @@ impl MemoryManager {
 
         tracing::debug!(
             session_id = %episode.session_id,
-            importance = episode.importance,
+            summary_len = episode.summary.len(),
             "Recorded distilled episode"
         );
 

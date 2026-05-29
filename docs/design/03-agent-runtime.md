@@ -8,6 +8,8 @@ Agent Runtime 是平台提供的唯一二进制可执行文件，类似 Android 
 
 > **v3.7 变更（2026-05-28）**：上下文压缩策略大幅简化——见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。核心变更：放弃程序化折叠策略（Tool Result 折叠、内容折叠 Phase 1），上下文压缩回归 LLM 摘要作为唯一正常路径手段。日常压缩流程简化为：70% 告警 → 80% LLM 摘要（完整上下文，不折叠） → 95% emergency_trim 安全网。
 
+> **v3.9 变更（2026-05-28）**：Compaction 与 Distillation 统一——见 [ADR-011](../adr/ADR-011-compaction-as-distillation.md)。核心变更：Compaction 摘要与 Session 蒸馏合并为单次 Compact Model 调用，摘要文本同时用于内存替换和 Grafeo 经历层写入（"摘要即蒸馏"）。经历层写入来源简化为仅 Compaction 和 Session 关闭蒸馏，移除每轮对话实时写入。SessionState 新增 `is_compacted` 标志控制尾部蒸馏决策。
+
 **交叉引用**：
 - 运行时内部结构：本文档 §2
 - Session Actor 架构：`15-conversation-persistence.md` §1.7
@@ -265,11 +267,11 @@ All listed directories are authorized for access at the indicated permission lev
 
 **Token 预算分配与截断策略：** 当上下文总长度接近模型限制时，采用三阶段策略：
 
-1. **70% 监控**：日志记录 token 使用率，不做任何干预。
-2. **80% LLM 摘要**：使用 Compact Model（独立配置的便宜模型）对整个对话历史做 LLM 摘要。完整上下文输入，不做任何工具结果折叠或截断。保护 system prompt + 最近 2-3 轮完整保留，中间段压缩为结构化摘要。完整对话历史归档至临时文件，agent 可随时取回。触发 Episode 提炼（被压缩的消息写入经历层）。
-3. **95% / API ContextOverflow 紧急裁剪**：保留 system prompt + 最后 N 条非 system 消息（默认 4 条），作为安全网。仅在 LLM 摘要本身无法执行（API 报 context exceeded）时使用。
+1. **70% 监控**：通过 ContextUsage 事件向 Gateway 报告 token 使用率，不做任何干预。
+2. **80% LLM 摘要（Compaction）**：使用 Compact Model 对完整对话历史做 LLM 摘要（`compact_via_llm`）。摘要文本同时用于：(a) 替换内存中间段（`replace_middle_with_summary`，保留 system prompt + 最后 3 轮），(b) 写入 Grafeo 经历层（摘要即蒸馏，ADR-011）。Compaction 完成后设置 `is_compacted = true`，新用户消息到达时重置为 `false`。
+3. **95% emergency_trim**：保留 system prompt + 最后 4 条非 system 消息，作为安全网。仅在 LLM 摘要无法执行（API 报错）或使用率飙升至 95% 时使用。
 
-> **设计决策**：上下文压缩是一个语义理解任务，只有 LLM 能可靠判断哪些信息可以丢弃。程序化策略（字符截断、FIFO、角色折叠）本质是用 proxy 指标替代语义理解，必然失效。因此所有日常程序化折叠策略已被放弃。详见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。
+> **设计决策**：上下文压缩是一个语义理解任务，只有 LLM 能可靠判断哪些信息可以丢弃。程序化策略（字符截断、FIFO、角色折叠）本质是用 proxy 指标替代语义理解，必然失效。详见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。Compaction 与 Distillation 统一为单次调用：同一个摘要文本既替换内存（压缩上下文），又写入 Grafeo（产生经历记忆）。详见 [ADR-011](../adr/ADR-011-compaction-as-distillation.md)。
 
 System Prompt（1）、Identity Context（2）、Autobiographical（2.5）、Workspace Context（2.8）、Tool Definitions（3）始终保留，不参与裁剪。
 
@@ -644,7 +646,7 @@ Permission Check 通过 → Approval Gate 检查
 | 工具执行失败处理 | 返回错误给 LLM 决策 | LLM 有能力自主调整策略，比直接终止更灵活 |
 | Gateway 断连 | 优雅降级而非立即退出 | 保留本地推理能力，短暂断连不影响体验 |
 | 循环检测 | 三种模式 + 三级渐进响应（借鉴 ZeroClaw） | 比单阈值 terminate 更精细：Warning 让 LLM 自主修正，Block 阻止无意义的重复，Break 作为最后手段。Ping-Pong 和 No Progress 覆盖更复杂的死循环模式 |
-| 上下文裁剪 | 三阶段 LLM 驱动：70% 告警 → 80% LLM 摘要（Compact Model）→ 95% emergency_trim | 仅 LLM 能可靠判断信息可丢弃性，程序化策略不可靠（ADR-010） |
+| 上下文裁剪 | 三阶段 LLM 驱动：70% 告警 → 80% Compaction 摘要（Compact Model，摘要即蒸馏）→ 95% emergency_trim | 仅 LLM 能可靠判断信息可丢弃性，Compaction 与 Distillation 统一（ADR-010 + ADR-011） |
 | Approval 机制 | Gateway 转发 → Desktop App 确认 | 高风险操作需用户知情同意；CLI 模式下降级为 manifest 配置的默认策略 |
 | Tool Call 去重 | 单轮 HashSet 去重 | 成本极低，防御 LLM 单次响应内重复调用 |
 | Rate Limit 分层 | 区分可重试限流 / 不可重试余额不足 | 避免对余额不足的错误做无意义重试（借鉴 ZeroClaw reliable.rs） |
@@ -667,6 +669,7 @@ Permission Check 通过 → Approval Gate 检查
 | v3.4 | 主循环记忆触发点改为 MemoryManager 生命周期阶段调用 | Runtime 可扩展性设计准则 |
 | v3.4 | 新增 §9 Runtime 可扩展性设计准则 + 紧耦合审计 | 架构审查 |
 | v3.7 | 上下文压缩策略大幅简化：移除所有程序化折叠，改为三阶段 LLM 驱动 | ADR-010 |
+| v3.9 | Compaction 与 Distillation 统一（摘要即蒸馏），移除每轮 Grafeo 写入，SessionState 新增 is_compacted 标志 | ADR-011 |
 
 ## 9. Runtime 可扩展性设计准则
 

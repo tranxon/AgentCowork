@@ -485,47 +485,6 @@ impl AgentLoop {
         }
     }
 
-    /// Record a conversation turn to the Grafeo memory store.
-    ///
-    /// This is called at the end of each successful agent loop iteration
-    /// (when a text response is returned without tool calls).
-    fn record_turn_to_memory(
-        &self,
-        user_message: &str,
-        assistant_response: &str,
-        turn_index: u32,
-        retrieved_memory_ids: Vec<String>,
-    ) {
-        let store = match self.core.memory_store() {
-            Some(s) => s,
-            None => return, // Memory store not initialized, skip silently
-        };
-
-        let session_id = self
-            .session
-            .conversation
-            .as_ref()
-            .map(|c| c.session_id().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let record = crate::memory::ConversationRecord {
-            session_id,
-            turn_index, // P1-2 fix: use actual turn counter from SessionState
-            user_message: user_message.to_string(),
-            assistant_response: assistant_response.to_string(),
-            retrieved_memory_ids, // P2-4 fix: node IDs from retrieve_and_inject_memories
-            timestamp: chrono::Utc::now(),
-        };
-
-        let manager = self.core.init_memory_manager();
-        if let Err(e) = manager.record(store, &record) {
-            tracing::warn!(
-                error = %e,
-                "Failed to record conversation turn to Grafeo memory (non-fatal)"
-            );
-        }
-    }
-
     /// Write document upload entries to the conversation JSONL.
     ///
     /// Each document is persisted as a `ConversationEntry` with `role: "system"`
@@ -646,8 +605,8 @@ impl AgentLoop {
     /// Reserves 20% of the budget for new response + overhead.
     ///
     /// Per [ADR-010], programmatic folding strategies have been removed.
-    /// This is a safety net only; LLM-based summarization at 80% token usage
-    /// is the primary compression mechanism.
+    /// This is a safety net only; LLM-based compaction at 80% token usage
+    /// (see [`compact_history_if_needed`]) is the primary compression mechanism.
     fn trim_history_to_budget(&mut self, model_name: &str) {
         let budget = self.context_trim_budget(model_name);
         // Reserve 20% of context window for new response + overhead
@@ -663,6 +622,123 @@ impl AgentLoop {
 
         // Also truncate any single message that exceeds per-message limit
         self.session.history.truncate_large_messages(trim_budget / 4);
+    }
+
+    /// Check context usage after LLM response and trigger compaction if needed.
+    ///
+    /// Per [ADR-011], this implements the three-stage compaction strategy:
+    /// - 80% usage → LLM-based compaction (`compact_via_llm` + `replace_middle_with_summary`)
+    /// - 95% usage → emergency trim (safety net)
+    ///
+    /// Called after each LLM response when context usage is computed.
+    async fn compact_history_if_needed(&mut self, model_name: &str) {
+        /// Number of conversational rounds to keep at the tail after compaction.
+        /// Each round starts with a User message, so this keeps the last N user
+        /// messages and everything after them.
+        const KEEP_LAST_ROUNDS: usize = 3;
+        let budget = self.context_trim_budget(model_name);
+        let current_tokens = self.session.history.token_count();
+
+        if budget == 0 {
+            return;
+        }
+
+        let usage_percent = (current_tokens as f64 / budget as f64) * 100.0;
+
+        // Stage 2: 80% → LLM-based compaction
+        if usage_percent >= 80.0 {
+            tracing::info!(
+                usage_percent = ?usage_percent,
+                current_tokens,
+                budget,
+                "Context usage >= 80%, triggering LLM compaction"
+            );
+
+            let compact_model = self.resolve_distill_model(current_tokens * 4);
+            let system_prompt = self
+                .core
+                .system_prompt_override
+                .as_deref()
+                .unwrap_or("You are an AI assistant that summarizes conversations.");
+            let provider = self.core.provider.clone();
+            let memory_store = self.core.memory_store().cloned();
+
+            match self
+                .session
+                .history
+                .compact_via_llm(provider.as_ref(), &compact_model, system_prompt)
+                .await
+            {
+                Ok(summary) => {
+                    let removed = self.session.history.replace_middle_with_summary(&summary, KEEP_LAST_ROUNDS);
+
+                    // Write compaction summary to Grafeo
+                    let session_id = self
+                        .session
+                        .conversation
+                        .as_ref()
+                        .map(|c| c.session_id().to_string())
+                        .unwrap_or_default();
+                    crate::episode_distill::EpisodeDistiller::write_summary_to_grafeo(
+                        &summary,
+                        &session_id,
+                        &memory_store,
+                    );
+
+                    // Mark session as compacted (zero new messages since compaction)
+                    self.session.is_compacted = true;
+
+                    // Recompute usage after compaction for stage 3 check
+                    let new_tokens = self.session.history.token_count();
+                    let new_usage = if budget > 0 {
+                        (new_tokens as f64 / budget as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+
+                    tracing::info!(
+                        removed,
+                        summary_len = summary.len(),
+                        before_tokens = current_tokens,
+                        after_tokens = new_tokens,
+                        before_usage = ?usage_percent,
+                        after_usage = ?new_usage,
+                        "LLM compaction completed"
+                    );
+
+                    // Stage 3: 95% → emergency trim (safety net, even after compaction)
+                    if new_usage >= 95.0 {
+                        let em_removed = self.session.history.emergency_trim();
+                        tracing::warn!(
+                            em_removed,
+                            after_usage = ?new_usage,
+                            "Emergency trim performed after compaction (still >= 95%)"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "LLM compaction failed, falling back to FIFO + emergency trim"
+                    );
+                    self.session.history.trim_fifo();
+                    if self.session.history.token_count() > budget {
+                        self.session.history.emergency_trim();
+                    }
+                }
+            }
+        } else if usage_percent >= 95.0 {
+            // Stage 3: emergency trim without attempting compaction
+            // (when usage jumps directly to >= 95%)
+            let removed = self.session.history.emergency_trim();
+            tracing::warn!(
+                removed,
+                usage_percent = ?usage_percent,
+                current_tokens,
+                budget,
+                "Emergency trim performed (usage >= 95%)"
+            );
+        }
     }
 
     /// Close the conversation session and trigger session-level distillation.
@@ -805,7 +881,7 @@ impl AgentLoop {
                         Self::write_distilled_to_grafeo(&memory_store, &episode, "switch-session");
                         tracing::info!(
                             summary = %episode.summary,
-                            importance = episode.importance,
+                            summary_len = episode.summary.len(),
                             "Session-level distillation completed for switched-out session"
                         );
                     }
@@ -825,50 +901,91 @@ impl AgentLoop {
     }
 
     /// Inner implementation for closing the current session.
+    ///
+    /// Per [ADR-011]: uses `last_compaction_index()` to determine the tail
+    /// distillation range. The `is_compacted` flag is used as a fast-path hint
+    /// but is NOT sufficient alone — the assistant response from the same round
+    /// that triggered compaction may land after the compaction marker, and must
+    /// still be distilled.
     async fn close_session_inner(&mut self) -> Result<()> {
         if let Some(ref conversation) = self.session.conversation {
             let session_id = conversation.session_id().to_string();
-            let session_path = conversation.session_path().to_path_buf();
-            let provider = self.core.provider.clone();
-            let content_size = std::fs::metadata(&session_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-            let model_name = self.resolve_distill_model(content_size);
-            let memory_store = self.core.memory_store().cloned();
 
-            tracing::info!(
-                session_id = %session_id,
-                model = %model_name,
-                "Spawning session-level episode distillation"
-            );
+            // Determine tail range: everything after the last compaction marker,
+            // or full history (skipping leading system messages) if never compacted.
+            let tail_start = self
+                .session
+                .history
+                .last_compaction_index()
+                .map(|idx| idx + 1) // Start after compaction marker
+                .unwrap_or_else(|| {
+                    // No compaction ever — skip leading system messages
+                    self.session
+                        .history
+                        .messages()
+                        .iter()
+                        .take_while(|m| matches!(m.role, MessageRole::System))
+                        .count()
+                });
 
-            // Spawn session-level distillation (best-effort, non-blocking)
-            tokio::spawn(async move {
-                match crate::episode_distill::EpisodeDistiller::distill_on_session_end(
-                    &session_path,
-                    &session_id,
-                    provider.as_ref(),
-                    &model_name,
-                )
-                .await
-                {
-                    Ok(episode) => {
-                        // Write distilled episode to Grafeo memory store (P2-1: using shared helper)
-                        Self::write_distilled_to_grafeo(&memory_store, &episode, "session");
-                        tracing::info!(
-                            summary = %episode.summary,
-                            importance = episode.importance,
-                            "Session-level episode distillation completed"
-                        );
+            let messages = self.session.history.messages();
+            let tail_messages: Vec<ChatMessage> = messages[tail_start..].to_vec();
+
+            if tail_messages.is_empty() {
+                tracing::info!(
+                    session_id = %session_id,
+                    is_compacted = self.session.is_compacted,
+                    "No tail messages to distill — skipping"
+                );
+            } else {
+                let provider = self.core.provider.clone();
+                let memory_store = self.core.memory_store().cloned();
+                let content_size = tail_messages
+                    .iter()
+                    .map(|m| m.content.len() as u64)
+                    .sum::<u64>();
+                let model_name = self.resolve_distill_model(content_size);
+
+                tracing::info!(
+                    session_id = %session_id,
+                    tail_start,
+                    tail_message_count = tail_messages.len(),
+                    is_compacted = self.session.is_compacted,
+                    model = %model_name,
+                    "Spawning tail distillation for session close"
+                );
+
+                // Spawn tail distillation (best-effort, non-blocking)
+                tokio::spawn(async move {
+                    match crate::episode_distill::EpisodeDistiller::compact_messages(
+                        &tail_messages,
+                        provider.as_ref(),
+                        &model_name,
+                    )
+                    .await
+                    {
+                        Ok(summary) => {
+                            crate::episode_distill::EpisodeDistiller::write_summary_to_grafeo(
+                                &summary,
+                                &session_id,
+                                &memory_store,
+                            );
+                            tracing::info!(
+                                session_id = %session_id,
+                                summary_len = summary.len(),
+                                "Tail distillation completed for session close"
+                            );
+                        }
+                        Err(e) => {
+                            tracing::warn!(
+                                session_id = %session_id,
+                                error = %e,
+                                "Tail distillation failed (non-fatal)"
+                            );
+                        }
                     }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Session-level episode distillation failed (non-fatal)"
-                        );
-                    }
-                }
-            });
+                });
+            }
 
             // Close the conversation writer
             conversation.close().await?;
@@ -900,6 +1017,8 @@ impl AgentLoop {
 
         if !replay {
             // Add user message to history
+            // ADR-011: reset compaction flag — new user input means new content since last compaction
+            self.session.is_compacted = false;
             if let Some(parts) = content_parts {
                 self.session.history.append(ChatMessage::user_multimodal(user_message, parts));
             } else {
@@ -1110,8 +1229,8 @@ impl AgentLoop {
         &mut self,
         iteration: u32,
         context_builder: &mut ContextBuilder,
-        user_message: &str,
-        retrieved_memory_ids: &[String],
+        _user_message: &str,
+        _retrieved_memory_ids: &[String],
         current_model: &str,
     ) -> Result<IterationResult> {
             // ── Debug mode hooks ──
@@ -1340,6 +1459,9 @@ impl AgentLoop {
                     if !self.core.try_send_chunk(ChunkEvent::ContextUsage(ctx_usage)) {
                         tracing::debug!("ContextUsage: on_chunk channel full/closed or session_id missing");
                     }
+
+                    // ADR-011: check if context usage triggers compaction
+                    self.compact_history_if_needed(&current_model).await;
                 } else {
                     tracing::warn!(
                         has_chunk_tx = self.core.on_chunk.is_some(),
@@ -1372,11 +1494,10 @@ impl AgentLoop {
                     ..ChatMessage::assistant(response.content)
                 });
 
-                // Record conversation turn to Grafeo memory store
-                // P1-2 fix: increment turn_counter, P2-4 fix: pass retrieved memory IDs
-                let turn_index = self.session.turn_counter;
+                // Per ADR-011: per-turn episodic writes are removed.
+                // Grafeo is now written only via compaction summaries and
+                // session-close distillation.
                 self.session.turn_counter += 1;
-                self.record_turn_to_memory(user_message, &content, turn_index, retrieved_memory_ids.to_vec());
 
                 tracing::info!(iteration, "Agent returned text response");
 

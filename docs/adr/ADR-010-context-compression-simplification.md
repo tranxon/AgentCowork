@@ -1,6 +1,7 @@
 # ADR-010: 上下文压缩策略大幅简化
 
-**状态**：已接受（Phase 1 完成：移除程序化折叠；Phase 2 待实施：LLM 摘要 + trim 时蒸馏恢复）  
+**状态**：已接受（Phase 1/2 完成：移除程序化折叠 + LLM Compaction/蒸馏统一，细化见 ADR-011）  
+**细化**：Phase 2 蒸馏策略由 [ADR-011](./ADR-011-compaction-as-distillation.md) 细化（摘要即蒸馏，不再单独区分）  
 **日期**：2026-05-28  
 **决策者**：架构讨论  
 **影响范围**：`03-agent-runtime.md`, `05-memory.md`, `15-conversation-persistence.md`, `16-adr-context-threshold-dynamic.md`, `04-p2-s2-design-review.md`, `history.rs`, `token/counter.rs`, `context.rs`, `loop_.rs`

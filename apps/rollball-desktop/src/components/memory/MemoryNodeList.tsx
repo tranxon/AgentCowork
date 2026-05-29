@@ -133,11 +133,11 @@ export function MemoryNodeList({
 
       {/* Pagination */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-between border-t border-zinc-200 px-3 py-1.5 dark:border-zinc-800">
+        <div className="flex items-center justify-between border-t border-zinc-200 px-1 py-1.5 dark:border-zinc-800">
           <button
             onClick={() => onPageChange(page - 1)}
             disabled={page <= 1}
-            className="inline-flex items-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            className="inline-flex items-center rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
           </button>
@@ -147,7 +147,7 @@ export function MemoryNodeList({
           <button
             onClick={() => onPageChange(page + 1)}
             disabled={page >= totalPages}
-            className="inline-flex items-center rounded p-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
+            className="inline-flex items-center rounded-md px-1.5 py-0.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30 dark:text-zinc-400 dark:hover:bg-zinc-800"
           >
             <ChevronRight className="h-3.5 w-3.5" />
           </button>

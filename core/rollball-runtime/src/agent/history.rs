@@ -16,7 +16,9 @@
 use std::collections::HashSet;
 
 use rollball_core::protocol::ProtocolType;
-use rollball_core::providers::traits::{ChatMessage, ContentPart, MessageRole};
+use rollball_core::providers::traits::{ChatMessage, ChatRequest, ContentPart, MessageRole, Provider};
+
+use crate::error::RuntimeError;
 
 
 /// History manager for conversation
@@ -165,31 +167,50 @@ impl HistoryManager {
     
     /// Emergency trim — drastic measure for context overflow recovery.
     /// Keeps only the last 4 non-system messages.
+    ///
+    /// Compaction markers (`name == "compaction_summary"`) are protected from
+    /// removal because they are needed by [`last_compaction_index`] for tail
+    /// distillation at session close. Without this protection, emergency trim
+    /// could delete the only compaction marker and cause the session-close
+    /// distillation to fall back to full-history summarization.
     pub fn emergency_trim(&mut self) -> usize {
+        fn is_compaction_marker(msg: &ChatMessage) -> bool {
+            msg.name.as_deref() == Some("compaction_summary")
+        }
+
         let system_count = self
             .messages
             .iter()
             .filter(|m| matches!(m.role, MessageRole::System))
             .count();
 
-        let non_system_count = self.messages.len() - system_count;
-        if non_system_count <= 4 {
+        let compaction_count = self
+            .messages
+            .iter()
+            .filter(|m| is_compaction_marker(m))
+            .count();
+
+        // Non-system, non-compaction messages
+        let removable_count = self.messages.len() - system_count - compaction_count;
+        if removable_count <= 4 {
             return 0;
         }
 
-        let to_remove = non_system_count - 4;
+        let to_remove = removable_count - 4;
         let mut removed = 0;
 
-        // Remove oldest non-system messages
+        // Remove oldest removable messages, skipping system + compaction markers
         let mut i = 0;
         while removed < to_remove && i < self.messages.len() {
-            if !matches!(self.messages[i].role, MessageRole::System) {
+            if matches!(self.messages[i].role, MessageRole::System)
+                || is_compaction_marker(&self.messages[i])
+            {
+                i += 1;
+            } else {
                 let tokens = estimate_text_tokens(&self.messages[i].content);
                 self.current_tokens = self.current_tokens.saturating_sub(tokens);
                 self.messages.remove(i);
                 removed += 1;
-            } else {
-                i += 1;
             }
         }
 
@@ -362,6 +383,158 @@ impl HistoryManager {
             );
         }
     }
+
+    // ── Compaction methods (ADR-011: 摘要即蒸馏) ─────────────────────
+
+    /// Compact full conversation history into a natural-language summary
+    /// via LLM. Used at 80% token usage threshold (context compaction).
+    ///
+    /// Formats all messages as text, wraps them in the COMPACT_PROMPT
+    /// template, and sends to the configured Compact Model.
+    /// Returns the plain-text summary (no JSON parsing).
+    pub async fn compact_via_llm(
+        &self,
+        provider: &dyn Provider,
+        model_name: &str,
+        system_prompt: &str,
+    ) -> std::result::Result<String, RuntimeError> {
+        let messages_text = crate::episode_distill::format_messages(&self.messages);
+        if messages_text.is_empty() {
+            return Err(RuntimeError::Tool(
+                "Cannot compact empty history".to_string(),
+            ));
+        }
+
+        let prompt =
+            crate::episode_distill::COMPACT_PROMPT.replace("{messages_text}", &messages_text);
+
+        let request = ChatRequest {
+            model: model_name.to_string(),
+            messages: vec![
+                ChatMessage {
+                    role: MessageRole::System,
+                    content: system_prompt.to_string(),
+                    ..Default::default()
+                },
+                ChatMessage::user(prompt),
+            ],
+            temperature: Some(0.3),
+            max_tokens: Some(2048),
+            tools: None,
+        };
+
+        let response = provider
+            .chat(request)
+            .await
+            .map_err(|e| RuntimeError::Core(e))?;
+
+        let summary = response.content.trim().to_string();
+        if summary.is_empty() {
+            return Err(RuntimeError::Tool(
+                "Compact model returned empty response".to_string(),
+            ));
+        }
+        Ok(summary)
+    }
+
+    /// Replace the middle section of history with a compaction summary.
+    ///
+    /// Keeps system messages at the start and the last `keep_last_rounds`
+    /// conversational rounds at the end. The middle is replaced with a
+    /// single Assistant message carrying `name: "compaction_summary"` as
+    /// a compaction marker for [`last_compaction_index`].
+    ///
+    /// Returns the number of messages removed.
+    pub fn replace_middle_with_summary(
+        &mut self,
+        summary: &str,
+        keep_last_rounds: usize,
+    ) -> usize {
+        // Count leading system messages
+        let system_count = self
+            .messages
+            .iter()
+            .take_while(|m| matches!(m.role, MessageRole::System))
+            .count();
+
+        // Find tail start: count User messages from the end.
+        // Each "round" starts with a User message, so counting User messages
+        // gives a more accurate round count than `keep_last_rounds * 2`.
+        let tail_start = {
+            let mut user_count = 0usize;
+            let mut idx = self.messages.len();
+            for (i, msg) in self.messages.iter().enumerate().rev() {
+                if matches!(msg.role, MessageRole::User) {
+                    user_count += 1;
+                    if user_count >= keep_last_rounds {
+                        idx = i;
+                        break;
+                    }
+                }
+            }
+            // Not enough rounds: keep everything after system messages
+            if user_count < keep_last_rounds {
+                system_count
+            } else {
+                idx
+            }
+        };
+
+        if tail_start <= system_count {
+            return 0; // Nothing to replace
+        }
+
+        let removed_count = tail_start - system_count;
+
+        // Subtract tokens of removed messages
+        for msg in &self.messages[system_count..tail_start] {
+            let tokens = estimate_message_tokens(msg, &self.protocol_type);
+            self.current_tokens = self.current_tokens.saturating_sub(tokens);
+        }
+
+        // Remove middle section
+        self.messages.drain(system_count..tail_start);
+
+        // Insert compaction summary as Assistant message with marker
+        let summary_msg = ChatMessage {
+            role: MessageRole::Assistant,
+            content: summary.to_string(),
+            name: Some("compaction_summary".to_string()),
+            ..Default::default()
+        };
+        let summary_tokens = estimate_message_tokens(&summary_msg, &self.protocol_type);
+        self.messages.insert(system_count, summary_msg);
+        self.current_tokens += summary_tokens;
+
+        tracing::debug!(
+            removed = removed_count,
+            inserted_tokens = summary_tokens,
+            remaining_tokens = self.current_tokens,
+            "Middle history replaced with compaction summary"
+        );
+
+        removed_count
+    }
+
+    /// Find the index of the last compaction summary message.
+    ///
+    /// Scans messages from the end, looking for an Assistant message with
+    /// `name == "compaction_summary"`. Returns `Some(index)` if found,
+    /// `None` if no compaction has occurred in this session.
+    ///
+    /// Used at session close to determine the tail distillation start point:
+    /// tail = `messages[last_compaction_index + 1 ..]`.
+    pub fn last_compaction_index(&self) -> Option<usize> {
+        self.messages
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, msg)| {
+                msg.role == MessageRole::Assistant
+                    && msg.name.as_deref() == Some("compaction_summary")
+            })
+            .map(|(i, _)| i)
+    }
 }
 
 /// Estimate token count for a full message, including both text content
@@ -460,6 +633,31 @@ mod tests {
         let removed = hm.emergency_trim();
         assert_eq!(removed, 6); // 10 - 4 = 6
         assert_eq!(hm.len(), 5); // 1 system + 4 remaining
+    }
+
+    #[test]
+    fn test_emergency_trim_protects_compaction_markers() {
+        let mut hm = HistoryManager::new(10000);
+        hm.append(make_message(MessageRole::System, "System"));
+        // Insert a compaction marker (Assistant with name="compaction_summary")
+        hm.append(ChatMessage {
+            role: MessageRole::Assistant,
+            content: "Compaction summary".to_string(),
+            name: Some("compaction_summary".to_string()),
+            ..Default::default()
+        });
+        for i in 0..10 {
+            hm.append(make_message(MessageRole::User, &format!("Msg {i}")));
+        }
+        let removed = hm.emergency_trim();
+        // Should remove 6 of the 10 user messages (keeps last 4),
+        // but NOT the compaction marker
+        assert_eq!(removed, 6);
+        // Compaction marker should still be present
+        let has_marker = hm.messages().iter().any(|m| {
+            m.name.as_deref() == Some("compaction_summary")
+        });
+        assert!(has_marker, "Compaction marker should survive emergency trim");
     }
 
     #[test]

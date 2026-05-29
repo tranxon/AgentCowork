@@ -101,6 +101,17 @@ pub struct SessionState {
     /// Memory-only; not persisted to JSONL (conversation history is the
     /// source of truth for task progress).
     pub(crate) todos: Vec<TodoItem>,
+    /// Whether compaction has occurred with zero new messages since.
+    ///
+    /// Per [ADR-011], compaction summaries sit in the middle of history
+    /// (not at the tail), so we can't use message position to detect
+    /// whether new messages arrived after compaction. This boolean flag
+    /// provides a clean signal:
+    /// - Set to `true` when compaction completes.
+    /// - Reset to `false` when a new message is appended to history.
+    /// - At session close: `true` means skip distillation (no new content),
+    ///   `false` means distill the tail (new messages after last compaction).
+    pub(crate) is_compacted: bool,
 }
 
 impl SessionState {
@@ -119,6 +130,7 @@ impl SessionState {
             deferred_inbound: Vec::new(),
             status: SessionStatus::Idle,
             todos: Vec::new(),
+            is_compacted: false,
         }
     }
 

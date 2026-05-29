@@ -6,6 +6,8 @@
 
 > **v3.8 变更（2026-05-28）**：上下文压缩策略大幅简化，程序化折叠策略全部放弃——见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。核心变更：移除内容折叠（Phase 1）、三阶段渐进裁剪、检索结果 8 级优先级、弹性预算分区。瞬态层压缩简化为：70% 告警 → 80% LLM 摘要（完整上下文） → 95% emergency_trim 安全网。
 
+> **v3.9 变更（2026-05-28）**：经历层写入来源简化——见 [ADR-011](../adr/ADR-011-compaction-as-distillation.md)。核心变更：移除每轮对话实时写入 Grafeo，经历层仅通过 Compaction 摘要和 Session 关闭蒸馏写入。Compaction 与 Distillation 统一为单次 Compact Model 调用（"摘要即蒸馏"）。
+
 ---
 
 Memory 采用**仿生分层**设计，以人类认知科学为参照，以 Grafeo 图数据库为存储引擎。每个 Agent 拥有完全独立的私有 Memory，不存在 Gateway 维护的公共数据库。跨 Agent 的数据共享通过 Intent 查询和系统 Agent 服务实现，而非共享存储。
@@ -60,7 +62,7 @@ Memory 采用**仿生分层**设计，以人类认知科学为参照，以 Grafe
 
 | 流动方向 | 机制 | 触发条件 |
 |---------|------|---------|
-| 瞬态层 → 经历层 | 对话持久化 | Agent 发送回复后，异步写入 Grafeo（写队列 + 本地 WAL 保证不丢失，超时 500ms 降级为后台重试） |
+| 瞬态层 → 经历层 | 摘要写入 | Compaction 触发（80% token 使用）或 Session 关闭时，LLM 摘要异步写入 Grafeo。不再每轮写入，避免与 JSONL 冗余 |
 | 经历层 → 沉淀层 | 巩固管道 | 即时提取（LLM 自主 tool call）+ 离线回放（空闲时专用调用） |
 | 沉淀层 → 瞬态层 | 检索注入 | 用户输入到达时，检索相关记忆注入上下文 |
 | 沉淀层/经历层内流动 | 关联扩散 | 检索时沿图边 1-2 跳扩展 |
@@ -584,7 +586,7 @@ LLM 生成回复（含 tool call 判断）
 
 - **不强制提取**：LLM 有权不在每轮调用 memory_store。简单问候、天气查询等不存储，这比预过滤规则更智能
 - **Fact 自动去重**：Runtime 在执行 memory_store 时检查 (subject, predicate) 是否已存在，避免重复
-- **对话始终记录**：无论是否触发 memory_store，每轮对话内容都写入经历层（episode），供离线巩固回溯
+- **对话始终记录**：每轮对话内容写入 JSONL 文件（瞬态层），经历层仅通过 Compaction 摘要 / Session 关闭蒸馏写入（ADR-011）
 - **工具调用可见**：memory_store 的调用记录在对话历史中，用户知道 Agent 记住了什么
 - **防重复提取机制**（v3.7 新增）：离线巩固前先查询已有 KnowledgeNode，embedding 相似度 > 0.95 的跳过（避免重复提取相同事实）。这一阈值比冲突检测的 0.85 更严格——0.95 意味着几乎完全相同的语义内容
 
