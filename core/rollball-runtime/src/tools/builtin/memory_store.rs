@@ -2,54 +2,84 @@
 //!
 //! Adapted from zeroclaw/src/tools/memory_store.rs
 //! Rollball deviation: uses rollball_core::Tool trait;
-//! adds agent_id isolation via Grafeo backend.
+//! uses natural language interface (no key-value model);
+//! wires to GrafeoStore for instant extraction pipeline.
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 
 use async_trait::async_trait;
 use rollball_core::tools::traits::{Tool, ToolResult, ToolSpec};
+use rollball_grafeo::consolidation::MemoryStoreInput;
+use rollball_grafeo::grafeo::GrafeoStore;
+use rollball_grafeo::types::KnowledgeSubType;
 use serde_json::Value;
+use std::sync::Arc;
+
+/// Default confidence when LLM does not provide one.
+const DEFAULT_CONFIDENCE: f32 = 0.7;
 
 /// Memory store tool — allows an Agent to store memories for later recall.
 ///
-/// Memories are keyed by a unique identifier and categorized for
-/// efficient retrieval. In Phase 1, memories are stored via Grafeo
-/// placeholder. In Phase 2+, this uses the Grafeo backend for
-/// persistent storage with semantic search.
+/// Design: accepts natural language content with category and confidence,
+/// wires to the GrafeoStore instant extraction pipeline (dedup → conflict
+/// detection → node creation).
 pub struct MemoryStoreTool {
     /// Agent ID (namespace for memory isolation)
     agent_id: String,
+    /// Grafeo memory store backend (may be None before initialization).
+    store: Option<Arc<GrafeoStore>>,
 }
 
 impl MemoryStoreTool {
-    pub fn new(agent_id: &str) -> Self {
+    pub fn new(agent_id: &str, store: Option<Arc<GrafeoStore>>) -> Self {
         Self {
             agent_id: agent_id.to_string(),
+            store,
         }
     }
 
     fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "memory_store".to_string(),
-            description: "Store a fact, preference, or note in long-term memory. Use category 'core' for permanent facts, 'daily' for session notes, 'conversation' for chat context, or a custom category name.".to_string(),
+            description: "Store a fact, preference, relationship, or note in long-term memory for later recall. \
+                Describe what you want to remember in natural language in 'content'. \
+                Choose 'category': 'fact' for objective truths, 'preference' for user tastes/habits, \
+                'relation' for entity relationships. Estimate your confidence in this knowledge (0.0-1.0). \
+                Optionally provide keywords to help retrieval.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
-                    "key": {
-                        "type": "string",
-                        "description": "Unique key for this memory (e.g. 'user_lang', 'project_stack')"
-                    },
                     "content": {
                         "type": "string",
-                        "description": "The information to remember"
+                        "description": "Natural language description of what to remember (e.g. 'User lives in Beijing', 'User prefers dark mode over light mode')"
                     },
                     "category": {
                         "type": "string",
-                        "description": "Memory category: 'core' (permanent), 'daily' (session), 'conversation' (chat), or a custom category name. Defaults to 'core'."
+                        "enum": ["fact", "preference", "relation"],
+                        "description": "Type of knowledge: 'fact' (objective truth), 'preference' (user taste/habit), 'relation' (entity relationship)"
+                    },
+                    "confidence": {
+                        "type": "number",
+                        "description": "Your confidence in this knowledge (0.0-1.0). High confidence (>=0.85) creates an Active node; lower creates Pending for later verification. Default 0.7."
+                    },
+                    "keywords": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Optional keywords to help retrieval (e.g. ['beijing', 'location', 'home'])"
                     }
                 },
-                "required": ["key", "content"]
+                "required": ["content", "category"]
             }),
         }
+    }
+}
+
+/// Parse category string to KnowledgeSubType.
+fn parse_category(s: &str) -> Option<KnowledgeSubType> {
+    match s.to_lowercase().as_str() {
+        "fact" => Some(KnowledgeSubType::Fact),
+        "preference" => Some(KnowledgeSubType::Preference),
+        "relation" => Some(KnowledgeSubType::Relation),
+        _ => None,
     }
 }
 
@@ -60,18 +90,7 @@ impl Tool for MemoryStoreTool {
     }
 
     async fn execute(&self, params: Value) -> rollball_core::error::Result<ToolResult> {
-        let key = match params.get("key").and_then(|v| v.as_str()) {
-            Some(k) if !k.trim().is_empty() => k.trim().to_string(),
-            _ => {
-                return Ok(ToolResult {
-                    ok: false,
-                    content: String::new(),
-                    error: Some("Missing required parameter 'key'".to_string()),
-                    token_usage: None,
-                });
-            }
-        };
-
+        // --- Validate content ---
         let content = match params.get("content").and_then(|v| v.as_str()) {
             Some(c) if !c.trim().is_empty() => c.trim().to_string(),
             _ => {
@@ -84,47 +103,124 @@ impl Tool for MemoryStoreTool {
             }
         };
 
-        let category = params
-            .get("category")
-            .and_then(|v| v.as_str())
-            .unwrap_or("core");
-
-        // Validate category
-        let valid_category = match category {
-            "core" | "daily" | "conversation" => category.to_string(),
-            other => {
-                // Allow custom categories but validate the name
-                if other.is_empty() || other.len() > 64 {
-                    return Ok(ToolResult {
-                        ok: false,
-                        content: String::new(),
-                        error: Some(format!(
-                            "Invalid category '{}'. Must be 'core', 'daily', 'conversation', or a custom name (1-64 chars)",
-                            other
-                        )),
-                        token_usage: None,
-                    });
-                }
-                other.to_string()
+        // --- Validate and parse category ---
+        let category_str = match params.get("category").and_then(|v| v.as_str()) {
+            Some(c) => c,
+            None => {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some(
+                        "Missing required parameter 'category'. Must be 'fact', 'preference', or 'relation'."
+                            .to_string(),
+                    ),
+                    token_usage: None,
+                });
             }
         };
 
-        // Phase 1: Return a confirmation with a generated memory ID
-        // Phase 2+: Store in Grafeo backend
-        let memory_id = format!(
-            "mem_{}",
-            &uuid::Uuid::new_v4().to_string().replace("-", "")[..12]
-        );
+        let sub_type = match parse_category(category_str) {
+            Some(t) => t,
+            None => {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some(format!(
+                        "Invalid category '{}'. Must be 'fact', 'preference', or 'relation'.",
+                        category_str
+                    )),
+                    token_usage: None,
+                });
+            }
+        };
 
-        Ok(ToolResult {
-            ok: true,
-            content: format!(
-                "Stored memory: {key} = {content} (category: {valid_category}, agent: {}, id: {memory_id})",
-                self.agent_id
-            ),
-            error: None,
-            token_usage: None,
-        })
+        // --- Validate confidence (optional, clamp 0.0-1.0) ---
+        let confidence = params
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|c| c.clamp(0.0, 1.0) as f32)
+            .unwrap_or(DEFAULT_CONFIDENCE);
+
+        // --- Extract optional keywords ---
+        let _keywords: Option<Vec<String>> = params.get("keywords").and_then(|v| {
+            v.as_array().map(|arr| {
+                arr.iter()
+                    .filter_map(|item| item.as_str().map(String::from))
+                    .collect()
+            })
+        });
+
+        // --- Call GrafeoStore pipeline if available ---
+        match &self.store {
+            Some(store) => {
+                let category_display = sub_type.as_str();
+                let input = MemoryStoreInput {
+                    content: content.clone(),
+                    sub_type,
+                    subject: None,
+                    predicate: None,
+                    object: None,
+                    confidence: Some(confidence),
+                    source_episode_id: None,
+                    embedding: None,
+                };
+
+                match store.process_memory_store(&input) {
+                    Ok(Some(result)) => {
+                        Ok(ToolResult {
+                            ok: true,
+                            content: format!(
+                                "Stored {cat}: \"{content}\" (confidence: {conf:.2}, id: {id})",
+                                cat = category_display,
+                                content = content,
+                                conf = confidence,
+                                id = result.node_id.0
+                            ),
+                            error: None,
+                            token_usage: None,
+                        })
+                    }
+                    Ok(None) => {
+                        // Duplicate skipped
+                        Ok(ToolResult {
+                            ok: true,
+                            content: format!(
+                                "Skipped: content is duplicate of existing memory (similarity > 0.95). \"{content}\"",
+                                content = content
+                            ),
+                            error: None,
+                            token_usage: None,
+                        })
+                    }
+                    Err(e) => Ok(ToolResult {
+                        ok: false,
+                        content: String::new(),
+                        error: Some(format!("Failed to store memory: {}", e)),
+                        token_usage: None,
+                    }),
+                }
+            }
+            None => {
+                // GrafeoStore not available — return confirmation (Phase 1 fallback)
+                let memory_id = format!(
+                    "mem_{}",
+                    &uuid::Uuid::new_v4().to_string().replace('-', "")[..12]
+                );
+                Ok(ToolResult {
+                    ok: true,
+                    content: format!(
+                        "Stored {cat}: \"{content}\" (confidence: {conf:.2}, agent: {agent}, id: {id})",
+                        cat = sub_type.as_str(),
+                        content = content,
+                        conf = confidence,
+                        agent = self.agent_id,
+                        id = memory_id
+                    ),
+                    error: None,
+                    token_usage: None,
+                })
+            }
+        }
     }
 }
 
@@ -137,91 +233,156 @@ mod tests {
         let spec = MemoryStoreTool::spec_value();
         assert_eq!(spec.name, "memory_store");
         assert!(spec.description.contains("long-term memory"));
-        assert!(spec.input_schema["properties"]["key"].is_object());
         assert!(spec.input_schema["properties"]["content"].is_object());
         assert!(spec.input_schema["properties"]["category"].is_object());
-    }
-
-    #[tokio::test]
-    async fn test_memory_store_missing_key() {
-        let tool = MemoryStoreTool::new("com.test.agent");
-        let result = tool.execute(serde_json::json!({ "content": "test" })).await.unwrap();
-        assert!(!result.ok);
-        assert!(result.error.unwrap().contains("Missing required parameter 'key'"));
+        assert!(spec.input_schema["properties"]["confidence"].is_object());
+        assert!(spec.input_schema["properties"]["keywords"].is_object());
+        // Verify required fields
+        let required: Vec<&str> = spec.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|v| v.as_str())
+            .collect();
+        assert!(required.contains(&"content"));
+        assert!(required.contains(&"category"));
+        // key should NOT be in schema
+        assert!(!spec.input_schema["properties"].as_object().unwrap().contains_key("key"));
     }
 
     #[tokio::test]
     async fn test_memory_store_missing_content() {
-        let tool = MemoryStoreTool::new("com.test.agent");
-        let result = tool.execute(serde_json::json!({ "key": "lang" })).await.unwrap();
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({ "category": "fact" }))
+            .await
+            .unwrap();
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("Missing required parameter 'content'"));
     }
 
     #[tokio::test]
-    async fn test_memory_store_empty_content() {
-        let tool = MemoryStoreTool::new("com.test.agent");
+    async fn test_memory_store_missing_category() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
         let result = tool
-            .execute(serde_json::json!({ "key": "lang", "content": "" }))
+            .execute(serde_json::json!({ "content": "User prefers Rust" }))
             .await
             .unwrap();
         assert!(!result.ok);
-    }
-
-    #[tokio::test]
-    async fn test_memory_store_basic() {
-        let tool = MemoryStoreTool::new("com.test.agent");
-        let result = tool
-            .execute(serde_json::json!({ "key": "lang", "content": "User prefers Rust" }))
-            .await
-            .unwrap();
-        assert!(result.ok);
-        assert!(result.content.contains("lang"));
-        assert!(result.content.contains("core")); // default category
-    }
-
-    #[tokio::test]
-    async fn test_memory_store_with_category_daily() {
-        let tool = MemoryStoreTool::new("com.test.agent");
-        let result = tool
-            .execute(serde_json::json!({
-                "key": "standup",
-                "content": "Meeting notes from standup",
-                "category": "daily"
-            }))
-            .await
-            .unwrap();
-        assert!(result.ok);
-        assert!(result.content.contains("daily"));
-    }
-
-    #[tokio::test]
-    async fn test_memory_store_with_custom_category() {
-        let tool = MemoryStoreTool::new("com.test.agent");
-        let result = tool
-            .execute(serde_json::json!({
-                "key": "proj_note",
-                "content": "Uses async runtime",
-                "category": "project"
-            }))
-            .await
-            .unwrap();
-        assert!(result.ok);
-        assert!(result.content.contains("project"));
+        assert!(result.error.unwrap().contains("Missing required parameter 'category'"));
     }
 
     #[tokio::test]
     async fn test_memory_store_invalid_category() {
-        let tool = MemoryStoreTool::new("com.test.agent");
+        let tool = MemoryStoreTool::new("com.test.agent", None);
         let result = tool
             .execute(serde_json::json!({
-                "key": "test",
-                "content": "test",
-                "category": ""
+                "content": "User prefers Rust",
+                "category": "daily"
             }))
             .await
             .unwrap();
         assert!(!result.ok);
         assert!(result.error.unwrap().contains("Invalid category"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_empty_content() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({ "content": "", "category": "fact" }))
+            .await
+            .unwrap();
+        assert!(!result.ok);
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_basic_fact() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "User lives in Beijing",
+                "category": "fact",
+                "confidence": 0.9
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("User lives in Beijing"));
+        assert!(result.content.contains("Fact"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_preference() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "User prefers dark mode",
+                "category": "preference",
+                "confidence": 0.6
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("Preference"));
+        assert!(result.content.contains("0.60"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_relation() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "Alice is the team lead of Bob",
+                "category": "relation",
+                "keywords": ["alice", "bob", "team"]
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("Relation"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_default_confidence() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "User likes coffee",
+                "category": "preference"
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        // Default confidence = 0.7
+        assert!(result.content.contains("0.70"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_confidence_clamped() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        // confidence > 1.0 → clamped to 1.0
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "2 + 2 = 4",
+                "category": "fact",
+                "confidence": 99.0
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("1.00"));
+
+        // confidence < 0 → clamped to 0.0
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "Maybe it will rain",
+                "category": "fact",
+                "confidence": -5.0
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("0.00"));
     }
 }
