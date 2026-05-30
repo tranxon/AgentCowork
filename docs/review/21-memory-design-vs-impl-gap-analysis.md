@@ -11,11 +11,11 @@
 
 | 维度 | 完成度 | 说明 |
 |------|--------|------|
-| **Phase 1 基础设施** | **~85%** | 核心存储/检索/遗忘已实现，但关键链路缺失（memory_store 接口未对齐设计） |
+| **Phase 1 基础设施** | **~90%** | 核心存储/检索/遗忘已实现，memory_store 接口已对齐设计并接通即时提取管道 |
 | **Phase 2 程序记忆与自我认知** | **~40%** | 数据结构存在，但联动逻辑大部分未实现 |
 | **Phase 3 离线巩固与持久化** | **~15%** | 仅有代码骨架，核心管道未接通 |
 
-**最大风险项**：`memory_store` 工具使用旧版 API 签名（key + content + category），与设计文档要求的 `{content, category, confidence, keywords}` 不一致，导致即时提取管道 (`consolidation/instant.rs`) 虽然代码完备但可能从未被正确调用。
+**已解决（2026-05-30）**：`memory_store` 工具接口已从旧版 `{key, content, category}` 对齐到设计要求的 `{content, category, confidence, keywords}`，并接入了 `GrafeoStore.process_memory_store()` 即时提取管道（去重 → 两层冲突检测 → 节点创建）。
 
 ---
 
@@ -42,6 +42,7 @@
 | hybrid_search 多Label并行检索 | §6.1 | `manager.rs` `retrieve()` (L169-225) | 完成 |
 | graph_expand 关联扩散（含 hint_type 驱动早期终止阈值） | §6.2-6.3 | `manager.rs` `retrieve()` (L226-251) + `spreading.rs` | 完成 |
 | Abstention 拒答机制（min_score 过滤 + System Prompt 注入） | §6.5 | `rollball-grafeo/src/abstention.rs` | 完成 |
+| **memory_store 工具接口对齐设计** | §4.1 | `tools/builtin/memory_store.rs` | **完成（2026-05-30 修复）**：接口从旧版 `{key, content, category}` 改为设计要求的 `{content, category, confidence, keywords}`；对接 `GrafeoStore.process_memory_store()` 即时提取管道（去重→冲突检测→节点创建）；GrafeoStore 未初始化时优雅降级为 UUID fallback |
 | 两层冲突检测（语义相似度 + 时间冲突，统一 Ambiguous） | §6.4 | `rollball-grafeo/src/conflict.rs` | 完成（v3.8 简化） |
 | 即时提取冲突处理（统一 Ambiguous → Phase 3 LLM 仲裁） | §4.1 / §6.4 | `rollball-grafeo/src/consolidation/instant.rs` `process_memory_store()` | 完成（v3.8 简化） |
 | 防重复提取（embedding similarity > 0.95 跳过） | §4.1 | `instant.rs` `is_duplicate_knowledge()` (L247-265) | 完成 |
@@ -62,11 +63,10 @@
 
 | 设计项 | 设计文档位置 | 当前状态 | 差距描述 |
 |--------|------------|---------|---------|
-| **memory_store 工具接口** | §4.1 | `tools/builtin/memory_store.rs` | **严重偏离设计**：设计要求 `{content, category, confidence, keywords}`，实际实现使用 `{key, content, category}`（旧版 key-value 模型）。不产出 `MemoryStoreInput` 给 `consolidation/instant.rs`，导致即时提取管道无法触发 |
 | ~~**memory_hint 系统提示注入**~~ | ~~§1~~ | ✅ 已废弃 | **2026-05-30 设计简化**：移除 per-round memory_hint，改为 Compaction 时 Compact Model 提取实体+三元组。`COMPACT_PROMPT` 已更新，`DistilledEpisode` 新增 `entities`/`triples` 字段 |
 | ~~**memory_hint 解析与检索策略联动**~~ | ~~§1 / §6.6~~ | ✅ 已废弃 | 检索权重统一为默认值（vector:0.7, text:0.3），不再动态调整。`HintType` 保留但仅用于 `memory_store` 管道 |
 | ~~**Episode 内容自动分类**~~ | ~~§2~~ | ✅ 已废弃 | **2026-05-30 设计简化**：移除 ContentType/ArtifactRef，废弃管道 A（Tool Call 模板提取）和管道 B（代码块正则分离）。Episode 内容直接存储，摘要由 Compaction 阶段 Compact Model 生成（ADR-011） |
-| **记忆检索在主循环中的完整集成** | §10.2 | 部分实现 | `loop_.rs` 中有 `init_memory_manager()` 调用和检索/注入代码，但 Record 阶段（每轮后将对话写入 Grafeo）未在循环中看到显式调用，仅依赖 JSONL 文件持久化 |
+| ~~**Per-round Episode 实时写入**~~ | ~~§2 / §10.2~~ | ✅ 已废弃（ADR-011） | **2026-05-30 设计变更**：ADR-011 决定「摘要即蒸馏」，经历层的唯一写入来源为 compaction 摘要和 session-close 蒸馏摘要。JSONL 是逐条消息的完整真相来源，Grafeo 只存摘要文本（自然语言），不存储逐轮原始副本。当前 `loop_.rs` 中 `write_distilled_to_grafeo()` 在 compaction/session-end 时通过 `record_distilled()` 写入 Grafeo——符合 ADR-011 设计 |
 
 ### 2.3 未实现
 
@@ -179,7 +179,7 @@
 
 ### 风险等级：高
 
-1. **memory_store 工具接口不对齐**（最关键）：`tools/builtin/memory_store.rs` 使用 `{key, content, category}` 旧 API，未对接 `consolidation/instant.rs` 的 `MemoryStoreInput`，导致精心实现的即时提取+两层冲突检测管道处于"有代码但无法触发"的状态。**建议优先修复**。
+1. ~~**memory_store 工具接口不对齐**~~ → **✅ 已解决（2026-05-30）**：接口已从 `{key, content, category}` 改为 `{content, category, confidence, keywords}`，并接入 `GrafeoStore.process_memory_store()` 即时提取管道。详见 `tools/builtin/memory_store.rs`。
 
 2. ~~**memory_hint 整条链路缺失**~~ → **✅ 已解决（2026-05-30）**：设计简化，per-round memory_hint 已移除。实体+三元组提取移至 Compaction 时由 Compact Model 完成。详见 §1 更新和 `COMPACT_PROMPT` 变更。
 
@@ -193,8 +193,8 @@
 
 ### 建议优先修复顺序
 
-1. 重构 `memory_store` 工具接口对齐设计
-2. 接通 `memory_store` → `consolidation/instant.rs` 即时提取管道
+1. ~~重构 `memory_store` 工具接口对齐设计~~ ✅ 已完成（2026-05-30）
+2. ~~接通 `memory_store` → `consolidation/instant.rs` 即时提取管道~~ ✅ 已完成（2026-05-30）
 3. 实现 AutobiographicalNode manifest 派生 + System Prompt 注入
 4. 接通离线巩固调度器（`ConsolidationScheduler` + `OfflineConsolidation`）
 
@@ -204,13 +204,15 @@
 
 | Phase | 总设计项 | 已实现 | 部分实现 | 未实现 | 已废弃（设计简化） |
 |-------|---------|--------|---------|--------|-------------------|
-| Phase 1 | ~35 | 28 | 3 | 1 | 3 (memory_hint ×2, ContentType) |
+| Phase 1 | ~35 | 29 | 1 | 1 | 4 (memory_hint ×2, ContentType, Per-round Episode) |
 | Phase 2 | ~18 | 5 | 6 | 7 | 0 |
 | Phase 3 | ~15 | 3 | 4 | 8 | 0 |
-| **合计** | **~68** | **36** | **13** | **16** | **3** |
+| **合计** | **~68** | **37** | **11** | **16** | **4** |
 
-**整体完成度：约 53%（已实现）→ 约 74%（含部分实现可工作的功能）**
+**整体完成度：约 54%（已实现）→ 约 75%（含部分实现可工作的功能）**
 
-Phase 1 核心存储/检索/遗忘管线基本完整，但即时提取管道因 memory_store 接口不对齐而断裂。Phase 2/3 的大量代码骨架存在（47KB generalization、25KB triple_extraction、39KB instant 等），暗示曾投入大量开发但未完成端到端集成。
+Phase 1 核心存储/检索/遗忘管线基本完整，即时提取管道已于 2026-05-30 接通（memory_store 接口对齐设计）。Phase 2/3 的大量代码骨架存在（47KB generalization、25KB triple_extraction、39KB instant 等），暗示曾投入大量开发但未完成端到端集成。
 
-**2026-05-30 更新**：移除 per-round memory_hint 设计，改为 Compaction 时 Compact Model 提取实体+三元组。新增 `DistilledEpisode.entities`/`.triples` 字段，`record_distilled` 已存储到 Grafeo 节点属性。检索权重统一默认值，不再动态调整。
+**2026-05-30 更新（1）**：移除 per-round memory_hint 设计，改为 Compaction 时 Compact Model 提取实体+三元组。新增 `DistilledEpisode.entities`/`.triples` 字段，`record_distilled` 已存储到 Grafeo 节点属性。检索权重统一默认值，不再动态调整。
+
+**2026-05-30 更新（2）**：memory_store 工具接口从旧版 `{key, content, category}` 对齐到设计要求的 `{content, category, confidence, keywords}`，接入 `GrafeoStore.process_memory_store()` 即时提取管道（去重→两层冲突检测→节点创建）。工厂函数 `all_builtin_tools()` 和 `MemoryStoreTool::new()` 新增 `Option<Arc<GrafeoStore>>` 参数，GrafeoStore 未初始化时优雅降级为 UUID fallback。统计数据已同步更新。

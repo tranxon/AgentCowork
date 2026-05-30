@@ -128,7 +128,7 @@ async fn test_tool_definition_parameters_serialization() {
     let work_dir = tmp.path().to_string_lossy().to_string();
     let resolver: SharedResolver = Arc::new(std::sync::RwLock::new(WorkspaceResolver::new(&work_dir)));
 
-    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS);
+    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS, false, None);
 
     for tool in &tools {
         let spec = tool.spec();
@@ -175,7 +175,7 @@ async fn test_all_builtin_tools_have_unique_names() {
     let work_dir = tmp.path().to_string_lossy().to_string();
     let resolver: SharedResolver = Arc::new(std::sync::RwLock::new(WorkspaceResolver::new(&work_dir)));
 
-    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS);
+    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS, false, None);
 
     let names: Vec<String> = tools.iter().map(|t| t.name()).collect();
     let mut unique = names.clone();
@@ -196,7 +196,7 @@ async fn test_all_builtin_tools_count() {
     let work_dir = tmp.path().to_string_lossy().to_string();
     let resolver: SharedResolver = Arc::new(std::sync::RwLock::new(WorkspaceResolver::new(&work_dir)));
 
-    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS);
+    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS, false, None);
     // 13 fixed built-in tools (memory_recall, memory_store, http_request, web_fetch,
     // web_search, file_read, file_write, file_edit, doc_reader, glob_search,
     // content_search, intent_send, ask_user_question) + platform shell tools
@@ -892,59 +892,58 @@ async fn test_shell_command_missing_param() {
 
 #[tokio::test]
 async fn test_memory_store_and_recall() {
-    let store_tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e");
+    let store_tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e", None);
     let recall_tool = builtin::memory_recall::MemoryRecallTool::new("com.test.e2e");
 
-    // Store a memory
+    // Store a memory with new natural-language interface
     let store_result = store_tool
         .execute(serde_json::json!({
-            "key": "favorite_lang",
-            "content": "Rust",
-            "category": "core"
+            "content": "User's favorite programming language is Rust",
+            "category": "fact",
+            "confidence": 0.9
         }))
         .await
         .unwrap();
 
     assert!(store_result.ok, "memory_store should succeed: {:?}", store_result.error);
-    assert!(store_result.content.contains("favorite_lang"));
     assert!(store_result.content.contains("Rust"));
-    assert!(store_result.content.contains("core"));
+    assert!(store_result.content.contains("Fact"));
 
-    // Recall the memory (Phase 1: returns placeholder, but should not error)
+    // Recall (Phase 1: returns placeholder, but should not error)
     let recall_result = recall_tool
-        .execute(serde_json::json!({ "query": "favorite_lang" }))
+        .execute(serde_json::json!({ "query": "favorite language" }))
         .await
         .unwrap();
 
     assert!(recall_result.ok, "memory_recall should succeed: {:?}", recall_result.error);
-    assert!(recall_result.content.contains("favorite_lang"));
 }
 
 #[tokio::test]
-async fn test_memory_store_default_category() {
-    let tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e");
+async fn test_memory_store_preference_category() {
+    let tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e", None);
     let result = tool
         .execute(serde_json::json!({
-            "key": "test_key",
-            "content": "test_value"
+            "content": "User prefers dark mode",
+            "category": "preference"
         }))
         .await
         .unwrap();
 
     assert!(result.ok);
-    assert!(result.content.contains("core"), "Default category should be 'core'");
+    assert!(result.content.contains("Preference"));
+    assert!(result.content.contains("dark mode"));
 }
 
 #[tokio::test]
-async fn test_memory_store_missing_key() {
-    let tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e");
+async fn test_memory_store_missing_category() {
+    let tool = builtin::memory_store::MemoryStoreTool::new("com.test.e2e", None);
     let result = tool
         .execute(serde_json::json!({ "content": "test" }))
         .await
         .unwrap();
 
     assert!(!result.ok);
-    assert!(result.error.unwrap().contains("Missing required parameter 'key'"));
+    assert!(result.error.unwrap().contains("Missing required parameter 'category'"));
 }
 
 #[tokio::test]
@@ -1250,7 +1249,7 @@ fn test_convert_tools_preserves_all_builtin_tools() {
     let work_dir = tmp.path().to_string_lossy().to_string();
     let resolver: SharedResolver = Arc::new(std::sync::RwLock::new(WorkspaceResolver::new(&work_dir)));
 
-    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS);
+    let tools = builtin::all_builtin_tools(&resolver, "com.test.e2e", DEFAULT_TOOL_HTTP_TIMEOUT_MS, false, None);
 
     // Serialize each tool's spec
     let tool_jsons: Vec<Value> = tools

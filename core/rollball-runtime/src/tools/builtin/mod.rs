@@ -40,6 +40,7 @@ pub mod search_backends;
 pub mod todo_write;
 
 use rollball_core::tools::traits::Tool;
+use rollball_grafeo::grafeo::GrafeoStore;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -59,11 +60,13 @@ use search_backends::WebSearchEngine;
 /// * `has_search_providers` - Whether at least one search provider is configured.
 ///   When false, the `web_search` tool is skipped to avoid wasting LLM calls on
 ///   a tool that always returns "Provider not configured".
+/// * `grafeo_store` - Optional GrafeoStore for memory_store backend wiring.
 pub fn all_builtin_tools(
     resolver: &SharedResolver,
     agent_id: &str,
     tool_http_timeout_ms: u64,
     has_search_providers: bool,
+    grafeo_store: Option<Arc<GrafeoStore>>,
 ) -> Vec<Arc<dyn Tool>> {
     let _work_dir = resolver.read().unwrap().agent_home().to_string();
     let current_dir = resolver.read().unwrap().agent_home().to_string();
@@ -85,7 +88,7 @@ pub fn all_builtin_tools(
 
     let mut tools: Vec<Arc<dyn Tool>> = vec![
         Arc::new(memory_recall::MemoryRecallTool::new(agent_id)),
-        Arc::new(memory_store::MemoryStoreTool::new(agent_id)),
+        Arc::new(memory_store::MemoryStoreTool::new(agent_id, grafeo_store)),
         Arc::new(http_request::HttpRequestTool::new()),
         Arc::new(web_fetch::WebFetchTool::with_timeout(Duration::from_millis(tool_http_timeout_ms))),
         Arc::new(file_read::FileReadTool::new(&current_dir)),

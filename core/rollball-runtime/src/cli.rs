@@ -545,6 +545,7 @@ async fn async_main(
         &config.agent_id,
         config.tool_http_timeout_ms,
         has_search_providers,
+        None, // GrafeoStore not yet initialized — tool uses fallback path
     ) {
         registry.register(tool);
     }
