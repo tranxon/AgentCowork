@@ -709,12 +709,12 @@ pub struct ResolvedLlmConfig {
 /// Priority:
 /// 1. Gateway config `default_provider` + `default_model` → look up in Vault
 /// 2. First key stored in Vault (with its default_model)
-/// 3. None (Agent falls back to manifest suggested_provider + env vars)
+/// 3. None (Agent has no provider configured)
 ///
 /// Model resolution order (within the chosen provider):
 /// 1. Gateway config `default_model` (explicit user choice)
 /// 2. Vault entry's `default_model` (set when adding the provider key)
-/// 3. None — Agent Runtime falls back to its manifest's suggested_model
+/// 3. None — Agent Runtime uses the first model from the provider list
 pub async fn resolve_llm_config_for_agent(
     agent_id: &str,
     state: &SharedState,
@@ -803,7 +803,7 @@ pub async fn resolve_llm_config_for_agent(
                 .or(config_default_model.map(|m| m.to_string()))
                 .or(effective_entry.default_model.clone());
             // model is None when neither config nor Vault has a preference —
-            // Agent Runtime will fall back to its manifest's suggested_model
+            // Agent Runtime will use the first model from the provider list
 
             Some(ResolvedLlmConfig {
                 provider: effective_provider_name,

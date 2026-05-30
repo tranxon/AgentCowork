@@ -45,15 +45,13 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub http: HttpConfig,
     /// Default LLM provider for agents
-    /// When set, Gateway delivers this provider's config to agents via IPC,
-    /// overriding the manifest's suggested_provider.
+    /// When set, Gateway delivers this provider's config to agents via IPC.
     /// If not set, falls back to the first key stored in Vault.
     #[serde(default)]
     pub default_provider: Option<String>,
     /// Default LLM model for agents
     /// When set, Gateway delivers this model to agents via IPC.
-    /// If not set, falls back to the Vault entry's default_model,
-    /// then the manifest's suggested_model.
+    /// If not set, falls back to the Vault entry's default_model.
     #[serde(default)]
     pub default_model: Option<String>,
     /// Global max output tokens limit for all agents.

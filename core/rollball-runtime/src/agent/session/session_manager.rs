@@ -252,10 +252,13 @@ impl SessionManager {
 
         // ADR-012: Read persisted model/provider from JSONL metadata.
         // The frontend is responsible for always providing an initial model;
-        // we do NOT fall back to manifest's suggested_model.
+        // we do NOT fall back to manifest fields.
         let initial_model = conversation
             .as_ref()
             .and_then(|c| c.model());
+        let initial_provider = conversation
+            .as_ref()
+            .and_then(|c| c.provider());
 
         let (inbound_tx, inbound_rx) =
             mpsc::channel(self.config.inbound_channel_capacity);
@@ -266,9 +269,12 @@ impl SessionManager {
             conversation,
         );
 
-        // ADR-012: Set per-session model on SessionState (only if we have one).
+        // ADR-012: Set per-session model/provider on SessionState (only if we have one).
         if let Some(m) = initial_model.as_ref() {
             session_state.set_model(m.clone());
+        }
+        if let Some(p) = initial_provider.as_ref() {
+            session_state.set_provider(p.clone());
         }
 
         let (mut task, agent_inbound_tx) = SessionTask::new(
@@ -872,10 +878,19 @@ impl SessionManager {
         self.core.manifest()
     }
 
-    /// Get the suggested provider name from the shared core manifest.
-    /// Used for budget queries in the Gateway loop.
+    /// Get the current provider name from cached LLM config.
+    /// Used for budget queries in the Gateway loop and ConfigSnapshot.
     pub fn provider_name(&self) -> String {
-        self.core.manifest().llm.suggested_provider.clone()
+        self.cached_llm
+            .as_ref()
+            .map(|c| c.provider_name.clone())
+            .unwrap_or_default()
+    }
+
+    /// Get the current model name from cached LLM config.
+    /// Used for ConfigSnapshot responses.
+    pub fn current_model_name(&self) -> Option<String> {
+        self.cached_llm.as_ref().map(|c| c.model.clone())
     }
 
     /// Access the Grafeo memory store from the shared core.

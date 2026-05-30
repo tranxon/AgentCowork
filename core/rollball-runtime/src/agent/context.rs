@@ -23,7 +23,7 @@ pub struct ContextBuilder {
     environment_override: Option<String>,
     /// Tool definitions as JSON
     tool_definitions: Option<Vec<serde_json::Value>>,
-    /// Model override from Gateway LLMConfigDelivery (takes precedence over manifest suggested_model)
+    /// Model override from Gateway LLMConfigDelivery (takes precedence over session default)
     override_model: Option<String>,
     /// Retrieved memory context (from Grafeo) for injection into system prompt.
     /// Set by AgentLoop before each build via `set_retrieved_memory()`.
@@ -403,8 +403,10 @@ impl ContextBuilder {
             }
         }
 
-        // Determine the model to use
-        let model = self.override_model.clone().unwrap_or_else(|| manifest.llm.suggested_model.clone());
+        // Determine the model to use.
+        // Model comes from override_model (set by Gateway LLMConfigDelivery or session init).
+        // When absent, model is empty — the LLM call will fail with a clear error.
+        let model = self.override_model.clone().unwrap_or_default();
 
         // Auto-set max_tokens based on model capabilities with the following priority:
         // 1. manifest.llm.max_tokens (user explicit config, backward compatible)

@@ -647,14 +647,14 @@ pub enum GatewayResponse {
     /// to the Agent Runtime. This satisfies PRD GTW-05 and SEC-07:
     /// API keys are distributed via IPC, not environment variables.
     ///
-    /// The provider always overrides the manifest's suggested_provider.
-    /// model=None means Gateway has no model preference — Runtime falls back
-    /// to the manifest's suggested_model.
+    /// The provider always overrides any session default.
+    /// model=None means Gateway has no model preference — Runtime uses
+    /// the first model from the provider list.
     LLMConfigDelivery {
         /// Provider name (e.g. "minimax", "openai", "anthropic")
         provider: String,
         /// Model identifier (e.g. "MiniMax-M2.7", "minimax-m2.5").
-        /// None when Gateway has no model preference — Runtime uses manifest's suggested_model.
+        /// None when Gateway has no model preference — Runtime uses the first model from the provider list.
         model: Option<String>,
         /// API key for the provider (one-time delivery, not stored on disk by Runtime)
         api_key: String,

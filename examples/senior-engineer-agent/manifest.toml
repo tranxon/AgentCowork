@@ -54,8 +54,6 @@ name = "memory_store"
 name = "memory_recall"
 
 [llm]
-suggested_provider = "openai"
-suggested_model = "gpt-4o"
 temperature = 0.3
 
 [llm.providers.openai]

@@ -293,7 +293,7 @@ impl SessionTask {
             .with_tools(tool_definitions.clone());
 
         // ADR-012: Apply per-session model from SessionState.
-        // For new sessions, model is set from manifest's suggested_model during creation.
+        // For new sessions, model is set from resource_cache during creation.
         // For resumed sessions, model is restored from JSONL metadata.
         if let Some(ref model) = agent_loop.session.model {
             context_builder = context_builder.with_override_model(model.clone());

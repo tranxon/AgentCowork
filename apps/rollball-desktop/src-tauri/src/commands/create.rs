@@ -12,7 +12,6 @@ use crate::state::AppState;
 #[derive(Serialize)]
 struct AgentManifest<'a> {
     package: PackageSection<'a>,
-    llm: LlmSection<'a>,
 }
 
 #[derive(Serialize)]
@@ -26,12 +25,6 @@ struct PackageSection<'a> {
     dev: bool,
 }
 
-#[derive(Serialize)]
-struct LlmSection<'a> {
-    suggested_provider: &'a str,
-    suggested_model: &'a str,
-}
-
 /// Create a new agent skeleton, zip it, and install via Gateway.
 ///
 /// Returns the agent_id of the newly installed agent on success.
@@ -43,14 +36,10 @@ pub async fn create_agent(
     version: Option<String>,
     description: Option<String>,
     author: Option<String>,
-    suggested_provider: Option<String>,
-    suggested_model: Option<String>,
 ) -> Result<String, String> {
     let version = version.unwrap_or_else(|| "0.1.0".to_string());
     let description = description.unwrap_or_else(|| format!("{} agent", name));
     let author = author.unwrap_or_else(|| "RollBall User".to_string());
-    let provider = suggested_provider.unwrap_or_else(|| "openai".to_string());
-    let model = suggested_model.unwrap_or_else(|| "gpt-4o".to_string());
 
     // Create a temp directory for the skeleton (use monotonic timestamp to avoid
     // collisions when concurrent Tauri commands run in the same process).
@@ -81,10 +70,6 @@ pub async fn create_agent(
             author: &author,
             runtime_version: "0.1.0",
             dev: true,
-        },
-        llm: LlmSection {
-            suggested_provider: &provider,
-            suggested_model: &model,
         },
     };
 

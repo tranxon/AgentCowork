@@ -48,8 +48,7 @@ max_execution_time_ms = 30000
     assert_eq!(manifest.agent_id, "com.example.weather");
     assert_eq!(manifest.version, "1.0.0");
     assert_eq!(manifest.name, "Weather Agent");
-    assert_eq!(manifest.llm.suggested_provider, "openai");
-    assert_eq!(manifest.llm.suggested_model, "gpt-4o-mini");
+    // [llm] fields like provider/model are now sourced from resource_cache, not manifest
     assert_eq!(manifest.tools.len(), 3);
     assert!(manifest.has_tool("http_request"));
     assert!(manifest.has_tool("memory_store"));
@@ -97,7 +96,8 @@ model = "gpt-4"
 }
 
 #[test]
-fn test_parse_invalid_manifest_missing_llm() {
+fn test_parse_without_llm_section() {
+    // [llm] section is now optional — provider/model come from resource_cache
     let toml_str = r#"
 agent_id = "com.test.broken"
 version = "1.0.0"
@@ -108,7 +108,7 @@ runtime_version = "0.1.0"
 "#;
 
     let result = rollball_core::AgentManifest::from_toml(toml_str);
-    assert!(result.is_err(), "Should fail without llm config");
+    assert!(result.is_ok(), "[llm] section is now optional");
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn test_parse_weather_agent_example() {
     let manifest = rollball_core::AgentManifest::from_toml(&toml_str).expect("Failed to parse weather manifest");
 
     assert_eq!(manifest.agent_id, "com.example.weather");
-    assert_eq!(manifest.llm.suggested_provider, "openai");
+    // [llm] provider/model now come from resource_cache, not manifest
     assert!(manifest.has_tool("http_request"));
     assert!(manifest.has_tool("memory_store"));
     assert!(manifest.has_tool("memory_recall"));

@@ -574,11 +574,12 @@ impl AgentLoop {
 
     /// Resolve the current model name for capability lookups.
     /// Uses override_model (set by model_switch) if present,
-    /// otherwise falls back to manifest suggested_model (guaranteed non-empty).
+    /// otherwise falls back to session state model.
     pub(crate) fn resolve_current_model(&self, ctx: Option<&ContextBuilder>) -> String {
         ctx.and_then(|cb| cb.override_model())
             .map(|s| s.to_string())
-            .unwrap_or_else(|| self.core.manifest.llm.suggested_model.clone())
+            .or_else(|| self.session.model.clone())
+            .unwrap_or_default()
     }
 
     /// Get the context window budget for history trimming.

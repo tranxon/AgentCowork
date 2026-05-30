@@ -159,36 +159,13 @@ pub fn prepare_publish(
             });
         }
 
-        // LLM config check
-        if manifest.llm.suggested_provider.is_empty() {
-            errors.push("llm.suggested_provider is empty".to_string());
-            checks.push(CheckItem {
-                name: "manifest.llm.provider".to_string(),
-                status: "error".to_string(),
-                detail: Some("llm.suggested_provider is empty".to_string()),
-            });
-        } else {
-            checks.push(CheckItem {
-                name: "manifest.llm.provider".to_string(),
-                status: "ok".to_string(),
-                detail: None,
-            });
-        }
-
-        if manifest.llm.suggested_model.is_empty() {
-            warnings.push("llm.suggested_model is empty".to_string());
-            checks.push(CheckItem {
-                name: "manifest.llm.model".to_string(),
-                status: "warning".to_string(),
-                detail: Some("llm.suggested_model is empty".to_string()),
-            });
-        } else {
-            checks.push(CheckItem {
-                name: "manifest.llm.model".to_string(),
-                status: "ok".to_string(),
-                detail: None,
-            });
-        }
+        // LLM config: provider/model now come from resource_cache.providers,
+        // not from manifest fields. Skip empty check.
+        checks.push(CheckItem {
+            name: "manifest.llm".to_string(),
+            status: "ok".to_string(),
+            detail: None,
+        });
 
         // Agent ID format check (reverse-domain)
         if !is_valid_agent_id(&manifest.agent_id) {
@@ -619,9 +596,7 @@ description = ""
 author = ""
 runtime_version = "0.1.0"
 [llm]
-suggested_provider = "openai"
-suggested_model = "gpt-4"
-"#,
+temperature = 0.7"#,
         ).unwrap();
         // Don't create prompts/ dir — should trigger warning
 
@@ -634,8 +609,7 @@ description = ""
 author = ""
 runtime_version = "0.1.0"
 [llm]
-suggested_provider = "openai"
-suggested_model = "gpt-4"
+temperature = 0.7
 "#).unwrap();
         state.add_installed(AgentInfo {
             agent_id: "com.test.invalid".to_string(),

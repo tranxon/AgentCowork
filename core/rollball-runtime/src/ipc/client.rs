@@ -14,7 +14,7 @@ use rollball_core::ProtocolType;
 pub struct LlmConfigReceived {
     /// Provider name (e.g. "minimax", "openai")
     pub provider: String,
-    /// Model identifier, or None to use manifest's suggested_model
+    /// Model identifier, or None to use the first model from provider list
     pub model: Option<String>,
     /// API key for the provider
     pub api_key: Option<String>,

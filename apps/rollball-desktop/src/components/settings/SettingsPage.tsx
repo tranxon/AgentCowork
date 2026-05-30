@@ -390,6 +390,7 @@ function GeneralTab() {
   const [config, setConfig] = useState<GatewayConfig | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showResetOnboardingConfirm, setShowResetOnboardingConfirm] = useState(false);
   const { logLevel, setLogLevel, logFileSizeMb, setLogFileSizeMb } = useSettingsStore();
 
   useEffect(() => {
@@ -558,20 +559,30 @@ function GeneralTab() {
           Gateway models cache will be reloaded from disk (no re-download needed).
         </p>
         <button
-          onClick={async () => {
-            try {
-              const { resetOnboarding } = await import("../../lib/gateway-api");
-              await resetOnboarding();
-              alert("Onboarding has been reset. Please reload the page to start again.");
-              window.location.reload();
-            } catch (e) {
-              alert(`Failed to reset: ${e instanceof Error ? e.message : String(e)}`);
-            }
-          }}
+          onClick={() => setShowResetOnboardingConfirm(true)}
           className="mt-3 rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium"
         >
           Reset Onboarding
         </button>
+
+        <ConfirmDialog
+          open={showResetOnboardingConfirm}
+          title="Reset Onboarding"
+          message="确定要重置引导流程吗？这将会清除所有引导进度，需要重新配置 Gateway 连接和 API Key。页面将自动刷新以重新开始。"
+          confirmLabel="Reset"
+          destructive
+          onConfirm={async () => {
+            setShowResetOnboardingConfirm(false);
+            try {
+              const { resetOnboarding } = await import("../../lib/gateway-api");
+              await resetOnboarding();
+            } catch (e) {
+              console.error("Failed to reset onboarding:", e);
+            }
+            window.location.reload();
+          }}
+          onCancel={() => setShowResetOnboardingConfirm(false)}
+        />
       </div>
     </div>
   );

@@ -32,8 +32,6 @@ interface AgentFormData {
   version: string;
   description: string;
   author: string;
-  suggested_provider: string;
-  suggested_model: string;
 }
 
 const DEFAULT_FORM: AgentFormData = {
@@ -42,8 +40,6 @@ const DEFAULT_FORM: AgentFormData = {
   version: "0.1.0",
   description: "",
   author: "",
-  suggested_provider: "openai",
-  suggested_model: "gpt-4o",
 };
 
 const TEMPLATES = [
@@ -133,8 +129,6 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
         version: form.version || null,
         description: form.description || null,
         author: form.author || null,
-        suggestedProvider: form.suggested_provider || null,
-        suggestedModel: form.suggested_model || null,
       });
       onCreated(agentId);
     } catch (e) {
@@ -179,9 +173,9 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   className={cn(
                     "flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium transition-colors",
                     active &&
-                      "bg-zinc-200 text-zinc-800 dark:bg-zinc-300 dark:text-zinc-900",
+                    "bg-zinc-200 text-zinc-800 dark:bg-zinc-300 dark:text-zinc-900",
                     passed &&
-                      "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
+                    "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
                     !active && !passed && "text-zinc-400 dark:text-zinc-500",
                   )}
                 >
@@ -277,39 +271,13 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
             </div>
           )}
 
-          {/* Step 2: LLM config */}
+          {/* Step 2: LLM config — provider/model are now configured via Desktop settings, not manifest */}
           {step === "llm" && (
             <div className="space-y-3">
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  Provider
-                </label>
-                <select
-                  value={form.suggested_provider}
-                  onChange={(e) =>
-                    update({ suggested_provider: e.target.value })
-                  }
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200"
-                >
-                  <option value="openai">OpenAI</option>
-                  <option value="anthropic">Anthropic</option>
-                  <option value="ollama">Ollama (Local)</option>
-                  <option value="deepseek">DeepSeek</option>
-                  <option value="groq">Groq</option>
-                </select>
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  Model
-                </label>
-                <input
-                  type="text"
-                  value={form.suggested_model}
-                  onChange={(e) => update({ suggested_model: e.target.value })}
-                  placeholder="gpt-4o"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
-                />
-              </div>
+              <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                Provider and model are now configured globally in Settings → AI Providers.
+                This wizard no longer embeds provider/model in the manifest.
+              </p>
             </div>
           )}
 
@@ -326,10 +294,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                     <button
                       key={tmpl.id}
                       onClick={() => {
-                        if (tmpl.provider)
-                          update({ suggested_provider: tmpl.provider });
-                        if (tmpl.model)
-                          update({ suggested_model: tmpl.model });
+                        // Template selection — provider/model are now configured in Settings
                       }}
                       className="flex items-start gap-3 rounded-md border border-zinc-200 px-3 py-2 text-left transition-colors hover:border-zinc-400 hover:bg-zinc-50 dark:border-zinc-600 dark:hover:border-zinc-400 dark:hover:bg-zinc-700"
                     >
@@ -370,10 +335,6 @@ description = "${form.description || "(none)"}"
 author = "${form.author || "(none)"}"
 runtime_version = "0.1.0"
 dev = true
-
-[llm]
-suggested_provider = "${form.suggested_provider}"
-suggested_model = "${form.suggested_model}"
 `}
                 </pre>
               </div>

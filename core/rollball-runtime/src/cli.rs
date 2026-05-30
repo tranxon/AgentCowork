@@ -427,7 +427,7 @@ async fn async_main(
     //   workspace context, and runtime overrides — all delivered atomically
     //   in the AgentHelloResult response.
     //
-    // In Standalone mode: use manifest suggested_provider + env vars (development only).
+    // In Standalone mode: no Gateway provider available (development only).
     let mut gateway_model_capabilities: Option<rollball_core::protocol::ModelCapabilitiesInfo> =
         None;
     let mut gateway_current_provider_id: Option<String> = None;
@@ -441,7 +441,7 @@ async fn async_main(
     let resource_cache = read_resource_cache(std::path::Path::new(&config.work_dir));
 
     // ADR-012: Per-session model — no global agent_model.json.
-    // Cold start uses manifest's suggested_model/provider.
+    // Cold start: provider/model come from resource_cache.providers.
     let (provider, resolved_model, available_models, protocol_type) = {
         if let Some(ref cfg) = hello_config {
             let provider_list = cfg
@@ -457,21 +457,11 @@ async fn async_main(
                         .any(|k| k.provider_id == prov_id)
                 };
 
-                // Priority 1: manifest suggested_provider (only if API key exists)
-                let suggested = &loaded.manifest.llm.suggested_provider;
-                let chosen_prov = if has_api_key(suggested) {
-                    providers.iter().find(|p| p.id == *suggested)
-                } else {
-                    tracing::info!(
-                        suggested = %suggested,
-                        "Manifest suggested_provider has no API key, skipping"
-                    );
-                    None
-                };
-
-                // Priority 2: first available provider with API key
+                // Use the first available provider with an API key.
+                // Provider/model selection is governed by resource_cache.providers,
+                // not by manifest fields.
                 let chosen_prov =
-                    chosen_prov.or_else(|| providers.iter().find(|p| has_api_key(&p.id)));
+                    providers.iter().find(|p| has_api_key(&p.id));
                 if let Some(prov) = chosen_prov {
                     // Capture current provider ID for compact_model lookup at distillation time
                     gateway_current_provider_id = Some(prov.id.clone());
@@ -484,17 +474,13 @@ async fn async_main(
                         .map(|k| k.api_key.as_str());
                     let available = prov.models.iter().map(|m| m.id.clone()).collect::<Vec<_>>();
 
-                    // ADR-012: Model selection uses manifest suggested_model.
-                    // No global agent_model.json anymore — model is per-session.
-                    let suggested_model = &loaded.manifest.llm.suggested_model;
-                    let model_id = if prov.models.iter().any(|m| m.id == *suggested_model) {
-                        suggested_model.clone()
-                    } else {
-                        prov.models
-                            .first()
-                            .map(|m| m.id.clone())
-                            .unwrap_or_else(|| "default".to_string())
-                    };
+                    // ADR-012: Model is per-session. Use the first model from the provider list.
+                    // The session initialization will use the model from JSONL metadata
+                    // or Gateway LLMConfigDelivery.
+                    let model_id = prov.models
+                        .first()
+                        .map(|m| m.id.clone())
+                        .unwrap_or_else(|| "default".to_string());
 
                     // Look up capabilities for the selected model
                     if let Some(m) = prov.models.iter().find(|m| m.id == model_id) {
@@ -631,19 +617,8 @@ async fn async_main(
         .with_identity(identity_context)
         .with_tools(tool_definitions);
 
-    // If Gateway delivered a model override, apply it so that Gateway's default_model
-    // takes precedence over the manifest's suggested_model.
-    // In standalone mode, resolved_model equals manifest.llm.suggested_model (no override needed).
-    if resolved_model != loaded.manifest.llm.suggested_model {
-        tracing::info!(
-
-            model = %resolved_model,
-            manifest_model = %loaded.manifest.llm.suggested_model,
-            "Applying Gateway model override"
-
-        );
-        context_builder = context_builder.with_override_model(resolved_model.clone());
-    }
+    // Apply the resolved model as override so ContextBuilder always has a model.
+    context_builder = context_builder.with_override_model(resolved_model.clone());
 
     // Step 6.5: ADR-012 — model is per-session, no global agent_model.json.
     tracing::info!(
@@ -703,6 +678,65 @@ async fn async_main(
             )?)
         };
 
+    // ADR-012: Validate the resumed session's model/provider against the
+    // cached provider list (resource_cache.providers).  If the provider ID
+    // or model name no longer exists in the cache, or the provider has no
+    // API key, fall back to the first model of the first available provider.
+    if let Some(ref conv) = conversation_session {
+        let session_model = conv.model();
+        let session_provider = conv.provider();
+
+        // A session provider is valid when:
+        // 1. It exists in the cached provider list
+        // 2. The model exists within that provider's models
+        // 3. Either it has an API key in the vault, or it is the same
+        //    provider that was already resolved at startup.
+        let is_valid = match (&session_model, &session_provider) {
+            (Some(model), Some(provider_id)) => {
+                let in_cache = resource_cache
+                    .providers
+                    .as_ref()
+                    .map_or(true, |providers| {
+                        providers.iter().any(|p| {
+                            p.id == *provider_id && p.models.iter().any(|m| m.id == *model)
+                        })
+                    });
+                if !in_cache {
+                    false
+                } else {
+                    // Same provider as startup-resolved → already has API key.
+                    gateway_current_provider_id.as_deref() == Some(provider_id.as_str())
+                        || hello_config.as_ref().map_or(false, |cfg| {
+                            cfg.provider_key_vault
+                                .iter()
+                                .any(|k| k.provider_id == *provider_id)
+                        })
+                }
+            }
+            _ => true,
+        };
+
+        if !is_valid {
+            let fallback_model = resource_cache
+                .providers
+                .as_ref()
+                .and_then(|p| p.first())
+                .and_then(|p| p.models.first())
+                .map(|m| m.id.clone());
+
+            if let Some(ref fallback) = fallback_model {
+                tracing::warn!(
+                    session_id = %conv.session_id(),
+                    invalid_model = ?session_model,
+                    invalid_provider = ?session_provider,
+                    fallback = %fallback,
+                    "Session model/provider invalid, falling back"
+                );
+                conv.update_model_provider(fallback, None);
+            }
+        }
+    }
+
     // Spawn background session scan
     let conversations_dir_clone = conversations_dir.clone();
     let _session_scan_handle = tokio::spawn(async move {
@@ -712,7 +746,7 @@ async fn async_main(
     });
 
     // ADR-012: Per-session model — no global override_model in SessionManagerConfig.
-    // Model is initialized per-session from manifest.suggested_model or restored from JSONL.
+    // Model is initialized per-session from resource_cache or restored from JSONL.
 
     // Step 9: Run the appropriate loop based on connection mode
     if let Some(mut client) = grpc_client {
@@ -735,6 +769,11 @@ async fn async_main(
             active_tools,
             chunk_tx.clone(),
         ));
+
+        // Save the startup-resolved provider ID before it's consumed by
+        // Arc::get_mut below.  We may need it later to detect a mismatch
+        // between the startup provider and a resumed session's provider.
+        let startup_provider_id = gateway_current_provider_id.clone();
 
         // Inject Gateway model capabilities into the shared core.
         // Arc::get_mut only succeeds when the refcount is 1, so we must use
@@ -817,6 +856,14 @@ async fn async_main(
         }
 
         // Create initial session with the resumed/created conversation
+        //
+        // Capture the resumed session's model/provider before moving
+        // conversation_session into create_session_with_id_and_conversation.
+        // If the session's provider differs from the startup-resolved provider,
+        // we need to rebuild the Provider with the correct base_url + API key.
+        let resumed_model: Option<String> = conversation_session.as_ref().and_then(|c| c.model());
+        let resumed_provider: Option<String> = conversation_session.as_ref().and_then(|c| c.provider());
+
         let initial_session_id = if let Some(conv) = conversation_session {
             let sid = conv.session_id().to_string();
             session_manager
@@ -828,6 +875,50 @@ async fn async_main(
         };
         session_manager.set_current_session_id(initial_session_id.clone());
         tracing::info!(initial_session_id = %initial_session_id, "Initial session created");
+
+        // If the resumed session's provider differs from the startup-resolved
+        // provider, rebuild the Provider with the session's provider info
+        // (base_url + API key from the cached provider list + key vault).
+        // This handles the case where the session's provider differs from
+        // the startup-resolved provider (e.g. session saved with different provider).
+        if let (Some(sm), Some(sp)) = (&resumed_model, &resumed_provider) {
+            if startup_provider_id.as_deref() != Some(sp.as_str()) {
+                if let Some(providers) = resource_cache.providers.as_ref() {
+                    if let Some(prov_info) = providers.iter().find(|p| p.id == *sp) {
+                        let api_key = hello_config.as_ref().and_then(|cfg| {
+                            cfg.provider_key_vault
+                                .iter()
+                                .find(|k| k.provider_id == *sp)
+                                .map(|k| k.api_key.clone())
+                        });
+                        if let Some(ref key) = api_key {
+                            let model_info = prov_info.models.iter().find(|m| m.id == *sm);
+                            let caps = model_info.map(|m| m.capabilities.clone());
+                            let limit = model_info
+                                .map(|m| m.max_output_tokens_limit)
+                                .unwrap_or(gateway_max_output_tokens_limit);
+
+                            tracing::info!(
+                                session_provider = %sp,
+                                session_model = %sm,
+                                startup_provider = ?startup_provider_id,
+                                "Session provider differs from startup, rebuilding Provider"
+                            );
+                            session_manager.update_llm_config(
+                                sp.clone(),
+                                prov_info.protocol_type.clone(),
+                                key.clone(),
+                                Some(prov_info.base_url.clone()),
+                                sm.clone(),
+                                caps,
+                                limit,
+                                prov_info.compact_model.clone(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
 
         // Step 9.5: Apply workspace context and runtime overrides from AgentHelloResult
         //
@@ -1304,15 +1395,11 @@ fn build_runtime_provider(
     use crate::providers::registry::{ProviderRegistry, RoutingStrategy};
     use crate::providers::router::{create_provider, infer_protocol_type};
 
-    // If no multi-provider config, use simple single provider
+    // If no multi-provider config, return a noop provider.
+    // Provider/model now come from resource_cache.providers, not manifest fields.
     if manifest.llm.providers.is_empty() {
-        return create_provider(
-            &manifest.llm.suggested_provider,
-            &infer_protocol_type(&manifest.llm.suggested_provider),
-            default_api_key,
-            default_base_url,
-            None,
-        );
+        tracing::warn!("No providers configured in manifest, returning noop provider");
+        return crate::providers::router::create_noop_provider();
     }
 
     // Build ProviderRegistry from manifest
@@ -1333,79 +1420,33 @@ fn build_runtime_provider(
         registry.register_provider(name, provider, models);
     }
 
-    // Also register the primary provider if not already in providers map
-    if !manifest
-        .llm
-        .providers
-        .contains_key(&manifest.llm.suggested_provider)
-    {
-        let primary = create_provider(
-            &manifest.llm.suggested_provider,
-            &infer_protocol_type(&manifest.llm.suggested_provider),
-            default_api_key,
-            default_base_url,
-            None,
-        );
-        registry.register_provider(
-            &manifest.llm.suggested_provider,
-            primary,
-            vec![manifest.llm.suggested_model.clone()],
-        );
-    }
-
-    // Build ReliableProvider with fallback chain
-    match registry.build_reliable_provider(
-        &manifest.llm.suggested_provider,
-        &manifest.llm.suggested_model,
-    ) {
-        Some(reliable) => {
-            tracing::info!(
-                primary = %manifest.llm.suggested_provider,
-                model = %manifest.llm.suggested_model,
-                strategy = %strategy,
-                "Built ReliableProvider with fallback chain"
-            );
-            std::sync::Arc::new(reliable)
+    // Use the first provider as primary for the ReliableProvider
+    if let Some((primary_name, _)) = manifest.llm.providers.iter().next() {
+        let primary_model = manifest
+            .llm
+            .providers
+            .get(primary_name)
+            .map(|c| c.model.clone())
+            .unwrap_or_default();
+        match registry.build_reliable_provider(primary_name, &primary_model) {
+            Some(reliable) => {
+                tracing::info!(
+                    primary = %primary_name,
+                    model = %primary_model,
+                    strategy = %strategy,
+                    "Built ReliableProvider with fallback chain"
+                );
+                std::sync::Arc::new(reliable)
+            }
+            None => {
+                tracing::warn!("Failed to build ReliableProvider, falling back to noop provider");
+                crate::providers::router::create_noop_provider()
+            }
         }
-
-        None => {
-            tracing::warn!("Failed to build ReliableProvider, falling back to single provider");
-            create_provider(
-                &manifest.llm.suggested_provider,
-                &infer_protocol_type(&manifest.llm.suggested_provider),
-                default_api_key,
-                default_base_url,
-                None,
-            )
-        }
+    } else {
+        tracing::warn!("Provider registry is empty, returning noop provider");
+        crate::providers::router::create_noop_provider()
     }
-}
-
-/// Resolve API key from environment variables (standalone mode)
-///
-/// Priority:
-/// 1. ROLLBALL_LLM_API_KEY (generic override)
-/// 2. Protocol-based env key (OPENAI_API_KEY / OLLAMA_API_KEY / ANTHROPIC_API_KEY)
-///
-/// TODO: In the future, the env key should be looked up from offline_providers.json
-/// `env` field for the specific provider, with ProtocolType as fallback only.
-#[allow(dead_code)]
-fn resolve_api_key(manifest: &rollball_core::AgentManifest) -> Option<String> {
-    if let Ok(key) = std::env::var("ROLLBALL_LLM_API_KEY")
-        && !key.is_empty()
-    {
-        return Some(key);
-    }
-
-    use crate::providers::router::infer_protocol_type;
-    let protocol_type = infer_protocol_type(&manifest.llm.suggested_provider);
-    let env_key = match &protocol_type {
-        rollball_core::ProtocolType::Ollama => "OLLAMA_API_KEY",
-        rollball_core::ProtocolType::Anthropic => "ANTHROPIC_API_KEY",
-        rollball_core::ProtocolType::Google => "GOOGLE_API_KEY",
-        rollball_core::ProtocolType::OpenAI => "OPENAI_API_KEY",
-    };
-    std::env::var(env_key).ok().filter(|k| !k.is_empty())
 }
 
 /// Run interactive stdin chat loop
@@ -1522,8 +1563,9 @@ async fn run_gateway_loop(
                         Some((request_id, payload)) => {
                             // Handle QueryConfig inline (no Grafeo needed)
                             if let ServerPayload::QueryConfig(_q) = &payload {
-                                // ADR-012: Per-session model — use manifest's suggested_model as default.
-                                let current_model = session_manager.manifest().llm.suggested_model.clone();
+                                // ADR-012: Per-session model — use cached LLM config or empty.
+                                let current_model = session_manager.current_model_name()
+                                    .unwrap_or_default();
                                 let current_provider = Some(session_manager.provider_name());
                                 let overrides = &session_manager.runtime_overrides;
                                 // Read MCP config from separate agent_mcp.json.
