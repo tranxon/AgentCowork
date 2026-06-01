@@ -564,18 +564,55 @@ async fn list_all_providers(
 /// GET /api/models/{provider} — get models for a specific provider
 ///
 /// Resolution order:
+///   0. (local providers only) Query the running local server directly
 ///   1. Built-in offline data (instant, always available)
 ///   2. models.dev cache/API (fallback for providers not in offline data)
 ///   3. Empty result
 ///
-/// For providers present in offline data, returns immediately and triggers a
-/// background refresh of the models.dev cache. For custom providers not in
-/// offline data, falls back to models.dev synchronously.
+/// For local providers (ollama, lmstudio), their models depend on what the
+/// user has actually loaded in their local server. We query the server first
+/// (with a short timeout), then fall back to static/offline data if unreachable.
+///
+/// For remote providers, works as before: offline data first with background
+/// refresh of models.dev cache.
 async fn get_provider_models(
     State(state): State<AppState>,
     Path(provider_id): Path<String>,
 ) -> Result<impl IntoResponse, (StatusCode, Json<serde_json::Value>)> {
+    // 0. For local providers, try querying the running server first
+    if is_local_provider(&provider_id) {
+        if let Some(models) = fetch_local_server_models(&provider_id).await {
+            let name = LOCAL_PROVIDERS
+                .iter()
+                .find(|(pid, _, _)| *pid == provider_id)
+                .map(|(_, n, _)| n.to_string())
+                .unwrap_or_else(|| provider_id.clone());
+            return Ok(Json(ProviderModels {
+                id: provider_id,
+                name,
+                models,
+            }));
+        }
+        // Server unreachable — offline data is meaningless for local
+        // providers (user didn't download those models), return empty.
+        tracing::debug!(
+            "Local provider {} server not reachable, returning empty model list",
+            provider_id
+        );
+        let name = LOCAL_PROVIDERS
+            .iter()
+            .find(|(pid, _, _)| *pid == provider_id)
+            .map(|(_, n, _)| n.to_string())
+            .unwrap_or_else(|| provider_id.clone());
+        return Ok(Json(ProviderModels {
+            id: provider_id,
+            name,
+            models: vec![],
+        }));
+    }
+
     // 1. Try offline data first (instant, no network)
+    //    (local providers skip this — handled by step 0 above)
     if let Some((name, models)) = resolve_provider(offline_providers(), &provider_id) {
         // Background refresh: if cache is stale, update it asynchronously
         {
@@ -612,6 +649,206 @@ async fn get_provider_models(
         name: provider_id,
         models: vec![],
     }))
+}
+
+/// Try to discover models from a running local provider server.
+///
+/// Returns `Some(models)` on success (server responded), `None` if the
+/// server is not reachable or the response cannot be parsed.
+///
+/// Supported providers & endpoints:
+///   - lmstudio: `GET {base_url}/models` (OpenAI-compatible)
+///   - ollama:   `GET {base_url}/api/tags`
+async fn fetch_local_server_models(provider_id: &str) -> Option<Vec<ModelInfo>> {
+    let base_url = local_provider_default_url(provider_id)?;
+
+    // Shared HTTP client with a short timeout — if the local server isn't
+    // running we don't want the caller hanging for more than 2 seconds.
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+
+    let mut models = match provider_id {
+        "lmstudio" => fetch_lmstudio_models(&client, base_url).await,
+        "ollama" => fetch_ollama_models(&client, base_url).await,
+        _ => None,
+    }?;
+
+    // Enrich each model with known capabilities from offline_providers.json.
+    // LM Studio / Ollama only returns model IDs — context_window, max_tokens,
+    // tool_call support etc. come from the offline data when available.
+    for model in &mut models {
+        enrich_model_from_offline(model);
+    }
+
+    Some(models)
+}
+
+/// Parse an OpenAI-compatible `/v1/models` response into `ModelInfo`.
+async fn fetch_lmstudio_models(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Option<Vec<ModelInfo>> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let data = body.get("data")?.as_array()?;
+
+    Some(
+        data.iter()
+            .filter_map(|m| {
+                let id = m.get("id")?.as_str()?;
+                Some(ModelInfo {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    family: None,
+                    reasoning: None,
+                    tool_call: None,
+                    attachment: None,
+                    temperature: None,
+                    release_date: None,
+                    context_window: None,
+                    max_tokens: None,
+                    max_input_tokens: None,
+                    knowledge: None,
+                    input_cost: None,
+                    output_cost: None,
+                    input_modalities: None,
+                    output_modalities: None,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Parse an Ollama `/api/tags` response into `ModelInfo`.
+async fn fetch_ollama_models(
+    client: &reqwest::Client,
+    base_url: &str,
+) -> Option<Vec<ModelInfo>> {
+    let url = format!("{}/api/tags", base_url.trim_end_matches('/'));
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    let models = body.get("models")?.as_array()?;
+
+    Some(
+        models
+            .iter()
+            .filter_map(|m| {
+                let name = m.get("name")?.as_str()?;
+                // Strip `:latest` suffix for cleaner display
+                let id = name
+                    .strip_suffix(":latest")
+                    .unwrap_or(name)
+                    .to_string();
+                Some(ModelInfo {
+                    id: id.clone(),
+                    name: id,
+                    family: None,
+                    reasoning: None,
+                    tool_call: None,
+                    attachment: None,
+                    temperature: None,
+                    release_date: None,
+                    context_window: None,
+                    max_tokens: None,
+                    max_input_tokens: None,
+                    knowledge: None,
+                    input_cost: None,
+                    output_cost: None,
+                    input_modalities: None,
+                    output_modalities: None,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// Look up a model ID in `offline_providers.json` and copy known capabilities
+/// (context_window, max_tokens, tool_call, reasoning, etc.) into the model.
+///
+/// Search strategy:
+///   1. Exact match — search all providers for the full model ID
+///   2. Bare ID — if the model ID contains a path (e.g. "google/gemma-4-26b-a4b"),
+///      try the last segment ("gemma-4-26b-a4b") as well
+///
+/// NOTE: Suffix-based matching (e.g. adding "-it" or stripping "-instruct") is
+/// deliberately NOT done — it's unreliable guessing. The caller in the frontend
+/// must always fall back to safe defaults when enrichment finds no match.
+///
+/// This allows locally-discovered models (which only have an ID) to inherit
+/// capabilities from the offline data when available.
+fn enrich_model_from_offline(model: &mut ModelInfo) {
+    let data = offline_providers();
+    let providers = match data.as_object() {
+        Some(obj) => obj,
+        None => return,
+    };
+
+    // Build list of candidate IDs to try (ordered by specificity)
+    let mut candidates: Vec<String> = Vec::new();
+
+    // 1. Exact match
+    candidates.push(model.id.clone());
+
+    // 2. Bare ID
+    if let Some(bare) = model.id.split('/').next_back() {
+        if bare != model.id.as_str() {
+            candidates.push(bare.to_string());
+        }
+    }
+
+    for candidate in &candidates {
+        for provider_data in providers.values() {
+            let models_map = match provider_data.get("models").and_then(|m| m.as_object()) {
+                Some(m) => m,
+                None => continue,
+            };
+            let model_data = match models_map.get(candidate) {
+                Some(m) => m,
+                None => continue,
+            };
+
+            // Found a match — copy capabilities
+            if let Some(cw) = model_data
+                .get("limit")
+                .and_then(|l| l.get("context"))
+                .and_then(|v| v.as_u64())
+            {
+                model.context_window = Some(cw);
+            }
+            if let Some(mt) = model_data
+                .get("limit")
+                .and_then(|l| l.get("output"))
+                .and_then(|v| v.as_u64())
+            {
+                model.max_tokens = Some(mt);
+            }
+            if let Some(tc) = model_data.get("tool_call").and_then(|v| v.as_bool()) {
+                model.tool_call = Some(tc);
+            }
+            if let Some(r) = model_data.get("reasoning").and_then(|v| v.as_bool()) {
+                model.reasoning = Some(r);
+            }
+            if let Some(a) = model_data.get("attachment").and_then(|v| v.as_bool()) {
+                model.attachment = Some(a);
+            }
+            if let Some(name) = model_data.get("name").and_then(|v| v.as_str()) {
+                model.name = name.to_string();
+            }
+            if let Some(family) = model_data.get("family").and_then(|v| v.as_str()) {
+                model.family = Some(family.to_string());
+            }
+            return; // Found the best match, stop searching
+        }
+    }
 }
 
 /// POST /api/gateway/reset — reset Gateway state (reload models cache from disk)

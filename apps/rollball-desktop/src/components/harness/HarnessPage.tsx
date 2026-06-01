@@ -235,31 +235,35 @@ function ProvidersTab() {
 
   // Fetch available models for a provider from Gateway API
   const fetchModels = useCallback(async (providerId: string): Promise<ModelInfo[]> => {
-    // Check localStorage cache for this provider
-    const CACHE_KEY = `rollball_models_${providerId}`;
-    const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
-    const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+    // For local providers (Ollama, LM Studio), skip the cache entirely —
+    // model list must be fetched live from the running server each time
+    if (!isLocalProvider(providerId)) {
+      // Check localStorage cache for this provider
+      const CACHE_KEY = `rollball_models_${providerId}`;
+      const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
+      const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
 
-    try {
-      const cachedData = localStorage.getItem(CACHE_KEY);
-      const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+      try {
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
 
-      if (cachedData && cachedTimestamp) {
-        const timestamp = parseInt(cachedTimestamp, 10);
-        const now = Date.now();
+        if (cachedData && cachedTimestamp) {
+          const timestamp = parseInt(cachedTimestamp, 10);
+          const now = Date.now();
 
-        // Use cache if it's still fresh
-        if (now - timestamp < CACHE_TTL) {
-          const parsed = JSON.parse(cachedData);
-          return parsed.models ?? [];
-        } else {
-          // Cache expired
-          localStorage.removeItem(CACHE_KEY);
-          localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+          // Use cache if it's still fresh
+          if (now - timestamp < CACHE_TTL) {
+            const parsed = JSON.parse(cachedData);
+            return parsed.models ?? [];
+          } else {
+            // Cache expired
+            localStorage.removeItem(CACHE_KEY);
+            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
+          }
         }
+      } catch {
+        // Ignore cache errors
       }
-    } catch {
-      // Ignore cache errors
     }
 
     // Fetch from Gateway API
@@ -267,12 +271,16 @@ function ProvidersTab() {
       const data = await fetchProviderModels(providerId);
       const models = data.models ?? [];
 
-      // Update cache
-      try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-      } catch {
-        // Ignore cache write errors
+      // Update cache (only for remote providers — local providers skip cache)
+      if (!isLocalProvider(providerId)) {
+        const CACHE_KEY = `rollball_models_${providerId}`;
+        const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
+        try {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(data));
+          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+        } catch {
+          // Ignore cache write errors
+        }
       }
 
       return models;
@@ -300,7 +308,7 @@ function ProvidersTab() {
             const mi = availableModels.find(m => m.id === modelId);
             modelCapabilities[modelId] = {
               context_window: mi?.context_window ?? 128000,
-              max_output_tokens: mi?.max_tokens ?? 0,
+              max_output_tokens: mi?.max_tokens ?? 4096,
               supports_tool_calling: mi?.tool_call ?? newSupportsToolCalling,
               supports_reasoning: mi?.reasoning ?? undefined,
               modalities: mi?.input_modalities?.length ? { input: mi.input_modalities } : undefined,
@@ -388,7 +396,7 @@ function ProvidersTab() {
     // Build per-model capabilities map
     const modelCapabilities: ModelCapabilitiesMap = {};
     if (newModels.length > 0) {
-      const maxOutTokens = effectiveMaxOutputTokens ? parseInt(effectiveMaxOutputTokens) : 0;
+      const maxOutTokens = effectiveMaxOutputTokens ? parseInt(effectiveMaxOutputTokens) : 4096;
       for (const modelId of newModels) {
         const mi = availableModels.find(m => m.id === modelId);
         modelCapabilities[modelId] = {
@@ -463,8 +471,12 @@ function ProvidersTab() {
     setEditModelCapabilityFilter([]);
     // Load existing capabilities from VaultKeyEntry (per-model map, take first entry)
     const firstCaps = keyEntry?.model_capabilities ? Object.values(keyEntry.model_capabilities)[0] : undefined;
-    setEditContextWindow(firstCaps?.context_window?.toString() ?? "");
-    setEditMaxOutputTokens(firstCaps?.max_output_tokens?.toString() ?? "");
+    // Use defaults (128000/4096) when capabilities are 0 or missing — this
+    // handles old Vault entries that saved 0 before the fallback was fixed
+    const vaultCtx = firstCaps?.context_window;
+    const vaultMot = firstCaps?.max_output_tokens;
+    setEditContextWindow(vaultCtx && vaultCtx > 0 ? vaultCtx.toString() : "128000");
+    setEditMaxOutputTokens(vaultMot && vaultMot > 0 ? vaultMot.toString() : "4096");
     setEditSupportsToolCalling(firstCaps?.supports_tool_calling ?? true);
     setEditCompactModel(keyEntry?.compact_model ?? "");
     setShowEditDialog(provider);
@@ -506,8 +518,8 @@ function ProvidersTab() {
         for (const modelId of editModels) {
           const modelInfo = editAvailableModels.find(m => m.id === modelId);
           caps[modelId] = {
-            context_window: cw || 0,
-            max_output_tokens: mot || 0,
+            context_window: cw || 128000,
+            max_output_tokens: mot || 4096,
             supports_tool_calling: editSupportsToolCalling,
             supports_reasoning: modelInfo?.reasoning ?? undefined,
             modalities: modelInfo?.input_modalities?.length ? { input: modelInfo.input_modalities } : undefined,
@@ -679,7 +691,6 @@ function ProvidersTab() {
                           <div className="flex items-center justify-between">
                             <div className="min-w-0 flex-1">
                               <span className="text-xs font-medium">{providerName}</span>
-                              <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400">Local</span>
                             </div>
                             <button
                               onClick={() => {
@@ -1102,16 +1113,16 @@ function ProvidersTab() {
 
             <div className="space-y-2">
               {!isLocalProvider(showEditDialog) && (
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">API Key</label>
-                <input
-                  type="password"
-                  value={editKey}
-                  onChange={(e) => setEditKey(e.target.value)}
-                  placeholder="Enter new API key..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                />
-              </div>
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">API Key</label>
+                  <input
+                    type="password"
+                    value={editKey}
+                    onChange={(e) => setEditKey(e.target.value)}
+                    placeholder="Enter new API key..."
+                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  />
+                </div>
               )}
 
               {(

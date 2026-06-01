@@ -429,53 +429,66 @@ impl ContextBuilder {
             );
             Some(explicit)
         } else if let Some(caps) = gateway_capabilities {
-            // Cap max_output_tokens: it should never exceed context_window.
-            // models.dev data or user input may provide inflated values that
-            // the actual API rejects (e.g. alibaba-cn proxy limits kimi-k2.6
-            // max_tokens to 98304, but models.dev reports 384000).
             let raw = caps.max_output_tokens;
-            let context_window = caps.context_window;
-            let recommended = if raw > context_window {
-                tracing::warn!(
+
+            if raw == 0 {
+                // If max_output_tokens is 0, it means the value was not provided
+                // (e.g. locally-discovered models without capability info).
+                // Don't guess — omit max_tokens entirely and let the model
+                // use its own default (typically the full context window).
+                tracing::info!(
                     model = %model,
-                    raw_max_output_tokens = raw,
-                    context_window = context_window,
-                    "max_output_tokens exceeds context_window, capping"
+                    "max_output_tokens not configured, omitting max_tokens from request"
                 );
-                context_window
+                None
             } else {
-                raw
-            };
-            // Hard cap: many provider APIs reject max_tokens above a certain limit.
-            // This follows opencode's approach: Math.min(limit.output, 32000).
-            // models.dev's limit.output can be inflated (e.g. 384000) but
-            // actual API max_tokens parameter is usually capped much lower.
-            // The limit is now configurable via Gateway config (max_output_tokens_limit).
-            // Set to 0 to disable the limit.
-            let hard_cap = if max_output_tokens_limit == 0 {
-                u64::MAX // No limit
-            } else {
-                max_output_tokens_limit
-            };
-            let recommended = if recommended > hard_cap {
-                tracing::warn!(
+                // Cap max_output_tokens: it should never exceed context_window.
+                // models.dev data or user input may provide inflated values that
+                // the actual API rejects (e.g. alibaba-cn proxy limits kimi-k2.6
+                // max_tokens to 98304, but models.dev reports 384000).
+                let context_window = caps.context_window;
+                let recommended = if raw > context_window {
+                    tracing::warn!(
+                        model = %model,
+                        raw_max_output_tokens = raw,
+                        context_window = context_window,
+                        "max_output_tokens exceeds context_window, capping"
+                    );
+                    context_window
+                } else {
+                    raw
+                };
+                // Hard cap: many provider APIs reject max_tokens above a certain limit.
+                // This follows opencode's approach: Math.min(limit.output, 32000).
+                // models.dev's limit.output can be inflated (e.g. 384000) but
+                // actual API max_tokens parameter is usually capped much lower.
+                // The limit is now configurable via Gateway config (max_output_tokens_limit).
+                // Set to 0 to disable the limit.
+                let hard_cap = if max_output_tokens_limit == 0 {
+                    u64::MAX // No limit
+                } else {
+                    max_output_tokens_limit
+                };
+                let recommended = if recommended > hard_cap {
+                    tracing::warn!(
+                        model = %model,
+                        requested = recommended,
+                        cap = hard_cap,
+                        "max_output_tokens exceeds hard cap, capping"
+                    );
+                    hard_cap
+                } else {
+                    recommended
+                };
+                let recommended = recommended.min(u32::MAX as u64) as u32;
+                tracing::info!(
                     model = %model,
-                    requested = recommended,
-                    cap = hard_cap,
-                    "max_output_tokens exceeds hard cap, capping"
+                    recommended_max_tokens = recommended,
+                    source = "gateway",
+                    "Auto-setting max_tokens from Gateway model capabilities"
                 );
-                hard_cap
-            } else {
-                recommended
-            };
-            let recommended = recommended.min(u32::MAX as u64) as u32;
-            tracing::info!(
-                model = %model,
-                recommended_max_tokens = recommended,
-                source = "gateway",
-                "Auto-setting max_tokens from Gateway model capabilities"
-            );
-            Some(recommended)
+                Some(recommended)
+            }
         } else {
             tracing::warn!(
                 model = %model,
