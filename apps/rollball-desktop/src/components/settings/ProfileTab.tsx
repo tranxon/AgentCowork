@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useUserProfileStore } from "../../stores/userProfileStore";
 import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvatar";
 import { RadioGroup } from "../common/RadioGroup";
@@ -28,6 +28,19 @@ export function ProfileTab() {
   const { profile, setProfile } = useUserProfileStore();
   const [nameValue, setNameValue] = useState(profile.displayName);
   const [iconOpen, setIconOpen] = useState(false);
+  const iconRef = useRef<HTMLDivElement>(null);
+
+  // Close icon picker on outside click
+  useEffect(() => {
+    if (!iconOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (iconRef.current && !iconRef.current.contains(e.target as Node)) {
+        setIconOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [iconOpen]);
 
   // ── Backend user profile state ─────────────────────────────────────
   const [backendUser, setBackendUser] = useState<BackendUserProfile | null>(null);
@@ -110,7 +123,7 @@ export function ProfileTab() {
 
         {/* Live avatar preview — click to open icon picker */}
         <div className="flex items-center gap-4">
-          <div className="relative">
+          <div className="relative" ref={iconRef}>
             <button
               onClick={() => setIconOpen(!iconOpen)}
               className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"

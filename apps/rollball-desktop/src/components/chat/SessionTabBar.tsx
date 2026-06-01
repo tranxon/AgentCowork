@@ -3,7 +3,7 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { useChatStore } from "../../stores/chatStore";
 import { isSessionActive } from "../../lib/types";
 import { cn } from "../../lib/utils";
-import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 
 // ── Relative time formatter ──────────────────────────────────────────────
 
@@ -34,6 +34,7 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
   const openSessionIds = useChatStore((s) => s.agentStates[agentId]?.openSessionIds ?? []);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -79,6 +80,11 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
   const start = (currentPage - 1) * pageSize + 1;
   const end = Math.min(currentPage * pageSize, totalCount);
 
+  // Client-side search filter
+  const filteredSessions = searchTerm.trim()
+    ? sessions.filter((s) => s.title?.toLowerCase().includes(searchTerm.toLowerCase()))
+    : sessions;
+
   return (
     <div
       ref={ref}
@@ -88,21 +94,35 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
         <span>
           {totalCount > 0 ? (
-            <>Showing {start}–{end} of {totalCount}</>
+            <>Showing {start}&ndash;{end} of {totalCount}</>
           ) : (
             <>No sessions</>
           )}
         </span>
       </div>
 
+      {/* Search input */}
+      <div className="border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-700">
+        <div className="flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 dark:border-zinc-700">
+          <Search className="h-3 w-3 shrink-0 text-zinc-400" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Search sessions..."
+            className="w-full bg-transparent text-xs text-zinc-700 placeholder-zinc-400 outline-none dark:text-zinc-200 dark:placeholder-zinc-500"
+          />
+        </div>
+      </div>
+
       <div className="max-h-80 overflow-y-auto py-1">
-        {sessions.length === 0 && (
+        {filteredSessions.length === 0 && (
           <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
             No sessions yet
           </div>
         )}
 
-        {sessions.map((session) => {
+        {filteredSessions.map((session) => {
           const isOpen = openSessionIds.includes(session.session_id);
           const isDeleting = confirmDelete === session.session_id;
           const sessionState = useChatStore.getState().getSessionState(agentId, session.session_id);
@@ -404,10 +424,10 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
         {/* New session button */}
         <button
           onClick={handleNew}
-          className="rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300 transition-colors"
+          className="flex items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300 transition-colors"
           title="New conversation"
         >
-          <Plus className="h-3.5 w-3.5" />
+          <Plus className="h-3.5 w-3.5 shrink-0" />
         </button>
 
         {/* Session list dropdown */}
@@ -415,7 +435,7 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
           <button
             onClick={() => setListOpen(!listOpen)}
             className={cn(
-              "rounded p-1 transition-colors",
+              "flex items-center justify-center rounded p-1 transition-colors",
               listOpen
                 ? "text-[var(--color-accent)] bg-zinc-200 dark:bg-zinc-700"
                 : "text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300",

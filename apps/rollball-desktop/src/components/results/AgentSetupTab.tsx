@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useAgentProfileStore } from "../../stores/agentProfileStore";
 import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvatar";
@@ -41,6 +41,19 @@ export function AgentSetupTab() {
   const [_configLoading, setConfigLoading] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [iconOpen, setIconOpen] = useState(false);
+  const iconRef = useRef<HTMLDivElement>(null);
+
+  // Close icon picker on outside click
+  useEffect(() => {
+    if (!iconOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (iconRef.current && !iconRef.current.contains(e.target as Node)) {
+        setIconOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [iconOpen]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Tools configuration
@@ -260,7 +273,7 @@ export function AgentSetupTab() {
     <div className="flex-1 overflow-y-auto p-3">
       {/* Avatar preview — click to open icon picker */}
       <div className="mb-4 flex items-center gap-3">
-        <div className="relative">
+        <div className="relative" ref={iconRef}>
           <button
             onClick={() => setIconOpen(!iconOpen)}
             className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
