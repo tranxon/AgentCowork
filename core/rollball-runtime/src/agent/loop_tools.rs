@@ -29,7 +29,7 @@ impl AgentLoop {
     ///
     /// Returns results in the same order as input tool calls.
     /// Individual tool failures are captured as error strings, not propagated.
-    /// Returns (results, was_interrupted) — `was_interrupted` is `true` when the user
+    /// Returns (results, was_stopped) — `was_stopped` is `true` when the user
     /// clicked Stop during tool execution, so the caller should not continue the loop.
     pub(crate) async fn execute_tools_parallel(
         &mut self,
@@ -146,7 +146,7 @@ impl AgentLoop {
         let mut collected: Vec<(usize, String)> =
             Vec::with_capacity(all_indices.len());
         let total = all_indices.len();
-        let mut interrupted = false;
+        let mut should_stop = false;
 
         if use_gateway_approval {
             // ── Gateway mode: 4-way select (results / timeout / approval / interrupt) ──
@@ -185,37 +185,37 @@ impl AgentLoop {
                             }
                         }
                     }
-                    // Urgent interrupt via Notify — fired by Gateway gRPC
+                    // Urgent stop via Notify — fired by Gateway gRPC
                     // (Stop / Restart-in-Debug) for immediate tool cancellation.
                     // Takes priority over the 500ms poll fallback.
-                    _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
-                        tracing::info!("Urgent interrupt via Notify — aborting tools");
+                    _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                        tracing::info!("Urgent stop via Notify — aborting tools");
                         for handle in &handles {
                             handle.abort();
                         }
-                        interrupted = true;
+                        should_stop = true;
                         break;
                     }
-                    // Periodic interrupt polling during tool execution.
+                    // Periodic stop polling during tool execution.
                     // Without this branch, a slow tool (e.g. file_read on large file)
                     // would block the select! at rx.recv() until timeout, making
                     // STOP unresponsive for potentially minutes.
                     _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                        if self.poll_interrupt() {
+                        if self.poll_stop() {
                             tracing::info!(
-                                "User interrupt detected during tool execution — aborting"
+                                "User stop detected during tool execution — aborting"
                             );
                             for handle in &handles {
                                 handle.abort();
                             }
-                            interrupted = true;
+                            should_stop = true;
                             break;
                         }
                     }
                 }
             }
         } else {
-            // ── CLI / test mode: 4-way select (results / timeout / interrupt / notify) ──
+            // ── CLI / test mode: 4-way select (results / timeout / stop / notify) ──
             while collected.len() < total {
                 tokio::select! {
                     entry = rx.recv() => {
@@ -235,23 +235,23 @@ impl AgentLoop {
                         }
                         break;
                     }
-                    _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
-                        tracing::info!("Urgent interrupt via Notify — aborting tools");
+                    _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                        tracing::info!("Urgent stop via Notify — aborting tools");
                         for handle in &handles {
                             handle.abort();
                         }
-                        interrupted = true;
+                        should_stop = true;
                         break;
                     }
                     _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                        if self.poll_interrupt() {
+                        if self.poll_stop() {
                             tracing::info!(
-                                "User interrupt detected during tool execution — aborting"
+                                "User stop detected during tool execution — aborting"
                             );
                             for handle in &handles {
                                 handle.abort();
                             }
-                            interrupted = true;
+                            should_stop = true;
                             break;
                         }
                     }
@@ -287,7 +287,7 @@ impl AgentLoop {
             );
         }
 
-        (results, interrupted)
+        (results, should_stop)
     }
 }
 

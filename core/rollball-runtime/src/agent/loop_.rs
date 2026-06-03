@@ -111,6 +111,9 @@ pub enum ChunkEvent {
     ReasoningDelta(String),
     /// Context usage report (after each LLM call)
     ContextUsage(rollball_core::protocol::ContextUsageInfo),
+    /// Context compaction started (emitted before auto/manual compact triggers),
+    /// so the frontend can show a "Context compacting..." indicator.
+    CompactingStarted,
     /// Tool call event (routed through chunk channel for ordering guarantee)
     ToolCall {
         name: String,
@@ -148,7 +151,7 @@ pub enum ChunkEvent {
         approval_timeout_secs: u64,
     },
     /// Agent response interrupted by user stop signal
-    Interrupted {
+    Stopped {
         content: String,
     },
     /// Agent response complete (routed through chunk channel for ordering guarantee
@@ -198,7 +201,7 @@ pub enum ChunkEvent {
 /// Result of executing a single iteration of the agent loop.
 ///
 /// This is the shared building block used by both:
-/// - Production `run()`: loops automatically until TextResponse/Interrupted
+/// - Production `run()`: loops automatically until TextResponse/Stopped
 /// - Debug `DebugSessionTask`: calls one iteration at a time with pause/breakpoint control
 #[derive(Debug)]
 pub(crate) enum IterationResult {
@@ -206,8 +209,8 @@ pub(crate) enum IterationResult {
     TextResponse(String),
     /// Tool calls were executed successfully — continue to next iteration
     ToolCallsExecuted,
-    /// Agent was interrupted by user request
-    Interrupted(String),
+    /// Agent was stopped by user request
+    Stopped(String),
 }
 
 /// Agent loop runner
@@ -365,8 +368,8 @@ impl AgentLoop {
     /// the current loop).
     pub(crate) fn apply_user_op(&mut self, op: &crate::agent::inbound::UserOp) -> bool {
         match op {
-            crate::agent::inbound::UserOp::InterruptLoop { reason } => {
-                tracing::info!(reason = %reason, "UserOp: interrupt loop");
+            crate::agent::inbound::UserOp::StopLoop { reason } => {
+                tracing::info!(reason = %reason, "UserOp: stop loop");
                 true
             }
             crate::agent::inbound::UserOp::ContinueLoop { reason } => {
@@ -604,30 +607,6 @@ impl AgentLoop {
         self.core.context_trim_budget(model_name)
     }
 
-    /// Write a distilled episode to the Grafeo memory store (best-effort).
-    ///
-    /// P2-1 fix: extracted common pattern from 3 duplicate code blocks
-    /// (trimmed distillation, switch-session distillation, session-close distillation).
-    async fn write_distilled_to_grafeo(
-        memory_store: &Option<std::sync::Arc<rollball_grafeo::GrafeoStore>>,
-        episode: &crate::episode_distill::DistilledEpisode,
-        context: &str, // for logging: "trimmed", "switch-session", "session"
-        embedding_provider: Option<&dyn crate::embedding::EmbeddingProvider>,
-    ) {
-        if let Some(store) = memory_store {
-            let manager = crate::memory::MemoryManager::new(
-                crate::memory::MemoryManagerConfig::default(),
-            );
-            if let Err(e) = manager.record_distilled(store, episode, embedding_provider).await {
-                tracing::warn!(
-                    error = %e,
-                    distill_context = context,
-                    "Failed to write distillation to Grafeo (non-fatal)"
-                );
-            }
-        }
-    }
-
     /// Trim history to fit within the context window budget.
     ///
     /// The budget comes from [`context_trim_budget`] →
@@ -657,7 +636,7 @@ impl AgentLoop {
     /// - 95% usage → emergency trim (safety net)
     ///
     /// Called after each LLM response when context usage is computed.
-    async fn compact_history_if_needed(&mut self, model_name: &str) {
+    pub(crate) async fn compact_history_if_needed(&mut self, model_name: &str) {
         /// Number of conversational rounds to keep at the tail after compaction.
         /// Each round starts with a User message, so this keeps the last N user
         /// messages and everything after them.
@@ -680,7 +659,23 @@ impl AgentLoop {
                 "Context usage >= 80%, triggering LLM compaction"
             );
 
-            let compact_model = self.resolve_distill_model(current_tokens * 4);
+            // Notify frontend that compaction has started (both manual and auto paths).
+            if let Some(ref tx) = self.core.on_chunk {
+                let _ = tx.send(SessionChunkEvent {
+                    session_id: self.core.session_id.clone().unwrap_or_default(),
+                    event: ChunkEvent::CompactingStarted,
+                }).await;
+            }
+
+            // Build combined text from history for model-aware token counting.
+            let combined_text: String = self.session.history.messages()
+                .iter()
+                .fold(String::new(), |mut acc, m| {
+                    acc.push_str(&m.content);
+                    acc.push('\n');
+                    acc
+                });
+            let compact_model = self.resolve_distill_model(&combined_text);
             let system_prompt = self
                 .core
                 .system_prompt_override
@@ -780,14 +775,16 @@ impl AgentLoop {
         self.close_session_inner().await
     }
 
-    /// Resolve the model to use for session distillation.
+    /// Resolve the model to use for session distillation or compaction.
+    ///
+    /// Uses [`crate::token::count_text`] — the single unified token counting API.
     ///
     /// Priority order:
     /// 1. Provider's configured `compact_model` from provider_list (read from disk)
-    /// 2. Cheapest model whose context_window fits
-    /// 3. Model with the largest context_window (last resort)
-    fn resolve_distill_model(&self, content_size_bytes: u64) -> String {
-        let estimated_tokens = (content_size_bytes / 4) as u64;
+    /// 2. Current model (fallback when compact model unavailable or context too small)
+    fn resolve_distill_model(&self, content_text: &str) -> String {
+        let current_model = self.resolve_current_model(None);
+        let estimated_tokens = crate::token::count_text(content_text, &current_model) as u64;
 
         // Path 1: resolve compact_model from current provider (in-memory)
         let compact_model = self
@@ -836,108 +833,6 @@ impl AgentLoop {
         current_model
     }
 
-    /// Switch to a new conversation session.
-    ///
-    /// **Legacy: In Gateway multi-session mode, each session runs in its own
-    /// SessionTask/AgentLoop, so this method is not used.** It remains for
-    /// potential future CLI standalone mode where a single AgentLoop switches
-    /// between conversations.
-    ///
-    /// This is the **single canonical way** to change the active conversation
-    /// on an AgentLoop. It:
-    /// 1. Closes the old session (triggers distillation)
-    /// 2. Replaces `self.conversation` with the new session
-    /// 3. Returns the old session (already closed)
-    ///
-    /// # Why this matters
-    ///
-    /// Before this method, `handle_create_session` in cli.rs created a new
-    /// `ConversationSession` but **dropped it immediately** — the AgentLoop's
-    /// `conversation` field was never updated, so all subsequent messages were
-    /// still written to the old JSONL file. This was the P0 root cause of
-    /// messages appearing in wrong sessions (see ADR-session-fix).
-    #[allow(dead_code)]
-    pub fn switch_conversation(
-        &mut self,
-        new_session: ConversationSession,
-    ) -> Option<ConversationSession> {
-        let _old_id = self.current_session_id().map(|s| s.to_string());
-        let new_id = new_session.session_id().to_string();
-
-        // In pre-async context, we can't await close_session_with_distillation.
-        // Instead, we take the old session and spawn its close+distill asynchronously.
-        let old_session = self.session.conversation.take();
-
-        if let Some(ref old) = old_session {
-            tracing::info!(
-                old_session_id = %old.session_id(),
-                new_session_id = %new_id,
-                "Switching conversation session"
-            );
-        } else {
-            tracing::info!(new_session_id = %new_id, "Activating first conversation session");
-        }
-
-        self.session.conversation = Some(new_session);
-
-        // Spawn async close + distill for the old session (best-effort)
-        // We need to extract data from old_session without fully moving it,
-        // because we still return it at the end. Use as_ref() pattern.
-        if let Some(ref old) = old_session {
-            let session_id = old.session_id().to_string();
-            let session_path = old.session_path().to_path_buf();
-            let provider = self.core.provider.clone();
-            // Estimate content size from JSONL file; fallback to 0 if file is unavailable.
-            let content_size = std::fs::metadata(&session_path)
-                .map(|m| m.len())
-                .unwrap_or(0);
-            let model_name = self.resolve_distill_model(content_size);
-            let memory_store = self.core.memory_store().cloned();
-            let min_distill_chars = self.core.config.min_distill_chars;
-            let distill_max_tokens = self.core.config.distill_max_tokens;
-            let emb_provider = self.core.embedding_provider.clone();
-
-            tokio::spawn(async move {
-                // Distill the old session
-                match crate::episode_distill::EpisodeDistiller::distill_on_session_end(
-                    &session_path,
-                    &session_id,
-                    provider.as_ref(),
-                    &model_name,
-                    min_distill_chars,
-                    distill_max_tokens,
-                )
-                .await
-                {
-                    Ok(episode) => {
-                        // Write distilled episode to Grafeo memory store (P2-1: using shared helper)
-                        Self::write_distilled_to_grafeo(
-                            &memory_store,
-                            &episode,
-                            "switch-session",
-                            emb_provider.as_deref(),
-                        ).await;
-                        tracing::info!(
-                            summary = %episode.summary,
-                            summary_len = episode.summary.len(),
-                            "Session-level distillation completed for switched-out session"
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            error = %e,
-                            "Session-level distillation failed for switched-out session (non-fatal)"
-                        );
-                    }
-                }
-                // Note: The old session's ConversationWriter will be shut down when
-                // the ConversationSession is dropped. File flush is best-effort.
-            });
-        }
-
-        old_session
-    }
-
     /// Inner implementation for closing the current session.
     ///
     /// Per [ADR-011]: uses `last_compaction_index()` to determine the tail
@@ -979,11 +874,15 @@ impl AgentLoop {
                 let provider = self.core.provider.clone();
                 let memory_store = self.core.memory_store().cloned();
                 let emb_provider = self.core.embedding_provider.clone();
-                let content_size = tail_messages
+                // Build combined text for model-aware token counting via the unified API.
+                let combined_text: String = tail_messages
                     .iter()
-                    .map(|m| m.content.len() as u64)
-                    .sum::<u64>();
-                let model_name = self.resolve_distill_model(content_size);
+                    .fold(String::new(), |mut acc, m| {
+                        acc.push_str(&m.content);
+                        acc.push('\n');
+                        acc
+                    });
+                let model_name = self.resolve_distill_model(&combined_text);
                 let distill_max_tokens = self.core.config.distill_max_tokens;
 
                 tracing::info!(
@@ -1131,7 +1030,7 @@ impl AgentLoop {
                             
                             break; // Resume main loop
                         }
-                        Some(InboundMessage::Interrupt { reason }) => {
+                        Some(InboundMessage::Stop { reason }) => {
                             tracing::info!(reason = %reason, "User chose to stop during iteration limit pause");
                             // ADR-014: Paused → Idle
                             self.transition_status(SessionStatus::Idle);
@@ -1150,8 +1049,8 @@ impl AgentLoop {
                                     self.trim_history_to_budget(&current_model);
                                     break;
                                 }
-                                crate::agent::inbound::UserOp::InterruptLoop { reason } => {
-                                    tracing::info!(reason = %reason, "UserOp: interrupt via fast channel during iteration limit pause");
+                                crate::agent::inbound::UserOp::StopLoop { reason } => {
+                                    tracing::info!(reason = %reason, "UserOp: stop via fast channel during iteration limit pause");
                                     self.transition_status(SessionStatus::Idle);
                                     let name = self.core.user_display_name.as_deref().unwrap_or("user");
                                     return Ok(format!("Agent stopped by {} after reaching iteration limit.", name));
@@ -1238,8 +1137,8 @@ impl AgentLoop {
                     self.transition_status(SessionStatus::Idle);
                     return Ok(content);
                 }
-                IterationResult::Interrupted(content) => {
-                    // ADR-014: Streaming → Idle (interrupted)
+                IterationResult::Stopped(content) => {
+                    // ADR-014: Streaming → Idle (stopped)
                     self.transition_status(SessionStatus::Idle);
                     return Ok(content);
                 }
@@ -1265,7 +1164,7 @@ impl AgentLoop {
     /// # Returns
     /// - `TextResponse(content)`: agent returned a final text response
     /// - `ToolCallsExecuted`: tool calls processed, caller should loop
-    /// - `Interrupted(content)`: user interrupted execution
+    /// - `Stopped(content)`: user stopped execution
     #[allow(clippy::too_many_arguments)]
     pub(crate) async fn execute_single_iteration(
         &mut self,
@@ -1327,7 +1226,7 @@ impl AgentLoop {
 
             // Await resume if paused (DevMode only)
             if !self.await_debug_resume().await {
-                return Ok(IterationResult::Interrupted(
+                return Ok(IterationResult::Stopped(
                     "[Debug] Agent loop stopped by debugger".to_string(),
                 ));
             }
@@ -1454,7 +1353,7 @@ impl AgentLoop {
             .await;
 
             // Debug: create context snapshot and push onContextBuilt event
-            self.capture_context_snapshot(context_builder, debug_iter).await;
+            self.capture_context_snapshot(context_builder, debug_iter, &current_model).await;
 
             // Merge MCP tool definitions into the LLM request right before
             // injection. MCP tools are kept separate from active_tools and
@@ -1488,6 +1387,18 @@ impl AgentLoop {
             // Update budget
             if let Some(usage) = &response.usage {
                 self.session.budget_guard.update_usage(usage.total_tokens, 0.0);
+
+                // Diagnostic: log local token estimate vs API ground truth
+                // before calibration overwrites the local estimate.
+                let local_estimate = self.session.history.token_count();
+                tracing::info!(
+                    model = %current_model,
+                    local_estimate,
+                    api_prompt_tokens = usage.prompt_tokens,
+                    api_completion_tokens = usage.completion_tokens,
+                    api_total_tokens = usage.total_tokens,
+                    "Context usage: local estimate vs API ground truth"
+                );
 
                 // Calibrate history token count from API ground truth
                 self.session.history.calibrate_from_usage(usage.prompt_tokens);
@@ -1665,21 +1576,21 @@ impl AgentLoop {
                 }
             }
 
-            // Check for interrupt before executing tools
-            if self.poll_interrupt() {
-                tracing::info!("Interrupted before tool execution — saving partial response");
-                // ADR-014: Streaming → Idle (interrupted before tool execution)
+            // Check for stop before executing tools
+            if self.poll_stop() {
+                tracing::info!("Stopped before tool execution — saving partial response");
+                // ADR-014: Streaming → Idle (stopped before tool execution)
                 self.transition_status(SessionStatus::Idle);
                 let content = response.content.clone();
 
-                // Persist interrupted assistant message to JSONL conversation.
+                // Persist stopped assistant message to JSONL conversation.
                 if let Some(ref conversation) = self.session.conversation {
                     let assistant_text = strip_think_block(&content);
                     conversation.append_message("assistant", &assistant_text, None);
                 }
 
                 // Notify frontend via chunk channel
-                let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                     content: content.clone(),
                 });
 
@@ -1687,11 +1598,11 @@ impl AgentLoop {
                 self.push_debug_step(
                     crate::debug::protocol::DebugPhase::Idle,
                     None,
-                    Some(serde_json::json!({"interrupted": true, "content": content})),
+                    Some(serde_json::json!({"stopped": true, "content": content})),
                 );
                 self.debug_auto_pause_if_stepping().await;
 
-                return Ok(IterationResult::Interrupted(format!("...Stopped by User...\n{}", content)));
+                return Ok(IterationResult::Stopped(format!("...Stopped by User...\n{}", content)));
             }
 
             // Debug: enter ToolExecution phase
@@ -1721,7 +1632,7 @@ impl AgentLoop {
 
             // Execute non-question tools in parallel
             let calls_for_parallel: Vec<ToolCall> = parallel_calls.iter().map(|(_, tc)| tc.clone()).collect();
-            let (parallel_results, was_interrupted) = self.execute_tools_parallel(&calls_for_parallel).await;
+            let (parallel_results, was_stopped) = self.execute_tools_parallel(&calls_for_parallel).await;
 
             // Merge results: ask_question + todo_write results + parallel results, mapped back to original indices
             // Build a map from original index → result for ask_question calls
@@ -1797,9 +1708,10 @@ impl AgentLoop {
             // can blow up the context window.  Trimming BEFORE the append
             // ensures the LLM request remains within budget on the next
             // iteration.  Threshold: 70 % of the usable context window.
+            // Use the unified token API for model-aware estimation.
             let result_tokens_estimate: u64 = tool_results
                 .iter()
-                .map(|r| (r.len() / 4) as u64)
+                .map(|r| crate::token::count_text(r, current_model) as u64)
                 .sum();
             let usable_budget = self.context_trim_budget(current_model);
             let trim_threshold = (usable_budget as f64 * 0.70) as u64;
@@ -1895,11 +1807,11 @@ impl AgentLoop {
                 return Err(RuntimeError::LoopDetected(msg));
             }
 
-            // ── Check for interrupt detected during tool execution ──
-            // poll_interrupt() consumed the interrupt inside execute_tools_parallel(),
+            // ── Check for stop detected during tool execution ──
+            // poll_stop() consumed the stop signal inside execute_tools_parallel(),
             // so we must propagate it here to prevent the loop from continuing.
-            if was_interrupted {
-                tracing::info!("Interrupted during tool execution — saving partial results");
+            if was_stopped {
+                tracing::info!("Stopped during tool execution — saving partial results");
                 // ADR-014: Streaming → Idle (interrupted during tool execution)
                 self.transition_status(SessionStatus::Idle);
                 let content = response.content.clone();
@@ -1912,7 +1824,7 @@ impl AgentLoop {
                 }
 
                 // Notify frontend via chunk channel
-                let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                     content: content.clone(),
                 });
 
@@ -1920,11 +1832,11 @@ impl AgentLoop {
                 self.push_debug_step(
                     crate::debug::protocol::DebugPhase::Idle,
                     None,
-                    Some(serde_json::json!({"interrupted": true, "content": content})),
+                    Some(serde_json::json!({"stopped": true, "content": content})),
                 );
                 self.debug_auto_pause_if_stepping().await;
 
-                return Ok(IterationResult::Interrupted(format!("...Stopped by User...\n{}", content)));
+                return Ok(IterationResult::Stopped(format!("...Stopped by User...\n{}", content)));
             }
 
             // ⑦ Usage report (async, non-blocking)
@@ -1945,72 +1857,72 @@ impl AgentLoop {
             Ok(IterationResult::ToolCallsExecuted)
     }
 
-    /// Non-blocking interrupt poll — returns true if the user requested stop.
+    /// Non-blocking stop poll — returns true if the user requested stop.
     ///
-    /// Non-Interrupt messages drained during this poll are buffered in
+    /// Non-Stop messages drained during this poll are buffered in
     /// `session.deferred_inbound` and re-injected by `drain_inbound_queue()`
     /// at the start of the next loop iteration. No message is silently lost.
     ///
-    /// ALL `Interrupt` messages are consumed (not just the first one) to
-    /// prevent residual interrupts from poisoning subsequent `run_inner()`
+    /// ALL `Stop` messages are consumed (not just the first one) to
+    /// prevent residual stops from poisoning subsequent `run_inner()`
     /// calls when the user clicks Stop rapidly.
-    pub(crate) fn poll_interrupt(&mut self) -> bool {
-        let mut interrupted = false;
+    pub(crate) fn poll_stop(&mut self) -> bool {
+        let mut should_stop = false;
         while let Ok(msg) = self.inbound_rx.try_recv() {
             match msg {
-                InboundMessage::Interrupt { .. } => {
-                    interrupted = true;
-                    // Consume and continue — drain all pending interrupts
+                InboundMessage::Stop { .. } => {
+                    should_stop = true;
+                    // Consume and continue — drain all pending stops
                 }
                 InboundMessage::UserOperation(op) => {
                     match &op {
-                        crate::agent::inbound::UserOp::InterruptLoop { .. } => {
-                            interrupted = true;
-                            // Consume and continue — drain all pending interrupts
+                        crate::agent::inbound::UserOp::StopLoop { .. } => {
+                            should_stop = true;
+                            // Consume and continue — drain all pending stops
                         }
                         _ => {
-                            // Buffer non-Interrupt UserOp for re-injection
+                            // Buffer non-Stop UserOp for re-injection
                             // by drain_inbound_queue().
                             tracing::info!(
                                 op = ?std::mem::discriminant(&op),
-                                "poll_interrupt(): buffering UserOp for re-injection by drain_inbound_queue()"
+                                "poll_stop(): buffering UserOp for re-injection by drain_inbound_queue()"
                             );
                             self.session.deferred_inbound.push(InboundMessage::UserOperation(op));
                         }
                     }
                 }
                 other => {
-                    // Buffer non-Interrupt messages for re-injection at the
+                    // Buffer non-Stop messages for re-injection at the
                     // next drain_inbound_queue() call. This guarantees that
                     // queued user messages (sent via the "Stop to queue" UX)
                     // survive if they happen to arrive in this channel.
                     tracing::info!(
                         msg_type = ?std::mem::discriminant(&other),
-                        "poll_interrupt(): buffering non-Interrupt message for re-injection by drain_inbound_queue()"
+                        "poll_stop(): buffering non-Stop message for re-injection by drain_inbound_queue()"
                     );
                     self.session.deferred_inbound.push(other);
                 }
             }
         }
-        interrupted
+        should_stop
     }
 
     /// Drain inbound message queue (non-blocking).
     ///
-    /// First processes any messages buffered by `poll_interrupt()` from
+    /// First processes any messages buffered by `poll_stop()` from
     /// the `deferred_inbound` stash, then drains the live channel.
     /// Injects external messages (user, system, intent) into history
     /// before each loop iteration. Applies size limits to prevent
     /// token explosion from oversized payloads.
     ///
-    /// Returns `true` if at least one interrupt signal was found
-    /// (the caller should stop the current agent loop).  ALL interrupt
+    /// Returns `true` if at least one stop signal was found
+    /// (the caller should stop the current agent loop).  ALL stop
     /// messages are consumed (not just the first one) to prevent
-    /// residual interrupts from poisoning subsequent `run_inner()` calls.
+    /// residual stops from poisoning subsequent `run_inner()` calls.
     fn drain_inbound_queue(&mut self) -> bool {
-        let mut interrupted = false;
+        let mut should_stop = false;
 
-        // ── Step 1: process messages deferred from poll_interrupt() ──
+        // ── Step 1: process messages deferred from poll_stop() ──
         // Collect to release the drain iterator's borrow on self.session
         // before calling apply_user_op() (which needs &mut self).
         let deferred: Vec<_> = self.session.deferred_inbound.drain(..).collect();
@@ -2039,10 +1951,10 @@ impl AgentLoop {
                         format!("[intent:{}:{}] {}", from, action, params),
                     ));
                 }
-                InboundMessage::Interrupt { reason } => {
-                    tracing::info!(reason = %reason, "Received deferred interrupt signal (consumed)");
-                    interrupted = true;
-                    // Consume and continue — more interrupts (or other messages)
+                InboundMessage::Stop { reason } => {
+                    tracing::info!(reason = %reason, "Received deferred stop signal (consumed)");
+                    should_stop = true;
+                    // Consume and continue — more stops (or other messages)
                     // may be queued in the live channel.
                 }
                 InboundMessage::ContinueExecution { .. } => {
@@ -2064,7 +1976,7 @@ impl AgentLoop {
                         "drain_inbound_queue: processing deferred UserOperation"
                     );
                     if self.apply_user_op(&user_op) {
-                        interrupted = true;
+                        should_stop = true;
                     }
                 }
             }
@@ -2098,10 +2010,10 @@ impl AgentLoop {
                         format!("[intent:{}:{}] {}", from, action, params),
                     ));
                 }
-                InboundMessage::Interrupt { reason } => {
-                    tracing::info!(reason = %reason, "Received interrupt signal (consumed)");
-                    interrupted = true;
-                    // Consume and continue — multiple interrupts may be queued
+                InboundMessage::Stop { reason } => {
+                    tracing::info!(reason = %reason, "Received stop signal (consumed)");
+                    should_stop = true;
+                    // Consume and continue — multiple stops may be queued
                     // from rapid Stop button clicks.  We must drain ALL of them
                     // so subsequent run_inner() calls aren't poisoned.
                 }
@@ -2124,12 +2036,12 @@ impl AgentLoop {
                         "drain_inbound_queue: processing live UserOperation"
                     );
                     if self.apply_user_op(&user_op) {
-                        interrupted = true;
+                        should_stop = true;
                     }
                 }
             }
         }
-        interrupted
+        should_stop
     }
 
     // ── LLM streaming methods extracted to loop_llm.rs ──
@@ -2146,7 +2058,7 @@ impl AgentLoop {
     /// Stepping / Stopped) are still checked on each loop iteration.
     ///
     /// Also checks the inbound channel for Chat Panel STOP signals
-    /// (InboundMessage::Interrupt), which arrive via the Gateway gRPC push
+    /// (InboundMessage::Stop), which arrive via the Gateway gRPC push
     /// path rather than the debug WebSocket.
     /// Returns `true` if execution should continue, `false` if stopped.
     async fn await_debug_resume(&mut self) -> bool {
@@ -2161,11 +2073,11 @@ impl AgentLoop {
         loop {
             // Check for Chat Panel STOP (arrives via inbound channel).
             // The Debug Panel STOP sets ctrl.state directly; the Chat Panel
-            // STOP sends InboundMessage::Interrupt through the Gateway gRPC
-            // push path.  Without this check, the interrupt sits unread in
+            // STOP sends InboundMessage::Stop through the Gateway gRPC
+            // push path.  Without this check, the stop sits unread in
             // the channel while await_debug_resume only polls ctrl.state.
-            if self.poll_interrupt() {
-                tracing::info!("Debug: agent loop interrupted via inbound channel");
+            if self.poll_stop() {
+                tracing::info!("Debug: agent loop stopped via inbound channel");
                 // Synchronize debug controller state so the frontend sees Stopped
                 let mut ctrl_guard = ctrl.lock().await;
                 let iteration = ctrl_guard.iteration;
@@ -2249,7 +2161,7 @@ impl AgentLoop {
     /// Blocks the main loop on `inbound_rx` without timeout until the
     /// matching `InboundMessage::ApprovalDecision` arrives. Non-matching
     /// messages are buffered in `deferred_inbound` for later processing
-    /// (mirrors `await_debug_resume`'s `poll_interrupt` pattern).
+    /// (mirrors `await_debug_resume`'s `poll_stop` pattern).
     ///
     /// Also polls `approval_rx` so that concurrent approval requests from
     /// parallel tool execution are processed (queued) rather than blocking
@@ -2302,11 +2214,11 @@ impl AgentLoop {
                                 reason: None,
                             });
                         }
-                        Some(InboundMessage::Interrupt { reason }) => {
+                        Some(InboundMessage::Stop { reason }) => {
                             tracing::info!(
                                 reason = %reason,
                                 request_id = %request_id,
-                                "Approval interrupted, auto-rejecting"
+                                "Approval stopped, auto-rejecting"
                             );
                             return ApprovalDecision { approved: false, allow_all_session: false, reason: None };
                         }
@@ -2566,13 +2478,13 @@ impl AgentLoop {
                                 answer,
                             });
                         }
-                        Some(InboundMessage::Interrupt { reason }) => {
+                        Some(InboundMessage::Stop { reason }) => {
                             tracing::info!(
                                 reason = %reason,
                                 request_id = %request_id,
-                                "Question wait interrupted, returning cancelled"
+                                "Question wait stopped, returning cancelled"
                             );
-                            return "[Cancelled: user interrupted]".to_string();
+                            return "[Cancelled: user stopped]".to_string();
                         }
                         Some(other) => {
                             tracing::debug!(
@@ -2786,6 +2698,7 @@ impl AgentLoop {
         &self,
         context_builder: &ContextBuilder,
         debug_iter: Option<u32>,
+        current_model: &str,
     ) {
         let Some(iter) = debug_iter else {
             return; // Not in DevMode
@@ -2832,24 +2745,32 @@ impl AgentLoop {
             "capture_context_snapshot: workspace_context status"
         );
 
+        // All token counting goes through the unified crate::token::count_text API.
         let sections = ContextSnapshotSections {
-            system_prompt: SectionContent::new(context_builder.system_prompt().to_string()),
+            system_prompt: SectionContent::new(
+                context_builder.system_prompt().to_string(),
+                current_model,
+            ),
             workspace_context: SectionContent::new(
                 context_builder.workspace_context().unwrap_or_default().to_string(),
+                current_model,
             ),
             environment: SectionContent::new(
                 context_builder
                     .environment_override()
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| crate::agent::context::detect_environment_text()),
+                current_model,
             ),
-            tool_definitions: SectionContent::new(tool_defs_str),
-            skill_instructions: SectionContent::new(skill_str),
+            tool_definitions: SectionContent::new(tool_defs_str, current_model),
+            skill_instructions: SectionContent::new(skill_str, current_model),
             retrieved_memory: SectionContent::new(
                 context_builder.retrieved_memory().unwrap_or_default().to_string(),
+                current_model,
             ),
             identity_context: SectionContent::new(
                 context_builder.identity_context().unwrap_or_default().to_string(),
+                current_model,
             ),
         };
 
@@ -2868,9 +2789,11 @@ impl AgentLoop {
             total_token_estimate,
         };
 
-        // Store in controller
+        // Store in controller — also persist the model name so that
+        // patchContext can use model-aware token estimates.
         if let Some(ctrl) = self.core.debug_ctrl() {
             let mut ctrl_guard = ctrl.lock().await;
+            ctrl_guard.current_model = Some(current_model.to_string());
             ctrl_guard.store_context_snapshot(snapshot.clone());
         }
 

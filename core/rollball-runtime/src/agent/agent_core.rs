@@ -118,10 +118,10 @@ pub struct AgentCore {
     /// Debug event sender (clone for each session to push events to WebSocket).
     /// None in production mode.
     pub(crate) debug_event_tx: Option<DebugEventSender>,
-    /// Urgent interrupt notify — fired by Gateway gRPC (Stop / Restart-in-Debug)
+    /// Urgent stop notify — fired by Gateway gRPC (Stop / Restart-in-Debug)
     /// to cancel tool execution immediately without waiting for 500ms poll.
     /// Shared across all sessions; each SessionTask's loop listens on this.
-    pub(crate) urgent_interrupt: Option<Arc<Notify>>,
+    pub(crate) urgent_stop: Option<Arc<Notify>>,
     /// User display name delivered by Gateway via identity delivery.
     /// Used for user-facing messages like stop confirmation.
     pub(crate) user_display_name: Option<String>,
@@ -187,7 +187,7 @@ impl AgentCore {
             debug_rewind_notify: None,
             debug_resume_notify: None,
             debug_event_tx: None,
-            urgent_interrupt: Some(Arc::new(Notify::new())),
+            urgent_stop: Some(Arc::new(Notify::new())),
             user_display_name: None,
             approval_gate: None,
             approval_handle: None,
@@ -571,7 +571,7 @@ impl AgentCore {
             debug_rewind_notify: self.debug_rewind_notify.clone(),
             debug_resume_notify: self.debug_resume_notify.clone(),
             debug_event_tx: self.debug_event_tx.clone(),
-            urgent_interrupt: self.urgent_interrupt.clone(),
+            urgent_stop: self.urgent_stop.clone(),
             user_display_name: self.user_display_name.clone(),
             approval_gate: self.approval_gate.clone(),
             approval_handle: self.approval_handle.clone(),

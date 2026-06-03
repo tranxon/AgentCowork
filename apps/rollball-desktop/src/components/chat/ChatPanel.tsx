@@ -23,6 +23,7 @@ import type { ChatMessage, VaultKeyEntry, ModelInfo, ModelEntry, ModelCapabiliti
 import { ThinkBlock } from "./ThinkBlock";
 import { ExploreBlock } from "./ExploreBlock";
 import { CodeBlock } from "./CodeBlock";
+import { ContextUsageIcon } from "./ContextUsageIcon";
 
 /** ReactMarkdown component overrides — code blocks with title bar */
 const markdownComponents = {
@@ -90,7 +91,7 @@ export function ChatPanel() {
   const currentProvider = sessionState?.provider ?? null;
 
   // Global state and actions
-  const { wsMap, connectStream, sendMessage, sendInterrupt, availableModels, setCurrentModel, setAvailableModels, continueExecution, resolveApproval, resolveApprovalByToolCallId } = useChatStore();
+  const { wsMap, connectStream, sendMessage, sendStop, availableModels, setCurrentModel, setAvailableModels, continueExecution, resolveApproval, resolveApprovalByToolCallId } = useChatStore();
   const currentSessionId = useSessionStore((s) => s.currentSessionId);
   const gatewayStatus = useGatewayStore((s) => s.status);
   const { activeSkill, clearActiveSkill } = useSkillStore();
@@ -207,9 +208,12 @@ export function ChatPanel() {
 
   // Show thinking indicator below virtualized message list when waiting for first token
   const showThinkingItem = isReasoning && !streamingMessageId && !thinkingMessageId;
+  // Show compacting indicator below messages when compaction is in progress
+  const isCompacting = sessionState?.isCompacting ?? false;
+  const showCompactingItem = isCompacting && !streamingMessageId && !thinkingMessageId && !isReasoning;
 
-  // Virtual scrolling: only render visible items (messages + optional thinking indicator)
-  const virtualCount = displayMessages.length + (showThinkingItem ? 1 : 0);
+  // Virtual scrolling: only render visible items (messages + optional thinking/compacting indicator)
+  const virtualCount = displayMessages.length + (showThinkingItem ? 1 : 0) + (showCompactingItem ? 1 : 0);
   const virtualizer = useVirtualizer({
     count: virtualCount,
     getScrollElement: () => messagesContainerRef.current,
@@ -550,8 +554,8 @@ export function ChatPanel() {
   };
 
   // Stop button dual-action:
-  //   input has content → send to queue (no interrupt, message waits for next loop)
-  //   input empty       → interrupt current loop
+  //   input has content → send to queue (no stop, message waits for next loop)
+  //   input empty       → stop current loop
   const handleStop = () => {
     const content = inputValue.trim();
     if (content && selectedAgentId) {
@@ -559,17 +563,17 @@ export function ChatPanel() {
       setQueuedMessages(prev => [...prev, content]);
       setInputValue("");
     } else if (queuedMessages.length > 0 && selectedAgentId) {
-      // Click with queued messages: send all queued + interrupt current loop.
+      // Click with queued messages: send all queued + stop current loop.
       for (const msg of queuedMessages) {
         void sendMessage(msg, selectedAgentId, activeSkill?.name).then(() => {
           clearActiveSkill();
         });
       }
       setQueuedMessages([]);
-      sendInterrupt();
+      sendStop();
     } else {
-      // No queued messages: just interrupt
-      sendInterrupt();
+      // No queued messages: just stop
+      sendStop();
     }
   };
 
@@ -934,8 +938,31 @@ export function ChatPanel() {
                 }}
               >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
-                  // --- Thinking indicator (extra virtual item below messages) ---
-                  if (showThinkingItem && virtualRow.index === displayMessages.length) {
+                  // --- Compacting indicator (extra virtual item, above thinking if both shown) ---
+                  if (showCompactingItem && virtualRow.index === displayMessages.length) {
+                    return (
+                      <div
+                        key={virtualRow.key}
+                        ref={virtualizer.measureElement}
+                        data-index={virtualRow.index}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }}
+                      >
+                        <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
+                          <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
+                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>Context compacting...</span>
+                        </div>
+                      </div>
+                    );
+                  }
+
+                  // --- Thinking indicator (extra virtual item below messages / compacting) ---
+                  if (showThinkingItem && virtualRow.index === displayMessages.length + (showCompactingItem ? 1 : 0)) {
                     return (
                       <div
                         key={virtualRow.key}
@@ -1277,7 +1304,11 @@ export function ChatPanel() {
               </div>
             </div>
 
-            {/* Right: send/stop button */}
+            {/* Right: send/stop button + context usage icon */}
+
+            <div className="flex items-center gap-1">
+              {/* Context usage icon — shown when session is active */}
+              {currentSessionId && <ContextUsageIcon />}
 
             {/* Send/Stop button with tooltip above */}
             <div className="group relative">
@@ -1310,6 +1341,7 @@ export function ChatPanel() {
                     : "发送消息"}
                 </div>
               </div>
+            </div>
             </div>
           </div>
         </div>

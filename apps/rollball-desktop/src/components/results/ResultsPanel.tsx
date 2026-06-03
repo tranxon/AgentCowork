@@ -51,6 +51,12 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
     if (!agent?.activeSessionId) return null;
     return agent.sessionStates[agent.activeSessionId]?.sessionStatus ?? null;
   });
+  const isCompacting = useChatStore((s) => {
+    if (!selectedAgentId) return false;
+    const agent = s.agentStates[selectedAgentId];
+    if (!agent?.activeSessionId) return false;
+    return agent.sessionStates[agent.activeSessionId]?.isCompacting ?? false;
+  });
   const messages = useChatStore((s) => {
     if (!selectedAgentId) return EMPTY_MESSAGES;
     const agent = s.agentStates[selectedAgentId];
@@ -419,6 +425,13 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                     <span>{formatTokenCount(contextUsage.total_tokens)} used</span>
                     <span>{formatTokenCount(contextUsage.usable_context)} / {formatTokenCount(contextUsage.context_window)} available</span>
                   </div>
+                  {/* Compacting indicator */}
+                  {isCompacting && (
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
+                      <span className="thinking-shimmer text-zinc-500" style={{ fontSize: "var(--ui-font-size, 0.75rem)" }}>compacting...</span>
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="mb-3 text-zinc-400 dark:text-zinc-500 italic">No context data yet</div>

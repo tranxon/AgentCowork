@@ -308,9 +308,9 @@ message MemoryDeleteResult {
 // ── Debug Mode ────────────────────────────────────────────────────────
 
 /// Gateway pushes this to Runtime to switch into debug mode without
-/// restarting the process. The Runtime fires urgent_interrupt to cancel
+/// restarting the process. The Runtime fires urgent_stop to cancel
 /// any in-flight tools/LLM, then initializes the Debug WebSocket server
-/// and DebugController. If the agent loop is idle, the interrupt step is
+/// and DebugController. If the agent loop is idle, the stop step is
 /// skipped and debug mode is initialized directly.
 message EnableDebugMode {
   /// Debug WebSocket port (allocated by Gateway)

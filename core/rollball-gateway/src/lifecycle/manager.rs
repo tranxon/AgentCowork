@@ -138,10 +138,10 @@ impl LifecycleManager {
     ///
     /// Instead of stop→start (which kills and spawns a new process), this
     /// pushes an `EnableDebugMode` message to the Runtime via gRPC. The
-    /// Runtime then fires `urgent_interrupt` to cancel any in-flight
+    /// Runtime then fires `urgent_stop` to cancel any in-flight
     /// tools/LLM, starts the Debug WebSocket server on the allocated port,
     /// and injects `DebugController` + notify handles into the shared
-    /// `AgentCore`. If the agent loop is idle, the interrupt step is skipped
+    /// `AgentCore`. If the agent loop is idle, the stop step is skipped
     /// and debug mode is initialized directly.
     pub async fn restart_in_debug(
         &self,

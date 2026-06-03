@@ -54,7 +54,7 @@ interface SessionChatState {
   /** ADR-014: Session lifecycle status from backend (source of truth) */
   sessionStatus: SessionStatus | null;
   /** Frontend optimistic flag: true between user clicking Send and backend pushing
-   *  session_state_changed. Cleared when sessionStatus arrives or on done/error/interrupted. */
+   *  session_state_changed. Cleared when sessionStatus arrives or on done/error/stopped. */
   pendingSend: boolean;
   /** Last accessed timestamp — used for LRU eviction */
   lastAccessed: number;
@@ -64,6 +64,8 @@ interface SessionChatState {
   model: string | null;
   /** Per-session selected provider */
   provider: string | null;
+  /** Context compaction in progress (both manual and auto triggers) */
+  isCompacting: boolean;
 }
 
 const DEFAULT_SESSION_STATE: SessionChatState = {
@@ -89,6 +91,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   todos: [],
   model: null,
   provider: null,
+  isCompacting: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -268,7 +271,7 @@ interface ChatStore {
   connectStream: (agentId: string, gatewayUrl: string) => void;
   sendMessage: (content: string, agentId: string, command?: string, documentIds?: string[], documents?: Array<{ id: string; filename: string; format: string; size: number; path?: string }>, imageParts?: Array<{ url: string; width: number; height: number }>) => Promise<void>;
   stopCurrentMessage: () => Promise<void>;
-  sendInterrupt: () => void;
+  sendStop: () => void;
   disconnectStream: (agentId?: string) => void;
   /** Clear session state for a specific agent's active session */
   clearMessages: (agentId?: string) => void;
@@ -313,6 +316,8 @@ interface ChatStore {
   closeTab: (agentId: string, sessionId: string) => string | null;
   /** ADR-015: Get open session IDs for an agent */
   getOpenSessionIds: (agentId: string) => string[];
+  /** Trigger context compaction for the current session */
+  compactContext: (agentId: string, sessionId: string) => void;
 }
 
 function toWsUrl(httpUrl: string, agentId: string): string {
@@ -481,6 +486,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   // ADR-015: Get open session IDs for reading
   getOpenSessionIds: (agentId: string): string[] => {
     return getAgentState(get(), agentId).openSessionIds;
+  },
+
+  /** Trigger context compaction for the current session (manual trigger).
+   *  Sends compact_context WS message and sets optimistic isCompacting flag.
+   *  The backend emits CompactingStarted → compacting_started → isCompacting = true
+   *  When compaction completes, context_usage event clears isCompacting. */
+  compactContext: (agentId: string, sessionId: string) => {
+    const ws = get().wsMap[agentId];
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "compact_context", session_id: sessionId }));
+      set((state) => updateSessionState(state, agentId, sessionId, { isCompacting: true }));
+    }
   },
 
   activateSession: (agentId: string, sessionId: string) => {
@@ -916,7 +933,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     }
   },
 
-  sendInterrupt: () => {
+  sendStop: () => {
     const { currentAgentId } = get();
     if (!currentAgentId) return;
     const ws = get().wsMap[currentAgentId];
@@ -1389,8 +1406,8 @@ function mergeDocumentUploads(entries: ConversationEntry[], agentId: string): Ch
 const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
-  "context_usage", "session_state_changed", "interrupted", "todo_list_updated",
-  "model_confirmed",
+  "context_usage", "session_state_changed", "stopped", "todo_list_updated",
+  "compacting_started", "model_confirmed",
 ]);
 
 function handleMessageEvent(
@@ -1441,7 +1458,7 @@ function handleMessageEvent(
 
     case "reasoning_started":
       if (sid) {
-        set((state) => updateSessionState(state, agentId, sid, { isReasoning: true }));
+        set((state) => updateSessionState(state, agentId, sid, { isReasoning: true, isCompacting: false }));
       }
       break;
 
@@ -1756,6 +1773,7 @@ function handleMessageEvent(
             thinkingMessageId: null,
             isInThinkPhase: false,
             isReasoning: false,
+            isCompacting: false,
             pendingSend: false,
           }),
         };
@@ -1804,15 +1822,16 @@ function handleMessageEvent(
           thinkingMessageId: null,
           isInThinkPhase: false,
           isReasoning: false,
+          isCompacting: false,
           pendingSend: false,
         }),
       }));
       break;
     }
 
-    case "interrupted": {
+    case "stopped": {
       if (!sid) break;
-      const interruptedContent = data.content as string | undefined;
+      const stoppedContent = data.content as string | undefined;
       set((state) => {
         const ss = getSessionState(state, agentId, sid!);
         let messages = [...ss.messages];
@@ -1823,13 +1842,13 @@ function handleMessageEvent(
               ? { ...msg, endTime: Date.now() }
               : msg,
           );
-        } else if (interruptedContent) {
+        } else if (stoppedContent) {
           // No streaming message — add a new assistant message with the partial content
           const assistantMsgId = `msg-assistant-${Date.now()}`;
           const assistantMsg: ChatMessage = {
             id: assistantMsgId,
             type: "assistant",
-            content: interruptedContent,
+            content: stoppedContent,
             timestamp: Date.now(),
           };
           messages = [...messages, assistantMsg];
@@ -1842,8 +1861,10 @@ function handleMessageEvent(
             thinkingMessageId: null,
             isInThinkPhase: false,
             isReasoning: false,
+            isCompacting: false,
             pendingSend: false,
           }),
+          // stopped handler continues
         };
       });
       break;
@@ -1898,11 +1919,17 @@ function handleMessageEvent(
       console.log("[WS] Skill executed event:", data);
       break;
 
+    case "compacting_started":
+      if (sid) {
+        set((state) => updateSessionState(state, agentId, sid, { isCompacting: true }));
+      }
+      break;
+
     case "context_usage": {
       if (sid) {
         const usage = data as unknown as ContextUsageInfo;
         console.log("[ChatStore] context_usage RECEIVED for agent:", agentId, usage);
-        set((state) => updateSessionState(state, agentId, sid, { contextUsage: usage }));
+        set((state) => updateSessionState(state, agentId, sid, { contextUsage: usage, isCompacting: false }));
       }
       break;
     }

@@ -463,22 +463,23 @@ impl SessionManager {
         Ok(session_id)
     }
 
-    /// Destroy a session by ID, sending a Stop message and removing it.
+    /// Close a session by ID, sending a Close message and removing it.
     ///
+    /// Triggers distillation but preserves the JSONL history file.
     /// Returns an error if the session does not exist.
-    pub async fn destroy_session(&mut self, session_id: &str) -> Result<()> {
+    pub async fn close_session(&mut self, session_id: &str) -> Result<()> {
         let handle = self.sessions.remove(session_id).ok_or_else(|| {
             RuntimeError::Config(format!("Session not found: {}", session_id))
         })?;
 
-        // Send Stop signal; ignore errors (session may have already stopped)
-        let _ = handle.inbound_tx.send(SessionMessage::Stop).await;
+        // Send Close signal; ignore errors (session may have already stopped)
+        let _ = handle.inbound_tx.send(SessionMessage::Close).await;
 
         // Clean up per-session workspace mappings
         self.session_workspaces.remove(session_id);
         self.pending_workspaces.remove(session_id);
 
-        tracing::info!(session_id = %session_id, "SessionManager: destroyed session");
+        tracing::info!(session_id = %session_id, "SessionManager: closed session");
         Ok(())
     }
 
@@ -1013,7 +1014,7 @@ impl SessionManager {
 
         for session_id in &to_evict {
             if let Some(handle) = self.sessions.remove(session_id) {
-                let _ = handle.inbound_tx.send(SessionMessage::Stop).await;
+                let _ = handle.inbound_tx.send(SessionMessage::Close).await;
                 tracing::info!(session_id = %session_id, "Evicted idle session from memory (idle > {:?})", idle_timeout);
             }
         }
@@ -1143,16 +1144,16 @@ impl SessionManager {
         self.pending_workspaces.get(session_id).map(|s| s.as_str())
     }
 
-    /// Fire the urgent_interrupt notify to cancel all in-flight tool/LLM
+    /// Fire the urgent_stop notify to cancel all in-flight tool/LLM
     /// execution across all sessions. Uses notify_waiters() to wake every
     /// waiter — since the Notify is shared across all sessions via Arc::clone,
     /// notify_one() would only wake a single waiter.
-    /// This is a no-op in standalone mode (where urgent_interrupt is None on
+    /// This is a no-op in standalone mode (where urgent_stop is None on
     /// the template core).
-    pub(crate) fn fire_urgent_interrupt(&self) {
-        if let Some(ref urgent) = self.core.urgent_interrupt {
+    pub(crate) fn fire_urgent_stop(&self) {
+        if let Some(ref urgent) = self.core.urgent_stop {
             urgent.notify_waiters();
-            tracing::info!("SessionManager: urgent_interrupt fired (all waiters)");
+            tracing::info!("SessionManager: urgent_stop fired (all waiters)");
         }
     }
 

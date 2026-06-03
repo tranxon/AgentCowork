@@ -84,15 +84,18 @@ pub enum SessionMessage {
     SetWorkspaceId { workspace_id: String },
     /// Update identity context from Gateway UserProfileUpdate push
     UpdateIdentityContext { identity_context: Option<String> },
-    /// Interrupt signal to stop the current agent loop iteration
-    Interrupt { reason: String },
+    /// Stop signal to stop the current agent loop iteration
+    Stop { reason: String },
     /// Enable debug mode at runtime (after Gateway pushes EnableDebugMode).
     /// Carries the DebugController, event sender, and notify handles so the
     /// SessionTask can inject them into its AgentCore and start emitting
     /// debug events without a process restart.
     EnableDebugMode(DebugHandles),
-    /// Stop the session gracefully
-    Stop,
+    /// Close the session gracefully: trigger distillation and free resources.
+    /// JSONL history is preserved (use Delete to also remove the file).
+    Close,
+    /// Manually trigger context compaction (from user-initiated compact_context WebSocket action).
+    CompactContext,
 }
 
 impl std::fmt::Debug for SessionMessage {
@@ -156,12 +159,13 @@ impl std::fmt::Debug for SessionMessage {
                 .debug_struct("UpdateIdentityContext")
                 .field("has_identity", &identity_context.is_some())
                 .finish(),
-            SessionMessage::Interrupt { reason } => f
-                .debug_struct("Interrupt")
+            SessionMessage::Stop { reason } => f
+                .debug_struct("Stop")
                 .field("reason", reason)
                 .finish(),
             SessionMessage::EnableDebugMode(_) => f.debug_tuple("EnableDebugMode").finish(),
-            SessionMessage::Stop => f.debug_tuple("Stop").finish(),
+            SessionMessage::Close => f.debug_tuple("Close").finish(),
+            SessionMessage::CompactContext => f.debug_tuple("CompactContext").finish(),
         }
     }
 }
@@ -178,7 +182,7 @@ pub(crate) struct SessionTask {
     agent_loop: AgentLoop,
     /// Clone of the AgentLoop's inbound sender, kept here purely as a
     /// fallback so that legacy `SessionMessage::ContinueExecution` /
-    /// `SessionMessage::Interrupt` messages (if anyone still sends them)
+    /// `SessionMessage::Stop` messages (if anyone still sends them)
     /// can be forwarded. The primary, deadlock-safe path is via
     /// `SessionHandle::send_inbound`.
     agent_inbound_tx: mpsc::Sender<InboundMessage>,
@@ -803,13 +807,13 @@ impl SessionTask {
                     );
                     context_builder.set_identity_context(identity_context.unwrap_or_default());
                 }
-                Some(SessionMessage::Interrupt { reason }) => {
+                Some(SessionMessage::Stop { reason }) => {
                     tracing::info!(
                         session_id = %session_id,
                         reason = %reason,
-                        "SessionTask: forwarding interrupt signal"
+                        "SessionTask: forwarding stop signal"
                     );
-                    let _ = agent_inbound_tx.send(crate::agent::inbound::InboundMessage::Interrupt { reason }).await;
+                    let _ = agent_inbound_tx.send(crate::agent::inbound::InboundMessage::Stop { reason }).await;
                 }
                 Some(SessionMessage::EnableDebugMode(handles)) => {
                     let ctrl_ptr = Arc::as_ptr(&handles.debug_ctrl) as *const ();
@@ -839,12 +843,20 @@ impl SessionTask {
                     rewind_notify = Some(rewind);
                     resume_notify = Some(resume);
                 }
-                Some(SessionMessage::Stop) => {
+                Some(SessionMessage::Close) => {
                     tracing::info!(
                         session_id = %session_id,
-                        "SessionTask: Stop received, shutting down"
+                        "SessionTask: Close received, shutting down"
                     );
                     break;
+                }
+                Some(SessionMessage::CompactContext) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        "SessionTask: manual compact_context triggered"
+                    );
+                    let model_name = agent_loop.session.model().unwrap_or("default").to_string();
+                    agent_loop.compact_history_if_needed(&model_name).await;
                 }
                 None => {
                     tracing::info!(

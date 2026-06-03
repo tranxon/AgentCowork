@@ -44,8 +44,8 @@ pub enum BridgeEventType {
     Done,
     /// Error response
     Error,
-    /// Agent response interrupted by user stop signal
-    Interrupted,
+    /// Agent response stopped by user stop signal
+    Stopped,
     /// Memory store updated (node added/removed/consolidated)
     MemoryUpdated,
     /// Skill execution event
@@ -54,6 +54,8 @@ pub enum BridgeEventType {
     IterationLimitPaused,
     /// Context usage report (from Runtime, forwarded to Desktop App)
     ContextUsage,
+    /// Context compaction started (Runtime → Desktop App, so frontend shows "compacting..." indicator)
+    CompactingStarted,
     /// LLM reasoning phase started — frontend shows pulsing "..." indicator
     ReasoningStarted,
     /// Session lifecycle status changed (ADR-014)
@@ -78,7 +80,7 @@ impl BridgeEventType {
             "agent_tool_call" => Some(Self::ToolCall),
             "agent_tool_result" => Some(Self::ToolResult),
             "agent_error" => Some(Self::Error),
-            "agent_interrupted" => Some(Self::Interrupted),
+            "agent_stopped" => Some(Self::Stopped),
             "tool_approval_needed" => Some(Self::ToolApprovalNeeded),
             "memory_updated" => Some(Self::MemoryUpdated),
             "skill_executed" => Some(Self::SkillExecuted),
@@ -88,6 +90,7 @@ impl BridgeEventType {
             "session_state_changed" => Some(Self::SessionStateChanged),
             "ask_question" => Some(Self::AskQuestion),
             "todo_list_updated" => Some(Self::TodoListUpdated),
+            "compacting_started" => Some(Self::CompactingStarted),
             _ => None,
         }
     }
@@ -109,7 +112,7 @@ impl BridgeEventType {
             Self::ToolApprovalNeeded => "tool_approval_needed",
             Self::Done => "done",
             Self::Error => "error",
-            Self::Interrupted => "interrupted",
+            Self::Stopped => "stopped",
             Self::MemoryUpdated => "memory_updated",
             Self::SkillExecuted => "skill_executed",
             Self::IterationLimitPaused => "iteration_limit_paused",
@@ -118,6 +121,7 @@ impl BridgeEventType {
             Self::SessionStateChanged => "session_state_changed",
             Self::AskQuestion => "ask_question",
             Self::TodoListUpdated => "todo_list_updated",
+            Self::CompactingStarted => "compacting_started",
             Self::Unknown => "unknown",
         }
     }
@@ -549,7 +553,7 @@ mod tests {
         assert_eq!(BridgeEventType::from_action("agent_tool_call"), Some(BridgeEventType::ToolCall));
         assert_eq!(BridgeEventType::from_action("agent_tool_result"), Some(BridgeEventType::ToolResult));
         assert_eq!(BridgeEventType::from_action("agent_error"), Some(BridgeEventType::Error));
-        assert_eq!(BridgeEventType::from_action("agent_interrupted"), Some(BridgeEventType::Interrupted));
+        assert_eq!(BridgeEventType::from_action("agent_stopped"), Some(BridgeEventType::Stopped));
         assert_eq!(BridgeEventType::from_action("tool_approval_needed"), Some(BridgeEventType::ToolApprovalNeeded));
         assert_eq!(BridgeEventType::from_action("memory_updated"), Some(BridgeEventType::MemoryUpdated));
         assert_eq!(BridgeEventType::from_action("skill_executed"), Some(BridgeEventType::SkillExecuted));
@@ -561,7 +565,7 @@ mod tests {
         assert_eq!(BridgeEventType::Chunk.as_str(), "chunk");
         assert_eq!(BridgeEventType::Done.as_str(), "done");
         assert_eq!(BridgeEventType::Error.as_str(), "error");
-        assert_eq!(BridgeEventType::Interrupted.as_str(), "interrupted");
+        assert_eq!(BridgeEventType::Stopped.as_str(), "stopped");
         assert_eq!(BridgeEventType::ToolCall.as_str(), "tool_call");
         assert_eq!(BridgeEventType::ToolResult.as_str(), "tool_result");
         assert_eq!(BridgeEventType::ToolApprovalNeeded.as_str(), "tool_approval_needed");

@@ -4,7 +4,7 @@ import { useChatStore } from "../../stores/chatStore";
 import { useDebugStore } from "../../stores/debugStore";
 import { isSessionActive } from "../../lib/types";
 import { cn } from "../../lib/utils";
-import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRight, Search } from "lucide-react";
+import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRight, Search, TriangleAlert } from "lucide-react";
 
 // ── Relative time formatter ──────────────────────────────────────────────
 
@@ -227,12 +227,13 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
   const openSessionIds = agent?.openSessionIds ?? [];
   const activeSessionId = agent?.activeSessionId;
   const sessions = useSessionStore((s) => s.sessions);
-  const { switchSession, createSession, saveSessionForAgent } = useSessionStore();
+  const { switchSession, createSession, saveSessionForAgent, closeSession } = useSessionStore();
 
   const [listOpen, setListOpen] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
+  const [closingSessionId, setClosingSessionId] = useState<string | null>(null);
 
   // Drag-to-scroll state
   const isDragging = useRef(false);
@@ -261,8 +262,29 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
     saveSessionForAgent(agentId, sessionId);
   };
 
-  const handleClose = (e: React.MouseEvent, sessionId: string) => {
+  const handleClose = async (e: React.MouseEvent, sessionId: string) => {
     e.stopPropagation();
+    const status = getStatus(sessionId);
+
+    // If session is looping, ask confirmation before closing
+    if (isSessionActive(status)) {
+      setClosingSessionId(sessionId);
+      return;
+    }
+
+    await closeSession(agentId, sessionId);
+    finishCloseTab(sessionId);
+  };
+
+  const confirmClose = async () => {
+    if (!closingSessionId) return;
+    const sid = closingSessionId;
+    setClosingSessionId(null);
+    await closeSession(agentId, sid);
+    finishCloseTab(sid);
+  };
+
+  const finishCloseTab = (sessionId: string) => {
     const newActiveId = useChatStore.getState().closeTab(agentId, sessionId);
 
     // If the closed tab was active, switch to the new active
@@ -456,6 +478,44 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
           )}
         </div>
       </div>
+
+      {/* Close confirmation dialog for looping sessions */}
+      {closingSessionId && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50" onClick={() => setClosingSessionId(null)}>
+          <div
+            className="mx-4 w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-800"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30">
+                <TriangleAlert className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  LLM 推理进行中
+                </h3>
+                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                  关闭此会话将中断正在进行的 LLM 推理。已生成的部分内容将会保留。
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setClosingSessionId(null)}
+                className="rounded-lg btn-solid px-3 py-1.5 text-xs"
+              >
+                取消
+              </button>
+              <button
+                onClick={confirmClose}
+                className="rounded-lg btn-accent px-3 py-1.5 text-xs"
+              >
+                确认关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

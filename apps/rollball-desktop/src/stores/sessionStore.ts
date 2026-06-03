@@ -28,6 +28,7 @@ interface SessionState {
   saveSessionForAgent: (agentId: string, sessionId: string) => void;
   createSession: (agentId: string) => Promise<void>;
   deleteSession: (agentId: string, sessionId: string) => Promise<void>;
+  closeSession: (agentId: string, sessionId: string) => Promise<void>;
   setSessionPanelOpen: (open: boolean) => void;
   toggleSessionPanel: () => void;
   /** Update a session's title locally (no API call) */
@@ -241,6 +242,49 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       useChatStore.getState().activateSession(agentId, data.session_id);
     } catch (e) {
       console.error("[SessionStore] Failed to create session:", e);
+    }
+  },
+
+  closeSession: async (agentId: string, sessionId: string) => {
+    try {
+      const resp = await fetch(
+        `${getGatewayUrl()}/api/agents/${agentId}/sessions/${sessionId}/close`,
+        { method: "POST" },
+      );
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = (await resp.json()) as { closed: boolean; session_id: string };
+
+      // Remove the closed session from local state
+      const isCurrent = useSessionStore.getState().currentSessionId === sessionId;
+      const remaining = useSessionStore.getState().sessions.filter((s) => s.session_id !== sessionId);
+      const newCurrentId = isCurrent
+        ? (remaining.length > 0 ? remaining[0].session_id : null)
+        : useSessionStore.getState().currentSessionId;
+
+      set({
+        sessions: remaining,
+        currentSessionId: newCurrentId,
+      });
+
+      // Close tab if the closed session was open
+      const openIds = useChatStore.getState().getOpenSessionIds(agentId);
+      if (openIds.includes(sessionId)) {
+        useChatStore.getState().closeTab(agentId, sessionId);
+      }
+
+      // If the closed session was current, activate the new current session
+      if (isCurrent) {
+        if (newCurrentId) {
+          useChatStore.getState().activateSession(agentId, newCurrentId);
+          useSessionStore.getState().saveSessionForAgent(agentId, newCurrentId);
+        } else {
+          useChatStore.getState().clearMessages(agentId);
+        }
+      }
+      // Remove closed session's cached state from chatStore
+      useChatStore.getState().removeSessionState(agentId, sessionId);
+    } catch (e) {
+      console.error("[SessionStore] Failed to close session:", e);
     }
   },
 

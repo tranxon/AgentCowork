@@ -88,11 +88,11 @@ impl AgentLoop {
         // must be discarded to avoid corrupting the arguments.
         let mut finished_tool_indices: HashSet<u64> = HashSet::new();
 
-        // ── Stream processing loop with periodic interrupt polling ──
-        // Use tokio::select! to check for user interrupts during stream idle
+        // ── Stream processing loop with periodic stop polling ──
+        // Use tokio::select! to check for user stops during stream idle
         // periods (e.g., long LLM reasoning between chunks). Without this,
         // stream.next().await can block for tens of seconds without responding
-        // to STOP signals, because poll_interrupt() would only run between
+        // to STOP signals, because poll_stop() would only run between
         // received chunks.
         //
         // When the stream actively sends data, the event branch wins immediately
@@ -102,13 +102,13 @@ impl AgentLoop {
                 event = stream.next() => {
                     match event {
                         Some(event) => {
-                            // Check for user interrupt before processing each stream event
-                            if self.poll_interrupt() {
-                                tracing::info!("LLM stream interrupted by user — aborting");
-                                let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                            // Check for user stop before processing each stream event
+                            if self.poll_stop() {
+                                tracing::info!("LLM stream stopped by user — aborting");
+                                let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                                     content: accumulated_content.clone(),
                                 });
-                                return Ok(build_interrupted_response(
+                                return Ok(build_stopped_response(
                                     accumulated_content,
                                     accumulated_reasoning_content,
                                 ));
@@ -268,31 +268,31 @@ impl AgentLoop {
                         }
                     }
                 }
-                // Urgent interrupt via Notify — fired by Gateway gRPC
+                // Urgent stop via Notify — fired by Gateway gRPC
                 // for immediate LLM stream cancellation.
-                _ = self.core.urgent_interrupt.as_ref().unwrap().notified() => {
-                    tracing::info!("LLM stream interrupted via Notify — aborting");
-                    let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                    tracing::info!("LLM stream stopped via Notify — aborting");
+                    let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                         content: accumulated_content.clone(),
                     });
-                    return Ok(build_interrupted_response(
+                    return Ok(build_stopped_response(
                         accumulated_content,
                         accumulated_reasoning_content,
                     ));
                 }
-                // Periodic interrupt polling during stream idle periods.
+                // Periodic stop polling during stream idle periods.
                 // tokio::select! polls ALL branches simultaneously:
                 // - When stream has data ready: event branch wins immediately, sleep is dropped
                 // - When stream is idle (waiting for next chunk): sleep fires every 500ms
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
-                    if self.poll_interrupt() {
+                    if self.poll_stop() {
                         tracing::info!(
-                            "LLM stream interrupted by user during idle period — aborting"
+                            "LLM stream stopped by user during idle period — aborting"
                         );
-                        let _ = self.core.try_send_chunk(ChunkEvent::Interrupted {
+                        let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                             content: accumulated_content.clone(),
                         });
-                        return Ok(build_interrupted_response(
+                        return Ok(build_stopped_response(
                             accumulated_content,
                             accumulated_reasoning_content,
                         ));
@@ -360,10 +360,10 @@ impl AgentLoop {
     }
 }
 
-/// Build a partial [`ChatResponse`] for stream interrupt.
+/// Build a partial [`ChatResponse`] for stream stop.
 ///
 /// Returns the accumulated content so far and discards any partial tool calls.
-fn build_interrupted_response(
+fn build_stopped_response(
     content: String,
     reasoning_content: String,
 ) -> ChatResponse {

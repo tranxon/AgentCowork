@@ -1256,6 +1256,13 @@ async fn async_main(
                             }
                         }
 
+                        crate::agent::loop_::ChunkEvent::CompactingStarted => {
+                            let params = serde_json::json!({
+                                "session_id": sid,
+                            });
+                            relay_intent(&outbound_tx, "compacting_started", &params).await;
+                        }
+
                         crate::agent::loop_::ChunkEvent::ToolCall { name, args, id } => {
                             let parsed_args: serde_json::Value = serde_json::from_str(&args)
                                 .unwrap_or_else(|_| serde_json::json!({ "raw": args }));
@@ -1344,12 +1351,12 @@ async fn async_main(
                             relay_intent(&outbound_tx, "agent_error", &params).await;
                         }
 
-                        crate::agent::loop_::ChunkEvent::Interrupted { content } => {
+                        crate::agent::loop_::ChunkEvent::Stopped { content } => {
                             let params = serde_json::json!({
                                 "content": content,
                                 "session_id": sid,
                             });
-                            relay_intent(&outbound_tx, "agent_interrupted", &params).await;
+                            relay_intent(&outbound_tx, "agent_stopped", &params).await;
                         }
 
                         crate::agent::loop_::ChunkEvent::SessionStateChanged { status, model, provider, workspace_id } => {
@@ -1945,6 +1952,34 @@ async fn process_gateway_recv(
                         return LoopAction::Continue;
                     }
 
+                    if action == "close_session" {
+                        let request_id = params
+                            .get("request_id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+                            _ => {
+                                let data = serde_json::json!({ "error": "Missing or empty session_id parameter" });
+                                send_session_response(grpc_client, &request_id, data).await;
+                                return LoopAction::Continue;
+                            }
+                        };
+
+                        // Close the session: trigger distillation and free resources (JSONL preserved)
+                        if let Err(e) = session_manager.close_session(&session_id).await {
+                            tracing::warn!("Failed to close session {}: {}", session_id, e);
+                        }
+
+                        let data = serde_json::json!({
+                            "closed": true,
+                            "session_id": session_id,
+                        });
+                        send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+
                     if action == "delete_session" {
                         let request_id = params
                             .get("request_id")
@@ -1961,7 +1996,12 @@ async fn process_gateway_recv(
                             }
                         };
 
-                        // Delete the JSONL file
+                        // Close first: trigger distillation and free resources
+                        if let Err(e) = session_manager.close_session(&session_id).await {
+                            tracing::warn!("Failed to close session {}: {}", session_id, e);
+                        }
+
+                        // Then delete the JSONL file
                         let conversations_dir =
                             std::path::Path::new(work_dir).join("conversations");
                         let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
@@ -1974,11 +2014,6 @@ async fn process_gateway_recv(
                             }
 
                             tracing::info!(session_id = %session_id, "Deleted session JSONL file");
-                        }
-
-                        // Destroy the session task
-                        if let Err(e) = session_manager.destroy_session(&session_id).await {
-                            tracing::warn!("Failed to destroy session {}: {}", session_id, e);
                         }
 
                         let data = serde_json::json!({
@@ -2097,21 +2132,21 @@ async fn process_gateway_recv(
                             .and_then(|v| v.as_str())
                             .unwrap_or("unknown")
                             .to_string();
-                        tracing::info!(reason = %reason, session_id = %target_session_id, "Routing interrupt to session");
+                        tracing::info!(reason = %reason, session_id = %target_session_id, "Routing stop to session");
                         match session_manager.get_session(&target_session_id) {
                             Some(handle) => {
                                 if let Err(e) =
-                                    handle.send_inbound(InboundMessage::Interrupt { reason })
+                                    handle.send_inbound(InboundMessage::Stop { reason })
                                 {
                                     tracing::warn!(
-                                        "Failed to deliver interrupt to AgentLoop: {}",
+                                        "Failed to deliver stop to AgentLoop: {}",
                                         e
                                     );
                                 }
                             }
 
                             None => {
-                                tracing::warn!(session_id = %target_session_id, "Interrupt target session not found");
+                                tracing::warn!(session_id = %target_session_id, "Stop target session not found");
                             }
                         }
 
@@ -2246,6 +2281,24 @@ async fn process_gateway_recv(
                             }
                         }
 
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "compact_context" {
+                        tracing::info!(
+                            session_id = %target_session_id,
+                            "Routing compact_context to session"
+                        );
+                        if let Err(e) = session_manager.send_to_session(
+                            &target_session_id,
+                            SessionMessage::CompactContext,
+                        ) {
+                            tracing::warn!(
+                                session_id = %target_session_id,
+                                error = %e,
+                                "Failed to route compact_context to session"
+                            );
+                        }
                         return LoopAction::Continue;
                     }
 
@@ -2746,14 +2799,14 @@ async fn process_gateway_recv(
                         "Received EnableDebugMode from Gateway — starting debug server"
                     );
 
-                    // 1. Fire urgent_interrupt to cancel any in-flight tool/LLM execution.
+                    // 1. Fire urgent_stop to cancel any in-flight tool/LLM execution.
                     //    This notifies all sessions' AgentLoop select! branches so they
                     //    abort current work and return to idle, at which point the
                     //    SessionTask's main loop picks up the next message or restarts.
                     //
                     //    If the loop is idle (waiting for next user message), the notify
                     //    is a no-op — there is nothing to cancel.
-                    session_manager.fire_urgent_interrupt();
+                    session_manager.fire_urgent_stop();
 
                     // 2. Start the DebugProtocolServer and store handles so that
                     //    sessions created *after* this call inherit debug mode.

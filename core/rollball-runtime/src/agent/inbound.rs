@@ -40,8 +40,8 @@ fn truncate_json_to_bytes(val: &serde_json::Value, max_bytes: usize) -> serde_js
 /// agent loop is mid-execution (streaming or running tools).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum UserOp {
-    /// Interrupt the current agent loop iteration.
-    InterruptLoop {
+    /// Stop the current agent loop iteration.
+    StopLoop {
         reason: String,
     },
     /// Continue execution after iteration limit was reached.
@@ -90,8 +90,8 @@ pub enum InboundMessage {
         action: String,
         params: serde_json::Value,
     },
-    /// Interrupt signal to stop the current agent loop iteration
-    Interrupt {
+    /// Stop signal to stop the current agent loop iteration
+    Stop {
         reason: String,
     },
     /// Continue execution after iteration limit was reached.
@@ -124,7 +124,7 @@ pub enum InboundMessage {
     },
     /// Unified user operation delivered via the fast `send_inbound()`
     /// channel.  These bypass SessionTask's message loop and are
-    /// consumed by `poll_interrupt()` / `drain_inbound_queue()` for
+    /// consumed by `poll_stop()` / `drain_inbound_queue()` for
     /// immediate in-flight effect.
     UserOperation(UserOp),
 }
@@ -177,8 +177,8 @@ impl InboundMessage {
                     truncated = true;
                 }
             }
-            InboundMessage::Interrupt { .. } => {
-                // Interrupt messages don't need size limits
+            InboundMessage::Stop { .. } => {
+                // Stop messages don't need size limits
             }
             InboundMessage::ContinueExecution { .. } => {
                 // Continue messages don't need size limits

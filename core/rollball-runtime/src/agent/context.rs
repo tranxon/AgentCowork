@@ -501,18 +501,20 @@ impl ContextBuilder {
         let max_tokens = max_tokens.map(|mt| {
             if let Some(caps) = gateway_capabilities {
                 let context_window = caps.context_window;
-                // Count both message content and tool_call arguments for token estimation
-                let total_chars: usize = messages.iter().map(|m| {
-                    let content_len = m.content.len();
-                    let tool_calls_len = m.tool_calls.as_ref().map(|tcs| {
-                        tcs.iter().map(|tc| {
-                            tc.function.name.len() + tc.function.arguments.len()
-                        }).sum::<usize>()
-                    }).unwrap_or(0);
-                    content_len + tool_calls_len
-                }).sum();
-                // Add 10% overhead for role labels, formatting, and special tokens
-                let approx_msg_tokens = ((total_chars as f64 / 4.0) * 1.1).ceil() as u64;
+                // Build a combined text from message content + tool_call arguments
+                // for model-aware token counting via the unified API.
+                let combined: String = messages.iter().fold(String::new(), |mut acc, m| {
+                    acc.push_str(&m.content);
+                    if let Some(ref tcs) = m.tool_calls {
+                        for tc in tcs {
+                            acc.push_str(&tc.function.name);
+                            acc.push_str(&tc.function.arguments);
+                        }
+                    }
+                    acc
+                });
+                // Safety margin: +10% overhead for role labels, formatting, and special tokens.
+                let approx_msg_tokens = (crate::token::count_text(&combined, &model) as f64 * 1.1).ceil() as u64;
                 if (approx_msg_tokens + mt as u64) > context_window {
                     let safe_max = (context_window.saturating_sub(approx_msg_tokens)).max(256) as u32;
                     tracing::warn!(

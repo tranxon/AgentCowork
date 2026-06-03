@@ -5,8 +5,8 @@
       <stop offset="100%" stop-color="#8b5cf6" />
     </linearGradient>
   </defs>
-  <circle cx="50" cy="50" r="48" stroke="url(#logoRing)" stroke-width="1.5" stroke-dasharray="80 220" stroke-linecap="round" fill="none" opacity="0.5" />
-  <rect x="30" y="30" width="40" height="40" rx="12" fill="url(#logoRing)" />
+  <circle cx="50" cy="50" r="40" stroke="url(#logoRing)" stroke-width="1.5" stroke-dasharray="67 184" stroke-linecap="round" fill="none" opacity="0.5" />
+  <rect x="28" y="28" width="44" height="44" rx="12" fill="url(#logoRing)" />
   <g transform="translate(38, 38)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
     <circle cx="12" cy="12" r="10" />
     <path d="M8 8h5a3 3 0 0 1 0 6H8V8Z" />

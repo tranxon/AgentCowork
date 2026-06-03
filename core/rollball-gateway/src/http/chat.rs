@@ -39,6 +39,7 @@ pub fn chat_routes() -> Router<AppState> {
         .route("/api/agents/{id}/sessions/{session_id}/title", put(update_session_title))
         .route("/api/agents/{id}/sessions/{session_id}/messages", get(get_session_messages))
         .route("/api/agents/{id}/sessions/{session_id}", delete(delete_session))
+        .route("/api/agents/{id}/sessions/{session_id}/close", post(close_session))
         .route("/api/agents/{id}/continue", post(continue_execution))
 }
 
@@ -645,6 +646,47 @@ async fn handle_ws_text(
         return;
     }
 
+    if client_msg.msg_type == "compact_context" {
+        // Handle compact context: forward to Runtime via IPC IntentReceived.
+        // The Runtime's compact_history_if_needed will emit CompactingStarted
+        // and ContextUsage events automatically.
+        tracing::info!(agent = %agent_id, "Forwarding compact_context to agent");
+
+        let mut pushed_ok = false;
+        if let Some(session_mgr) = &state.session_mgr {
+            let mgr = session_mgr.lock().await;
+            if let Some((_, session)) = mgr.find_by_agent_id(agent_id) {
+                let mut params = serde_json::json!({});
+                if let Some(ref sid) = client_msg.session_id {
+                    params["session_id"] = serde_json::json!(sid);
+                }
+                let intent = rollball_core::protocol::GatewayResponse::IntentReceived {
+                    from: "http-ws".to_string(),
+                    action: "compact_context".to_string(),
+                    params,
+                    command: None,
+                };
+                pushed_ok = session.push_message(intent).await;
+            }
+        }
+
+        if pushed_ok {
+            let ack = serde_json::json!({
+                "type": "ack",
+                "agentId": agent_id,
+            });
+            let _ = socket.send(Message::Text(ack.to_string().into())).await;
+        } else {
+            let err = serde_json::json!({
+                "type": "error",
+                "message": format!("Agent {} is not running, cannot compact context", agent_id),
+                "agentId": agent_id,
+            });
+            let _ = socket.send(Message::Text(err.to_string().into())).await;
+        }
+        return;
+    }
+
     if client_msg.msg_type != "message" {
         let err = serde_json::json!({
             "type": "error",
@@ -1240,10 +1282,45 @@ pub async fn update_session_title(
     Ok(StatusCode::OK)
 }
 
+/// `POST /api/agents/{id}/sessions/{session_id}/close` — close a session
+///
+/// Triggers distillation and frees resources, but preserves the JSONL history file.
+/// Use `DELETE` to also remove the history file.
+pub async fn close_session(
+    State(state): State<AppState>,
+    Path((agent_id, session_id)): Path<(String, String)>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ApiError>)> {
+    // Verify agent exists and is running
+    {
+        let gw = state.gateway_state.read().await;
+        if !gw.is_installed(&agent_id) {
+            return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
+        }
+        if !gw.is_running(&agent_id) {
+            return Err(ApiError::bad_request(&format!(
+                "Agent {} is not running",
+                agent_id
+            )));
+        }
+    }
+
+    let params = serde_json::json!({
+        "session_id": session_id,
+    });
+
+    let data = forward_session_query(&state, &agent_id, "close_session", params).await?;
+
+    // Check for error response from Runtime
+    if let Some(error) = data.get("error").and_then(|v| v.as_str()) {
+        return Err(ApiError::internal(error));
+    }
+
+    Ok(Json(data))
+}
+
 /// `DELETE /api/agents/{id}/sessions/{session_id}` — delete a session
 ///
-/// Deletes the session from the Runtime. If the deleted session is the
-/// currently active one, the Runtime will automatically create a new session.
+/// Closes the session (triggers distillation) and removes the JSONL history file.
 pub async fn delete_session(
     State(state): State<AppState>,
     Path((agent_id, session_id)): Path<(String, String)>,

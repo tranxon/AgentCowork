@@ -6,9 +6,9 @@
 
 <p align="center">
   🏗️ <strong>Declarative Agent Platform · Decentralized · High-Security · Scalable</strong><br>
-  ⚡️ <strong>Easy to build an AI colleague for everyone.</strong><br>
-  ⚡️ <strong>Easy to share an AI colleague with everyone.</strong><br>
-  ⚡️ <strong>Easy to deploy AI colleagues everywhere.</strong>
+  ⚡️ <strong>Easy to build an AI colleague.</strong><br>
+  ⚡️ <strong>Easy to share an AI colleague.</strong><br>
+  ⚡️ <strong>Easy to deploy AI colleagues.</strong>
 </p>
 
 <p align="center">

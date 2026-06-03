@@ -821,34 +821,39 @@ impl DebugProtocolServer {
                 // getSection returns the patched content, not the original.
                 // merged_patches is owned (not borrowed from ctrl), so no borrow conflict.
                 let current_iter = ctrl.iteration;
+                // Use the model stored by capture_context_snapshot for
+                // model-aware token counting via the unified API.
+                // Clone before get_mut() to avoid borrow conflict.
+                let model_owned = ctrl.current_model.clone().unwrap_or_default();
+                let model: &str = &model_owned;
                 if let Some(snap) = ctrl.context_snapshots.get_mut(&current_iter) {
                     if let Some(ref prompt) = merged_patches.system_prompt {
                         snap.sections.system_prompt =
-                            super::controller::SectionContent::new(prompt.clone());
+                            super::controller::SectionContent::new(prompt.clone(), model);
                     }
                     if let Some(ref tools) = merged_patches.tool_definitions {
                         let content = serde_json::to_string_pretty(tools)
                             .unwrap_or_else(|_| serde_json::to_string(tools).unwrap_or_default());
                         snap.sections.tool_definitions =
-                            super::controller::SectionContent::new(content);
+                            super::controller::SectionContent::new(content, model);
                     }
                     if let Some(ref skills) = merged_patches.skill_instructions {
                         snap.sections.skill_instructions =
-                            super::controller::SectionContent::new(skills.clone());
+                            super::controller::SectionContent::new(skills.clone(), model);
                     }
                     if let Some(ref memory) = merged_patches.retrieved_memory {
                         let content = memory.to_string();
                         snap.sections.retrieved_memory =
-                            super::controller::SectionContent::new(content);
+                            super::controller::SectionContent::new(content, model);
                     }
                     if let Some(ref identity) = merged_patches.identity_context {
                         let content = identity.to_string();
                         snap.sections.identity_context =
-                            super::controller::SectionContent::new(content);
+                            super::controller::SectionContent::new(content, model);
                     }
                     if let Some(ref workspace) = merged_patches.workspace_context {
                         snap.sections.workspace_context =
-                            super::controller::SectionContent::new(workspace.clone());
+                            super::controller::SectionContent::new(workspace.clone(), model);
                     }
                     if let Some(ref env) = merged_patches.environment {
                         // Empty string clears the override — build() falls back
@@ -859,7 +864,7 @@ impl DebugProtocolServer {
                             env.clone()
                         };
                         snap.sections.environment =
-                            super::controller::SectionContent::new(content);
+                            super::controller::SectionContent::new(content, model);
                     }
                     tracing::info!(
                         iteration = current_iter,

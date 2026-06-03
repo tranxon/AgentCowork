@@ -90,12 +90,31 @@ pub struct SectionContent {
 }
 
 impl SectionContent {
-    /// Create a SectionContent from the raw content string.
-    pub fn new(content: String) -> Self {
+    /// Create a SectionContent with a model-aware token estimate.
+    ///
+    /// Uses [`crate::token::count_text`] — the single unified entry point
+    /// for all token counting in RollBall. For GPT models this uses tiktoken
+    /// (< 1% error); for Claude/Qwen it uses sampling ratios (< 5% error);
+    /// for unknown models it falls back to word/CJK heuristic (< 15% error).
+    pub fn new(content: String, model: &str) -> Self {
+        let token_estimate = crate::token::count_text(&content, model);
+        Self::build(content, token_estimate)
+    }
+
+    /// Create a SectionContent with a pre-computed token estimate.
+    ///
+    /// Use this when the caller has already counted tokens externally
+    /// (e.g. from a cached `TokenCounter` instance) to avoid redundant work.
+    /// Prefer [`new`] for one-off constructions.
+    pub fn with_token_count(content: String, token_estimate: usize) -> Self {
+        Self::build(content, token_estimate)
+    }
+
+    /// Internal constructor shared by [`new`] and [`with_token_count`].
+    fn build(content: String, token_estimate: usize) -> Self {
         use sha2::{Digest, Sha256};
 
         let size_bytes = content.len();
-        let token_estimate = content.len() / 4; // heuristic: ~4 bytes per token
         let hash = {
             let mut hasher = Sha256::new();
             hasher.update(content.as_bytes());
@@ -173,6 +192,10 @@ pub struct DebugController {
     /// `notify_one()` so the SessionTask wakes up and re-runs the
     /// agent loop with the saved user message.
     pub resume_notify: Arc<Notify>,
+    /// The model name used for the current session's token counting.
+    /// Set by [`AgentLoop::capture_context_snapshot`] so that context
+    /// patches (via `patchContext`) can use model-aware token estimates.
+    pub current_model: Option<String>,
     /// Breakpoint ID counter for generating unique IDs
     next_bp_id: u64,
 }
@@ -192,6 +215,7 @@ impl DebugController {
             re_execute_pending: false,
             rewind_notify: Arc::new(Notify::const_new()),
             resume_notify: Arc::new(Notify::const_new()),
+            current_model: None,
             next_bp_id: 1,
         }
     }
