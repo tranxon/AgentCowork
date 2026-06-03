@@ -1,10 +1,28 @@
-<h1 align="center">RollBall.AI — Agent as APP</h1>
+<h1 align="center">RollBall.AI — 和你的 AI 同事一起工作</h1>
+
+<p align="center">
+  <svg width="160" height="160" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="logoRing" x1="0" y1="0" x2="100" y2="100">
+        <stop offset="0%" stop-color="#3b82f6" />
+        <stop offset="100%" stop-color="#8b5cf6" />
+      </linearGradient>
+    </defs>
+    <circle cx="50" cy="50" r="48" stroke="url(#logoRing)" stroke-width="1.5" stroke-dasharray="80 220" stroke-linecap="round" fill="none" opacity="0.5" />
+    <rect x="30" y="30" width="40" height="40" rx="12" fill="url(#logoRing)" />
+    <g transform="translate(38, 38)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 8h5a3 3 0 0 1 0 6H8V8Z" />
+      <path d="M8 14h4l3 3" />
+    </g>
+  </svg>
+</p>
 
 <p align="center">
   🏗️ <strong>声明式 Agent 平台 · 去中心化 · 高安全 · 可扩展</strong><br>
-  ⚡️ <strong>Easy to develop an agent for everyone.</strong><br>
-  ⚡️ <strong>Easy to deliver an agent to everyone.</strong><br>
-  ⚡️ <strong>Easy to deploy an agent everywhere.</strong>
+  ⚡️ <strong>Easy to build an AI colleague for everyone.</strong><br>
+  ⚡️ <strong>Easy to share an AI colleague with everyone.</strong><br>
+  ⚡️ <strong>Easy to deploy AI colleagues everywhere.</strong>
 </p>
 
 <p align="center">
@@ -20,12 +38,37 @@
 
 ---
 
-RollBall.AI 是一个**去中心化、高安全、可扩展的 AI Agent 运行时平台**。核心思想借鉴 Android 模型——每个 Agent 是一个独立的声明式应用包（`.agent`），由统一的 Agent Runtime 加载执行，运行在客户端并由轻量级 Gateway 管理生命周期。
+<p align="center">
+  <table>
+    <tr>
+      <td width="50%" align="center" valign="top">
+        <img src="./assets/1.jpg" alt="多 Agent 协作与记忆系统" width="100%" />
+        <br />
+        <em>与多位 AI 同事协作——每位 Agent 拥有独立记忆、实时上下文感知和工具执行能力。</em>
+      </td>
+      <td width="50%" align="center" valign="top">
+        <img src="./assets/2.jpg" alt="调试面板与上下文快照" width="100%" />
+        <br />
+        <em>全链路开发框架：迭代调试、Token 追踪、上下文快照，深入洞察 AI 推理过程。</em>
+      </td>
+    </tr>
+  </table>
+</p>
 
-RollBall **同时服务于两类用户**：开发者用声明式包（manifest + prompt + SKILL.md，无需写代码）构建 Agent，终端用户从仓库安装使用。签名工具链 + DevMode + 发布向导构成完整的开发者工具链，让**"会写 prompt 就能做 Agent"**成为可能。
+---
 
-每个 Agent 都是独立的**"数字人"**：拥有自己的运行时进程、私有记忆、工作区和配置，完全独立的个性化认知。Agent 可在用户间自由分享——Personal/Sensitive 数据自动剥离，只带走 Agent 能力和记忆，不带走用户记忆。
+RollBall.AI 是一个**去中心化、高安全、可扩展的 AI Agent 运行时平台**。它不仅是一套开发框架，更是让你能够创造 **AI 同事**的平台——每个 Agent 都是拥有独立记忆、工作区和个性的自主数字存在，各自擅长不同领域，与你和其他 Agent 协作共进。
 
+每个 Agent 都是独立的**"数字伙伴"**：拥有自己的运行时进程、私有记忆、工作区和配置，完全独立的个性化认知。就像身边有一支 AI 专家团队——有质量分析师、项目经理、高级工程师，各有所长、各司其职，通过平台的 Intent 机制沟通协调。
+
+RollBall **同时服务于两类用户**：开发者用声明式包（manifest + prompt + SKILL.md，无需写代码）构建 Agent，普通用户从仓库安装使用。签名工具链 + DevMode + 发布向导构成完整的开发者工具链，让**"会写 prompt 就能构建 AI 同事"**成为可能。
+
+Agent 可在用户间自由分享——Personal/Sensitive 数据自动剥离，只带走 Agent 能力和记忆，不带走用户记忆。
+
+
+### 🏪 Agent as APP — 像 Android 一样管理 AI
+
+RollBall 将每个 Agent 视为手机上的**应用**。`.agent` 包就是完整自包含的应用——如同 APK。通用 Agent Runtime 是"操作系统"，Gateway 管理安装、生命周期、权限——如同应用商店。任何人都能以智能手机应用般的便捷度构建、分发和运行 AI Agent。
 
 ---
 
@@ -375,6 +418,6 @@ Apache-2.0 — 详见 [LICENSE](./LICENSE) 文件。
 ---
 
 <p align="center">
-  <b>RollBall.AI — Agent as APP</b><br>
-  <i>让 Agent 像 App 一样开发、分发、运行。</i>
+  <b>RollBall.AI — 与你的 AI 同事协作</b><br>
+  <i>像组建团队一样构建和协作 AI 伙伴。</i>
 </p>

@@ -1,10 +1,28 @@
-<h1 align="center">RollBall.AI — Agent as APP</h1>
+<h1 align="center">RollBall.AI — Collaborate with your AI Colleagues</h1>
+
+<p align="center">
+  <svg width="160" height="160" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <linearGradient id="logoRing" x1="0" y1="0" x2="100" y2="100">
+        <stop offset="0%" stop-color="#3b82f6" />
+        <stop offset="100%" stop-color="#8b5cf6" />
+      </linearGradient>
+    </defs>
+    <circle cx="50" cy="50" r="48" stroke="url(#logoRing)" stroke-width="1.5" stroke-dasharray="80 220" stroke-linecap="round" fill="none" opacity="0.5" />
+    <rect x="30" y="30" width="40" height="40" rx="12" fill="url(#logoRing)" />
+    <g transform="translate(38, 38)" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 8h5a3 3 0 0 1 0 6H8V8Z" />
+      <path d="M8 14h4l3 3" />
+    </g>
+  </svg>
+</p>
 
 <p align="center">
   🏗️ <strong>Declarative Agent Platform · Decentralized · High-Security · Scalable</strong><br>
-  ⚡️ <strong>Easy to develop an agent for everyone.</strong><br>
-  ⚡️ <strong>Easy to deliver an agent to everyone.</strong><br>
-  ⚡️ <strong>Easy to deploy an agent everywhere.</strong>
+  ⚡️ <strong>Easy to build an AI colleague for everyone.</strong><br>
+  ⚡️ <strong>Easy to share an AI colleague with everyone.</strong><br>
+  ⚡️ <strong>Easy to deploy AI colleagues everywhere.</strong>
 </p>
 
 <p align="center">
@@ -20,11 +38,36 @@
 
 ---
 
-RollBall.AI is a **decentralized, high-security, scalable AI Agent runtime platform** modeled after Android. Every Agent is an independent declarative application package (`.agent`) loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
+<p align="center">
+  <table>
+    <tr>
+      <td width="50%" align="center" valign="top">
+        <img src="./assets/1.jpg" alt="Multi-Agent Collaboration &amp; Memory" width="100%" />
+        <br />
+        <em>Collaborate with multiple AI colleagues — each with private memory, real-time context awareness, and tool execution.</em>
+      </td>
+      <td width="50%" align="center" valign="top">
+        <img src="./assets/2.jpg" alt="Debug Panel &amp; Context Snapshots" width="100%" />
+        <br />
+        <em>Full-stack development framework with iterative debugging, token tracking, and context snapshots for deep insight into AI reasoning.</em>
+      </td>
+    </tr>
+  </table>
+</p>
 
-RollBall **serves two types of users**: developers build agents declaratively (manifest + prompt + SKILL.md, no coding required), and end-users install agents from a repository. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"can write prompt = can build Agent"** a reality.
+---
 
-Every Agent is an independent **"digital being"**: its own runtime process, private memory, workspace, and configuration — fully independent personalized cognition. Agents can be freely shared between users — Personal/Sensitive data is automatically stripped during packaging, taking only the agent's capabilities away, leaving user's private memories behind.
+RollBall.AI is a **decentralized, high-security, scalable AI Agent runtime platform** modeled after Android. Instead of just building tools, RollBall lets you create **AI colleagues** — autonomous digital beings with their own memory, workspace, and personality, each specialized in different domains, collaborating with you and each other.
+
+Every Agent is an independent **"digital being"**: its own runtime process, private memory, workspace, and configuration — fully independent personalized cognition. Like having a team of AI specialists working alongside you — a QA analyst, a project manager, a senior engineer — each with their own expertise and memory, communicating and coordinating through the platform's Intent mechanism.
+
+RollBall **serves two types of users**: developers build agents declaratively (manifest + prompt + SKILL.md, no coding required), and end-users install agents from a repository. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"can write prompt = can build an AI colleague"** a reality.
+
+Agents can be freely shared between users — Personal/Sensitive data is automatically stripped during packaging, taking only the agent's capabilities away, leaving user's private memories behind.
+
+### 🏪 Agent as APP — Like Android for AI
+
+RollBall treats every Agent like an **app on your phone**. Each `.agent` package is a complete, self-contained application — just like an APK. The universal Agent Runtime is the "operating system," and the Gateway manages installations, lifecycle, and permissions — just like an app store. This means anyone can build, distribute, and run AI agents with the same ease as smartphone apps.
 
 ---
 
@@ -377,6 +420,6 @@ Apache-2.0 — see [LICENSE](./LICENSE) for details.
 ---
 
 <p align="center">
-  <b>RollBall.AI — Agent as APP</b><br>
-  <i>Develop, distribute, and run agents like apps.</i>
+  <b>RollBall.AI — Collaborate with your AI Colleagues</b><br>
+  <i>Build and collaborate with AI agents like team members.</i>
 </p>
