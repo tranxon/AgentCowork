@@ -49,9 +49,9 @@
     },
     "contextUsage": {
         "ariaLabel": "Context usage",
-        "compressing": "Compressing...",
+        "compressing": "Compacting...",
         "agentRunning": "Agent running",
-        "compressContext": "Compress context"
+        "compressContext": "compact context"
     },
     "agentList": {
         "searchPlaceholder": "Search agents...",
