@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback } from "react";
+import { useTranslation } from "../../i18n/useTranslation";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useChatStore } from "../../stores/chatStore";
 import { useDebugStore } from "../../stores/debugStore";
@@ -8,7 +9,7 @@ import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRig
 
 // ── Relative time formatter ──────────────────────────────────────────────
 
-function formatRelativeTime(dateStr: string): string {
+function formatRelativeTime(dateStr: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diffSec = Math.floor((now.getTime() - date.getTime()) / 1000);
@@ -16,11 +17,11 @@ function formatRelativeTime(dateStr: string): string {
   const diffHour = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHour / 24);
 
-  if (diffSec < 60) return "刚刚";
-  if (diffMin < 60) return `${diffMin}分钟前`;
-  if (diffHour < 24) return `${diffHour}小时前`;
-  if (diffDay < 30) return `${diffDay}天前`;
-  return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
+  if (diffSec < 60) return t("time.justNow");
+  if (diffMin < 60) return t("time.minutesAgo", { count: diffMin });
+  if (diffHour < 24) return t("time.hoursAgo", { count: diffHour });
+  if (diffDay < 30) return t("time.daysAgo", { count: diffDay });
+  return date.toLocaleDateString("en", { month: "short", day: "numeric" });
 }
 
 // ── SessionListDropdown ──────────────────────────────────────────────────
@@ -31,6 +32,7 @@ interface SessionListDropdownProps {
 }
 
 function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
+  const { t } = useTranslation();
   const { sessions, fetchSessions, switchSession, deleteSession, totalCount, currentPage, totalPages, pageSize } = useSessionStore();
   const openSessionIds = useChatStore((s) => s.agentStates[agentId]?.openSessionIds ?? []);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
@@ -153,7 +155,7 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
                   )}
                 </div>
                 <div className="ml-5.5 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
-                  <span>{formatRelativeTime(session.created_at)}</span>
+                  <span>{formatRelativeTime(session.created_at, t)}</span>
                   <span>·</span>
                   <span>{session.message_count} msg</span>
                 </div>
@@ -166,13 +168,13 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
                     disabled={deletingId !== null}
                     className="rounded-md btn-accent px-2 py-0.5 text-xs disabled:opacity-50"
                   >
-                    删除
+                    {t("common.delete")}
                   </button>
                   <button
                     onClick={(e) => { e.stopPropagation(); setConfirmDelete(null); }}
                     className="rounded-md btn-solid px-2 py-0.5 text-xs"
                   >
-                    取消
+                    {t("common.cancel")}
                   </button>
                 </div>
               ) : (
@@ -223,6 +225,7 @@ interface SessionTabBarProps {
 }
 
 export function SessionTabBar({ agentId }: SessionTabBarProps) {
+  const { t } = useTranslation();
   const agent = useChatStore((s) => s.agentStates[agentId]);
   const openSessionIds = agent?.openSessionIds ?? [];
   const activeSessionId = agent?.activeSessionId;
@@ -492,10 +495,10 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
               </div>
               <div className="flex-1">
                 <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
-                  LLM 推理进行中
+                  {t("sessionTabBar.llmReasoning")}
                 </h3>
                 <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-                  关闭此会话将中断正在进行的 LLM 推理。已生成的部分内容将会保留。
+                  {t("sessionTabBar.closeWarning")}
                 </p>
               </div>
             </div>
@@ -504,13 +507,13 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
                 onClick={() => setClosingSessionId(null)}
                 className="rounded-lg btn-solid px-3 py-1.5 text-xs"
               >
-                取消
+                {t("sessionTabBar.cancel")}
               </button>
               <button
                 onClick={confirmClose}
                 className="rounded-lg btn-accent px-3 py-1.5 text-xs"
               >
-                确认关闭
+                {t("sessionTabBar.confirmClose")}
               </button>
             </div>
           </div>

@@ -7,6 +7,7 @@ import { useUserProfileStore } from "./userProfileStore";
 import { useAgentProfileStore } from "./agentProfileStore";
 import { useWorkspaceStore } from "./workspaceStore";
 import { getGatewayUrl } from "../lib/config";
+import i18n from "../i18n";
 
 // ── Sender info helpers ────────────────────────────────────────────────
 
@@ -25,7 +26,7 @@ function getUserSenderInfo(): { senderDisplayName?: string } {
     const profile = useUserProfileStore.getState().profile;
     return { senderDisplayName: profile.displayName };
   } catch {
-    return { senderDisplayName: "我" };
+    return { senderDisplayName: i18n.t("common.me") };
   }
 }
 
@@ -1225,7 +1226,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           hasMoreMessages: false,
           messageCursor: null,
           isLoadingSession: false,
-          loadError: `消息加载失败: ${e instanceof Error ? e.message : String(e)}`,
+          loadError: `${i18n.t("chatPanel.sessionLoadFailed")}: ${e instanceof Error ? e.message : String(e)}`,
         }),
         isLoadingMore: false,
       }));

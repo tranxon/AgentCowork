@@ -1,4 +1,5 @@
 import React from "react";
+import { useTranslation } from "../../i18n/useTranslation";
 import { AlertTriangle, RefreshCw } from "lucide-react";
 
 interface ErrorBoundaryProps {
@@ -11,7 +12,65 @@ interface ErrorBoundaryState {
   autoRetried: boolean;
 }
 
+// ── Error display component (function component to use hooks) ─────────────
+
+interface ErrorDisplayProps {
+  error: Error | null;
+  autoRetried: boolean;
+  onRetry: () => void;
+  onRefresh: () => void;
+}
+
+function ErrorDisplay({ error, autoRetried, onRetry, onRefresh }: ErrorDisplayProps) {
+  const { t } = useTranslation();
+
+  return (
+    <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-900">
+      <div className="mx-auto max-w-md text-center">
+        <AlertTriangle className="mx-auto h-12 w-12 text-amber-500" />
+        <h2 className="mt-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
+          {t("errorBoundary.title")}
+        </h2>
+        <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
+          {t("errorBoundary.description")}
+        </p>
+        {error && (
+          <p className="mt-2 max-h-24 overflow-auto rounded bg-zinc-100 p-2 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 select-text">
+            {error.message}
+          </p>
+        )}
+        {autoRetried && (
+          <p className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">
+            {t("errorBoundary.autoRecovering")}
+          </p>
+        )}
+        {!autoRetried && (
+          <div className="mt-6 flex items-center justify-center gap-3">
+            <button
+              onClick={onRetry}
+              className="flex items-center gap-2 rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t("errorBoundary.retry")}
+            </button>
+            <button
+              onClick={onRefresh}
+              className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+            >
+              <RefreshCw className="h-4 w-4" />
+              {t("errorBoundary.refreshPage")}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── ErrorBoundary class component ────────────────────────────────────────
+
 export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  // eslint-disable-next-line @typescript-eslint/no-useless-constructor
   constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false, error: null, autoRetried: false };
@@ -43,45 +102,12 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
   render() {
     if (this.state.hasError) {
       return (
-        <div className="flex h-screen w-screen items-center justify-center bg-zinc-50 dark:bg-zinc-900">
-          <div className="mx-auto max-w-md text-center">
-            <AlertTriangle className="mx-auto h-12 w-12 text-amber-500" />
-            <h2 className="mt-4 text-lg font-semibold text-zinc-900 dark:text-zinc-100">
-              应用出现了异常
-            </h2>
-            <p className="mt-2 text-sm text-zinc-500 dark:text-zinc-400">
-              可能是系统休眠唤醒后连接已断开
-            </p>
-            {this.state.error && (
-              <p className="mt-2 max-h-24 overflow-auto rounded bg-zinc-100 p-2 text-xs text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400 select-text">
-                {this.state.error.message}
-              </p>
-            )}
-            {this.state.autoRetried && (
-              <p className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">
-                正在自动恢复...
-              </p>
-            )}
-            {!this.state.autoRetried && (
-              <div className="mt-6 flex items-center justify-center gap-3">
-                <button
-                  onClick={this.handleRetry}
-                  className="flex items-center gap-2 rounded-lg bg-zinc-200 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-300 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  重试
-                </button>
-                <button
-                  onClick={this.handleRefresh}
-                  className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
-                >
-                  <RefreshCw className="h-4 w-4" />
-                  刷新页面
-                </button>
-              </div>
-            )}
-          </div>
-        </div>
+        <ErrorDisplay
+          error={this.state.error}
+          autoRetried={this.state.autoRetried}
+          onRetry={this.handleRetry}
+          onRefresh={this.handleRefresh}
+        />
       );
     }
 

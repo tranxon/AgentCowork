@@ -1,13 +1,14 @@
 import { create } from "zustand";
 import type { AvatarType, BoringAvatarVariant, ColorPalette, UserProfile } from "../lib/types";
 import { COLOR_PALETTES } from "../lib/types";
+import i18n from "../i18n";
 
 const STORAGE_KEY = "rollball-user-profile";
 
 // ── Defaults ───────────────────────────────────────────────────────────
 
 const DEFAULT_PROFILE: UserProfile = {
-  displayName: "我",
+  displayName: i18n.t("common.me"),
   avatarType: "icon",
   avatarVariant: "beam",
   avatarSeed: "user",

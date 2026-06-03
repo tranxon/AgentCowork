@@ -8,6 +8,7 @@ import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSkillStore } from "../../stores/skillStore";
 import { useAgentProfileStore } from "../../stores/agentProfileStore";
 import { useUserProfileStore } from "../../stores/userProfileStore";
+import { useTranslation } from "../../i18n/useTranslation";
 import type { ToolApprovalNeededEvent } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { getGatewayUrl } from "../../lib/config";
@@ -58,6 +59,7 @@ let lastInitAgentId: string | null = null;
 let lastLoadedSessionId: string | null = null;
 
 export function ChatPanel() {
+  const { t } = useTranslation();
   const { agents, selectedAgentId, startAgent } = useAgentStore();
 
   // Per-agent + per-session state selectors
@@ -699,7 +701,7 @@ export function ChatPanel() {
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const selected = await open({
-        title: "选择图片",
+        title: t("chatPanel.selectImageTitle"),
         filters: [{
           name: "Images",
           extensions: ["png", "jpg", "jpeg", "gif", "webp"],
@@ -905,7 +907,7 @@ export function ChatPanel() {
 
             {loadError && !isLoadingSession && (
               <div className="flex h-full flex-col items-center justify-center gap-3 px-4">
-                <div className="text-sm text-red-500 dark:text-red-400">Session 加载失败</div>
+                <div className="text-sm text-red-500 dark:text-red-400">{t("chatPanel.sessionLoadFailed")}</div>
                 <div className="max-w-xs text-center text-xs text-zinc-500 dark:text-zinc-400">
                   {loadError}
                 </div>
@@ -919,7 +921,7 @@ export function ChatPanel() {
                   }}
                   className="rounded-md bg-zinc-100 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                 >
-                  重试
+                  {t("chatPanel.retry")}
                 </button>
               </div>
             )}
@@ -1081,7 +1083,7 @@ export function ChatPanel() {
                 <ChevronDown className="h-3 w-3 mr-1 text-zinc-400 dark:text-zinc-500 shrink-0" />
               )}
               <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                任务列表 ({todos.filter(t => t.status === "completed").length}/{todos.length})
+                {t("chatPanel.taskList", { completed: todos.filter(t => t.status === "completed").length, total: todos.length })}
               </span>
             </button>
             {!todosCollapsed && (
@@ -1127,7 +1129,7 @@ export function ChatPanel() {
           )}>
             <div className="flex items-center px-2.5 py-1.5 border-b border-zinc-200 dark:border-zinc-800">
               <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                消息队列 ({queuedMessages.length})
+                {t("chatPanel.messageQueue", { count: queuedMessages.length })}
               </span>
             </div>
             <div className="max-h-[7.5rem] overflow-y-auto">
@@ -1233,10 +1235,10 @@ export function ChatPanel() {
                 ? "Gateway not connected"
                 : !wsMap[selectedAgentId!] || wsMap[selectedAgentId!].readyState !== WebSocket.OPEN
                   ? activeSkill
-                    ? "输入参数... (Connecting to agent...)"
+                    ? t("chatPanel.inputParamsConnecting")
                     : "Type a message... (Connecting to agent...)"
                   : activeSkill
-                    ? "输入参数... (Enter to send, Shift+Enter for new line)"
+                    ? t("chatPanel.inputParams")
                     : "Type a message... (Enter to send, Shift+Enter for new line)"
             }
             disabled={inputDisabled}
@@ -1274,14 +1276,14 @@ export function ChatPanel() {
                   className={toolbarButton}
                   onClick={handleFileUpload}
                   disabled={!currentSessionId || !selectedAgentId}
-                  aria-label="上传文件"
+                  aria-label={t("chatPanel.uploadFile")}
                 >
                   <Paperclip size={14} />
                 </button>
                 {/* Tooltip */}
                 <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
                   <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                    上传文件 (PDF/DOCX/PPTX/XLSX)
+                    {t("chatPanel.uploadHint")}
                   </div>
                 </div>
               </div>
@@ -1291,14 +1293,14 @@ export function ChatPanel() {
                   className={toolbarButton}
                   onClick={handleImageSelect}
                   disabled={!currentSessionId || !selectedAgentId}
-                  aria-label="上传图片"
+                  aria-label={t("chatPanel.selectImage")}
                 >
                   <Image size={14} />
                 </button>
                 {/* Tooltip */}
                 <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
                   <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                    上传图片 (PNG/JPG/GIF/WebP)
+                    {t("chatPanel.uploadImageHint")}
                   </div>
                 </div>
               </div>
@@ -1310,38 +1312,38 @@ export function ChatPanel() {
               {/* Context usage icon — shown when session is active */}
               {currentSessionId && <ContextUsageIcon />}
 
-            {/* Send/Stop button with tooltip above */}
-            <div className="group relative">
-              <button
-                className={`rounded-lg p-1.5 transition-colors ${sending
-                  ? "text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
-                  : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-50"
-                  }`}
-                onClick={sending ? handleStop : handleSend}
-                disabled={
-                  sending
-                    ? false
-                    : (inputDisabled
-                      || (!inputValue.trim() && !pendingFiles.some(f => f.status === "success") && pendingImages.length === 0)
-                      || pendingFiles.some(f => f.status === "uploading"))
-                }
-                aria-label={sending ? (inputValue.trim() ? "Add to queue" : queuedMessages.length > 0 ? "Send queued & stop" : "Stop") : "Send message"}
-              >
-                {sending ? <Square size={16} fill="currentColor" /> : <Send size={16} />}
-              </button>
-              {/* Tooltip — shown above the button on hover */}
-              <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
-                <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                  {sending
-                    ? (inputValue.trim()
-                      ? "加入队列"
-                      : queuedMessages.length > 0
-                        ? "发送队列 & 停止"
-                        : "停止")
-                    : "发送消息"}
+              {/* Send/Stop button with tooltip above */}
+              <div className="group relative">
+                <button
+                  className={`rounded-lg p-1.5 transition-colors ${sending
+                    ? "text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
+                    : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-50"
+                    }`}
+                  onClick={sending ? handleStop : handleSend}
+                  disabled={
+                    sending
+                      ? false
+                      : (inputDisabled
+                        || (!inputValue.trim() && !pendingFiles.some(f => f.status === "success") && pendingImages.length === 0)
+                        || pendingFiles.some(f => f.status === "uploading"))
+                  }
+                  aria-label={sending ? (inputValue.trim() ? t("chatPanel.addToQueue") : queuedMessages.length > 0 ? t("chatPanel.sendQueuedAndStop") : t("chatPanel.stop")) : t("chatPanel.sendMessage")}
+                >
+                  {sending ? <Square size={16} fill="currentColor" /> : <Send size={16} />}
+                </button>
+                {/* Tooltip — shown above the button on hover */}
+                <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
+                  <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
+                    {sending
+                      ? (inputValue.trim()
+                        ? t("chatPanel.addToQueue")
+                        : queuedMessages.length > 0
+                          ? t("chatPanel.sendQueuedAndStop")
+                          : t("chatPanel.stop"))
+                      : t("chatPanel.sendMessage")}
+                  </div>
                 </div>
               </div>
-            </div>
             </div>
           </div>
         </div>
@@ -1419,6 +1421,7 @@ function parseThinkContent(content: string): {
 
 /** Wrapper that provides right-click context menu for copying text */
 function MessageContentWrapper({ children }: { children: React.ReactNode }) {
+  const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
@@ -1496,7 +1499,7 @@ function MessageContentWrapper({ children }: { children: React.ReactNode }) {
             onClick={handleCopy}
           >
             <Copy size={14} />
-            <span>复制</span>
+            <span>{t("chatPanel.copy")}</span>
           </button>
         </div>
       )}
@@ -2300,6 +2303,7 @@ function UnsupportedImageDialog({
   onSelect: (model: string, provider: string) => void;
   onClose: () => void;
 }) {
+  const { t } = useTranslation();
   if (!open) return null;
 
   return (
@@ -2309,10 +2313,10 @@ function UnsupportedImageDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <h3 className="shrink-0 px-6 pt-6 pb-2 text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-          当前模型不支持图片输入
+          {t("chatPanel.imageUnsupportedTitle")}
         </h3>
         <p className="px-6 pb-4 text-xs text-zinc-500 dark:text-zinc-400">
-          请切换到以下支持图片输入的模型：
+          {t("chatPanel.imageUnsupportedDesc")}
         </p>
 
         <div className="max-h-[240px] overflow-y-auto px-6 pb-2">
@@ -2353,7 +2357,7 @@ function UnsupportedImageDialog({
             onClick={onClose}
             className="rounded-md px-4 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
-            关闭
+            {t("chatPanel.close")}
           </button>
         </div>
       </div>

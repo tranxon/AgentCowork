@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
 import type { CloneMode, CloneResponse } from "../../lib/types";
 import { Copy, Info } from "lucide-react";
@@ -15,17 +16,6 @@ interface CloneDialogProps {
   onClose: () => void;
 }
 
-const MODE_DESCRIPTIONS: Record<CloneMode, { label: string; desc: string }> = {
-  skeleton: {
-    label: "Skeleton (骨架)",
-    desc: "仅复制 manifest + prompts + config + tools + resources。开发模式下可从骨架开始定制。",
-  },
-  full: {
-    label: "Full (完整)",
-    desc: "复制全部内容，包括 skills + data + conversations + memory。适合调试和深度定制场景。",
-  },
-};
-
 export function CloneDialog({
   open,
   agentId,
@@ -33,11 +23,23 @@ export function CloneDialog({
   onCloned,
   onClose,
 }: CloneDialogProps) {
+  const { t } = useTranslation();
   const [newAgentId, setNewAgentId] = useState("");
   const [mode, setMode] = useState<CloneMode>("skeleton");
   const [cloning, setCloning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const modeDescriptions: Record<CloneMode, { label: string; desc: string }> = {
+    skeleton: {
+      label: t("cloneDialog.skeleton"),
+      desc: t("cloneDialog.skeletonDesc"),
+    },
+    full: {
+      label: t("cloneDialog.full"),
+      desc: t("cloneDialog.fullDesc"),
+    },
+  };
 
   // Auto-generate suggestion based on source agent name
   useEffect(() => {
@@ -88,7 +90,7 @@ export function CloneDialog({
 
   if (!open) return null;
 
-  const modeInfo = MODE_DESCRIPTIONS[mode];
+  const modeInfo = modeDescriptions[mode];
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -157,7 +159,7 @@ export function CloneDialog({
                       : "border-zinc-200 text-zinc-600 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700",
                   )}
                 >
-                  {MODE_DESCRIPTIONS[m].label}
+                  {modeDescriptions[m].label}
                 </button>
               ))}
             </div>

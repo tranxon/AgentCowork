@@ -19,6 +19,7 @@ import { AgentSetupTab } from "./AgentSetupTab";
 import { MemoryPanel } from "../memory/MemoryPanel";
 import { ControlButton, StateLabel, SnapshotNode } from "../debug/DebugPanel";
 import { isGatewayLocal } from "../../lib/config";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface ResultsPanelProps {
   onCollapse: () => void;
@@ -91,6 +92,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
     reExecute,
     patchContext,
   } = useDebugStore();
+  const { t } = useTranslation();
   const autoConnectAttempted = useRef(false);
   const prevAgentId = useRef<string | null>(null);
 
@@ -213,7 +215,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                 {connected ? (
                   <span className="flex items-center gap-1.5">
                     <Bug className="h-3.5 w-3.5 text-amber-600" />
-                    Debug
+                    {t("resultsPanel.debug")}
                   </span>
                 ) : (
                   <span className="flex items-center gap-1.5">
@@ -222,7 +224,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                     ) : (
                       <WifiOff className="h-3.5 w-3.5" />
                     )}
-                    Debug
+                    {t("resultsPanel.debug")}
                   </span>
                 )}
               </TabButton>
@@ -231,14 +233,14 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
               active={activeTab === "status"}
               onClick={() => setActiveTab("status")}
             >
-              Status
+              {t("resultsPanel.status")}
             </TabButton>
             {selectedAgent?.running && (
               <TabButton
                 active={activeTab === "memory"}
                 onClick={() => setActiveTab("memory")}
               >
-                Memory
+                {t("resultsPanel.memory")}
               </TabButton>
             )}
             {selectedAgent?.running && (
@@ -246,7 +248,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                 active={activeTab === "setup"}
                 onClick={() => setActiveTab("setup")}
               >
-                Setup
+                {t("resultsPanel.setup")}
               </TabButton>
             )}
           </div>
@@ -260,11 +262,10 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
             <div className="flex flex-1 flex-col items-center justify-center gap-3 p-6 text-sm text-zinc-500 dark:text-zinc-400">
               <WifiOff className="h-5 w-5" />
               <span className="text-center text-xs">
-                Debug unavailable in remote mode
+                {t("resultsPanel.debugUnavailableRemote")}
               </span>
               <span className="text-center text-xs text-zinc-400">
-                Debug requires a direct local connection to the Agent Runtime.
-                The Desktop App and Gateway must run on the same machine.
+                {t("resultsPanel.debugRemoteDesc")}
               </span>
             </div>
           ) : !connected ? (
@@ -272,17 +273,17 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
               {connecting ? (
                 <>
                   <Loader className="h-5 w-5 animate-spin" />
-                  <span>Connecting to debug server...</span>
+                  <span>{t("resultsPanel.connectingDebug")}</span>
                 </>
               ) : (
                 <>
                   <WifiOff className="h-5 w-5" />
                   <span className="text-center">
                     {selectedAgent?.running && selectedAgent?.dev_mode
-                      ? "Debug connection lost"
+                      ? t("resultsPanel.debugConnectionLost")
                       : selectedAgent?.running
-                        ? "Agent is not in debug mode.\nUse Start in Debug to enable."
-                        : "No agent in debug mode"}
+                        ? t("resultsPanel.agentNotDebugMode")
+                        : t("resultsPanel.noAgentDebug")}
                   </span>
                 </>
               )}
@@ -343,11 +344,11 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
               {/* ── State card ─────────────────────────────────────── */}
               <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-800">
                 <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-                  <StateLabel label="Iteration" value={`#${iteration}`} />
-                  <StateLabel label="Phase" value={phase} highlight />
-                  <StateLabel label="Tokens" value={`${promptTokens + completionTokens}`} />
+                  <StateLabel label={t("resultsPanel.iteration")} value={`#${iteration}`} />
+                  <StateLabel label={t("resultsPanel.phase")} value={phase} highlight />
+                  <StateLabel label={t("resultsPanel.tokens")} value={`${promptTokens + completionTokens}`} />
                   <StateLabel
-                    label="Status"
+                    label={t("resultsPanel.sessionStatusLabel")}
                     value={debugState}
                     highlight={debugState !== "Running" && debugState !== "Stepping"}
                   />
@@ -357,13 +358,13 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
               {/* ── Context snapshots card ─────────────────────────── */}
               <div className="rounded-lg border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-800">
                 <div className="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-                  Context Snapshots ({snapshots.length})
+                  {t("resultsPanel.contextSnapshots", { count: snapshots.length })}
                 </div>
                 {snapshots.length === 0 && (
                   <div className="py-3 text-center text-xs text-zinc-400">
-                    No context snapshots yet.
+                    {t("resultsPanel.noSnapshots")}
                     <br />
-                    Send a message to the agent to generate snapshots.
+                    {t("resultsPanel.sendMessageToGenerate")}
                   </div>
                 )}
                 {snapshots.map((snap) => (
@@ -403,14 +404,14 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
           {/* Token statistics */}
           <div className="mb-4">
             <h3 className="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Session Status
+              {t("resultsPanel.sessionStatus")}
             </h3>
             <div className="rounded-md bg-white p-3 text-xs dark:bg-zinc-800">
               {/* Context usage progress bar */}
               {contextUsage ? (
                 <div className="mb-3">
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-zinc-500">Context Usage</span>
+                    <span className="text-zinc-500">{t("resultsPanel.contextUsage")}</span>
                     <span className="font-mono font-medium" style={{ color: "var(--color-accent)" }}>
                       {contextUsage.usage_percent}%
                     </span>
@@ -422,28 +423,28 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                     />
                   </div>
                   <div className="flex justify-between text-zinc-400 dark:text-zinc-500">
-                    <span>{formatTokenCount(contextUsage.total_tokens)} used</span>
-                    <span>{formatTokenCount(contextUsage.usable_context)} / {formatTokenCount(contextUsage.context_window)} available</span>
+                    <span>{formatTokenCount(contextUsage.total_tokens)} {t("resultsPanel.used")}</span>
+                    <span>{formatTokenCount(contextUsage.usable_context)} / {formatTokenCount(contextUsage.context_window)} {t("resultsPanel.available")}</span>
                   </div>
                   {/* Compacting indicator */}
                   {isCompacting && (
                     <div className="flex items-center gap-1.5 mt-1">
                       <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                      <span className="thinking-shimmer text-zinc-500" style={{ fontSize: "var(--ui-font-size, 0.75rem)" }}>compacting...</span>
+                      <span className="thinking-shimmer text-zinc-500" style={{ fontSize: "var(--ui-font-size, 0.75rem)" }}>{t("resultsPanel.compacting")}</span>
                     </div>
                   )}
                 </div>
               ) : (
-                <div className="mb-3 text-zinc-400 dark:text-zinc-500 italic">No context data yet</div>
+                <div className="mb-3 text-zinc-400 dark:text-zinc-500 italic">{t("resultsPanel.noContextData")}</div>
               )}
               {/* Divider */}
               {contextUsage && <div className="border-t border-zinc-100 dark:border-zinc-700/50 mb-2" />}
-              <StatRow label="Prompt tokens" value={(tokenUsage?.prompt_tokens ?? contextUsage?.input_tokens)?.toLocaleString()} />
-              <StatRow label="Completion tokens" value={(tokenUsage?.completion_tokens ?? contextUsage?.output_tokens)?.toLocaleString()} />
-              <StatRow label="Total tokens" value={(tokenUsage?.total_tokens ?? contextUsage?.total_tokens)?.toLocaleString()} />
-              <StatRow label="Iterations" value={iterations ? String(iterations) : undefined} />
+              <StatRow label={t("resultsPanel.promptTokens")} value={(tokenUsage?.prompt_tokens ?? contextUsage?.input_tokens)?.toLocaleString()} />
+              <StatRow label={t("resultsPanel.completionTokens")} value={(tokenUsage?.completion_tokens ?? contextUsage?.output_tokens)?.toLocaleString()} />
+              <StatRow label={t("resultsPanel.totalTokens")} value={(tokenUsage?.total_tokens ?? contextUsage?.total_tokens)?.toLocaleString()} />
+              <StatRow label={t("resultsPanel.iterations")} value={iterations ? String(iterations) : undefined} />
               <div className="flex justify-between py-1">
-                <span className="text-zinc-500">Session Status</span>
+                <span className="text-zinc-500">{t("resultsPanel.sessionStatusLabel")}</span>
                 <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">
                   <span
                     className={cn(
@@ -464,13 +465,13 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
           {/* Agent running status */}
           <div>
             <h3 className="mb-2 text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Agent Status
+              {t("resultsPanel.agentStatus")}
             </h3>
             <div className="rounded-md bg-white p-3 text-xs dark:bg-zinc-800">
               {selectedAgent ? (
                 <>
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-500">Status</span>
+                    <span className="text-zinc-500">{t("resultsPanel.sessionStatusLabel")}</span>
                     <span className="flex items-center gap-1.5">
                       <span
                         className={cn(
@@ -479,21 +480,21 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                         )}
                       />
                       <span className="text-zinc-700 dark:text-zinc-300">
-                        {selectedAgent.running ? "Running" : "Stopped"}
+                        {selectedAgent.running ? t("resultsPanel.running") : t("resultsPanel.stopped")}
                       </span>
                     </span>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-500">Agent</span>
+                    <span className="text-zinc-500">{t("resultsPanel.agent")}</span>
                     <span className="text-zinc-700 dark:text-zinc-300">{selectedAgent.name}</span>
                   </div>
                   <div className="flex justify-between py-1">
-                    <span className="text-zinc-500">Version</span>
+                    <span className="text-zinc-500">{t("resultsPanel.version")}</span>
                     <span className="text-zinc-700 dark:text-zinc-300">{selectedAgent.version}</span>
                   </div>
                 </>
               ) : (
-                <div className="py-1 text-zinc-400 dark:text-zinc-500">No agent selected</div>
+                <div className="py-1 text-zinc-400 dark:text-zinc-500">{t("resultsPanel.noAgentSelected")}</div>
               )}
             </div>
           </div>

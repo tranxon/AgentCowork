@@ -3,9 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { SearchKeyEntry, SearchProviderDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { SEARCH_PROVIDERS, lookupSearchProvider, searchKeyPlaceholder } from "../../lib/search-providers";
+import { useTranslation } from "../../i18n/useTranslation";
 
 /** Search Provider configuration tab — mirrors ProvidersTab layout */
 export function SearchTab() {
+  const { t } = useTranslation();
   const [keys, setKeys] = useState<SearchKeyEntry[]>([]);
   const [keysLoading, setKeysLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -39,7 +41,7 @@ export function SearchTab() {
   const handleAdd = async () => {
     const providerDef = lookupSearchProvider(newProvider);
     if (providerDef?.requires_api_key !== false && !newKey.trim()) {
-      setTestResult({ success: false, message: "Please enter an API Key first" });
+      setTestResult({ success: false, message: t("harnessSearch.pleaseEnterApiKey") });
       return;
     }
 
@@ -61,7 +63,7 @@ export function SearchTab() {
           const err = await resp.text();
           throw new Error(err || `Test failed with status ${resp.status}`);
         }
-        setTestResult({ success: true, message: "API Key is valid!" });
+        setTestResult({ success: true, message: t("harnessSearch.apiKeyValid") });
 
         // Remove temporary key (will be re-added in the final save below)
         await invoke("remove_search_key", { provider: newProvider });
@@ -89,17 +91,17 @@ export function SearchTab() {
       setTestResult(null);
       await fetchKeys();
     } catch (e) {
-      alert(`Failed to add search key: ${e}`);
+      alert(t("harnessSearch.failedAddKey") + e);
     }
   };
 
   const handleRemove = async (provider: string) => {
-    if (!confirm(`Remove search key for ${provider}?`)) return;
+    if (!confirm(t("harnessSearch.removeKeyConfirm", { provider }))) return;
     try {
       await invoke("remove_search_key", { provider });
       await fetchKeys();
     } catch (e) {
-      alert(`Failed to remove search key: ${e}`);
+      alert(t("harnessSearch.failedRemoveKey") + e);
     }
   };
 
@@ -128,7 +130,7 @@ export function SearchTab() {
       setShowEditDialog(null);
       await fetchKeys();
     } catch (e) {
-      alert(`Failed to update search key: ${e}`);
+      alert(t("harnessSearch.failedUpdateKey") + e);
     }
   };
 
@@ -141,15 +143,15 @@ export function SearchTab() {
     <div className="max-w-2xl space-y-4">
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-medium">Search Provider Management</h2>
+          <h2 className="text-xs font-medium">{t("harnessSearch.searchProviderManagement")}</h2>
         </div>
 
         {/* Configured Search Providers (top section) */}
         {keysLoading ? (
-          <div className="py-3 text-center text-xs text-zinc-400">Loading...</div>
+          <div className="py-3 text-center text-xs text-zinc-400">{t("harnessSearch.loading")}</div>
         ) : keys.length > 0 && (
           <div>
-            <h3 className="mb-2 text-xs font-medium text-zinc-500">Configured Search Providers</h3>
+            <h3 className="mb-2 text-xs font-medium text-zinc-500">{t("harnessSearch.configuredSearchProviders")}</h3>
             <div className="space-y-1">
               {keys.map((keyEntry) => {
                 const def = lookupSearchProvider(keyEntry.provider);
@@ -162,19 +164,19 @@ export function SearchTab() {
                         <span className="shrink-0 text-xs font-medium">{providerName}</span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="text-xs" style={{ color: "var(--color-accent)" }}>Active</span>
-                        <span className="text-xs text-zinc-400">Key: {keyEntry.key_preview}</span>
+                        <span className="text-xs" style={{ color: "var(--color-accent)" }}>{t("harnessSearch.active")}</span>
+                        <span className="text-xs text-zinc-400">{t("harnessSearch.key")}: {keyEntry.key_preview}</span>
                         <button
                           onClick={() => handleEdit(keyEntry.provider)}
                           className="text-xs hover:opacity-70" style={{ color: "var(--color-accent)" }}
                         >
-                          Edit
+                          {t("harnessSearch.edit")}
                         </button>
                         <button
                           onClick={() => handleRemove(keyEntry.provider)}
                           className="text-xs text-red-500 hover:text-red-700"
                         >
-                          Remove
+                          {t("harnessSearch.remove")}
                         </button>
                       </div>
                     </div>
@@ -191,10 +193,10 @@ export function SearchTab() {
 
         {/* Available Search Providers (bottom section) */}
         <div>
-          <h3 className="mb-2 text-xs font-medium text-zinc-500">Available Search Providers</h3>
+          <h3 className="mb-2 text-xs font-medium text-zinc-500">{t("harnessSearch.availableSearchProviders")}</h3>
           <div className="space-y-1">
             {availableProviders.length === 0 ? (
-              <div className="py-3 text-center text-xs text-zinc-400">All search providers configured</div>
+              <div className="py-3 text-center text-xs text-zinc-400">{t("harnessSearch.allConfigured")}</div>
             ) : (
               availableProviders.map((item) => (
                 <div key={item.id} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
@@ -211,7 +213,7 @@ export function SearchTab() {
                       }}
                       className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                     >
-                      Add Key
+                      {t("harnessSearch.addKey")}
                     </button>
                   </div>
                   <div className="mt-0.5 text-xs text-zinc-400">{item.free_quota}</div>
@@ -227,13 +229,13 @@ export function SearchTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[400px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
             <h3 className="mb-3 text-sm font-semibold">
-              Add Search Provider: {lookupSearchProvider(newProvider)?.name || newProvider}
+              {t("harnessSearch.addSearchProvider")} {lookupSearchProvider(newProvider)?.name || newProvider}
             </h3>
 
             <div className="space-y-3">
               {/* Provider display (read-only) */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Provider</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.provider")}</label>
                 <div className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                   {lookupSearchProvider(newProvider)?.name || newProvider}
                 </div>
@@ -242,7 +244,7 @@ export function SearchTab() {
               {/* API Key */}
               {lookupSearchProvider(newProvider)?.requires_api_key !== false && (
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">API Key</label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.apiKey")}</label>
                   <input
                     type="password"
                     value={newKey}
@@ -255,7 +257,7 @@ export function SearchTab() {
 
               {/* Base URL */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Base URL <span className="text-zinc-400">({newProvider === "searxng" ? "required" : "optional"})</span></label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.baseUrl")} <span className="text-zinc-400">({newProvider === "searxng" ? t("harnessSearch.required") : t("harnessSearch.optional")})</span></label>
                 <input
                   type="text"
                   value={newBaseUrl}
@@ -277,7 +279,7 @@ export function SearchTab() {
                 </div>
               )}
               {testing && (
-                <div className="text-xs text-zinc-400">Testing...</div>
+                <div className="text-xs text-zinc-400">{t("harnessSearch.testing")}</div>
               )}
             </div>
 
@@ -286,7 +288,7 @@ export function SearchTab() {
                 onClick={() => { setShowAddDialog(false); setNewKey(""); setTestResult(null); }}
                 className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleAdd}
@@ -294,7 +296,7 @@ export function SearchTab() {
                 className="rounded-md px-4 py-1.5 text-xs font-medium text-white disabled:opacity-50"
                 style={{ backgroundColor: testing ? "var(--color-accent)" : "var(--color-accent)" }}
               >
-                {testing ? "Testing..." : "Test & Save"}
+                {testing ? t("harnessSearch.testing") : t("harnessSearch.testAndSave")}
               </button>
             </div>
           </div>
@@ -306,13 +308,13 @@ export function SearchTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[400px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
             <h3 className="mb-3 text-sm font-semibold">
-              Edit Search Provider: {editProviderDef?.name || showEditDialog}
+              {t("harnessSearch.editSearchProvider")} {editProviderDef?.name || showEditDialog}
             </h3>
 
             <div className="space-y-3">
               {/* Provider display (read-only) */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Provider</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.provider")}</label>
                 <div className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                   {editProviderDef?.name || showEditDialog}
                 </div>
@@ -321,7 +323,7 @@ export function SearchTab() {
               {/* API Key */}
               {editProviderDef?.requires_api_key !== false && (
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">API Key <span className="text-zinc-400">(leave empty to keep current)</span></label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.apiKey")} <span className="text-zinc-400">({t("harnessSearch.leaveEmptyToKeep")})</span></label>
                   <input
                     type="password"
                     value={editKey}
@@ -329,13 +331,13 @@ export function SearchTab() {
                     placeholder={searchKeyPlaceholder(showEditDialog)}
                     className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
-                  <p className="mt-0.5 text-xs text-zinc-400">Current: {keys.find(k => k.provider === showEditDialog)?.key_preview}</p>
+                  <p className="mt-0.5 text-xs text-zinc-400">{t("harnessSearch.current")}: {keys.find(k => k.provider === showEditDialog)?.key_preview}</p>
                 </div>
               )}
 
               {/* Base URL */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Base URL</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.baseUrl")}</label>
                 <input
                   type="text"
                   value={editBaseUrl}
@@ -351,14 +353,14 @@ export function SearchTab() {
                 onClick={() => setShowEditDialog(null)}
                 className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleEditSave}
                 className="rounded-md px-4 py-1.5 text-xs font-medium text-white"
                 style={{ backgroundColor: "var(--color-accent)" }}
               >
-                Save
+                {t("harnessSearch.save")}
               </button>
             </div>
           </div>

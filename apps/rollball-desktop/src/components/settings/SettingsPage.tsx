@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { useTranslation } from "../../i18n/useTranslation";
 import type { AgentListResponse, GatewayConfig, GatewayMode } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
@@ -13,13 +14,14 @@ import { ProfileTab } from "./ProfileTab";
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
 
 export function SettingsPage({ initialTab = "profile" }: { initialTab?: SettingsTab }) {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
   const tabs: { id: SettingsTab; label: string }[] = [
-    { id: "profile", label: "My Profile" },
-    { id: "general", label: "General" },
-    { id: "appearance", label: "Appearance" },
-    { id: "gateway", label: "Gateway" },
+    { id: "profile", label: t("settings.tabProfile") },
+    { id: "general", label: t("settings.tabGeneral") },
+    { id: "appearance", label: t("settings.tabAppearance") },
+    { id: "gateway", label: t("settings.tabGateway") },
   ];
 
   return (
@@ -57,6 +59,7 @@ export function SettingsPage({ initialTab = "profile" }: { initialTab?: Settings
 
 /** Gateway connection settings */
 function GatewayTab() {
+  const { t } = useTranslation();
   const { status, health, localState, checkHealth, startLocalGateway, stopLocalGateway } = useGatewayStore();
   const gatewayUrl = useSettingsStore((s) => s.gatewayUrl);
   const setGatewayUrl = useSettingsStore((s) => s.setGatewayUrl);
@@ -159,13 +162,13 @@ function GatewayTab() {
     <div className="max-w-lg space-y-4">
       {/* Mode selection */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Gateway Mode</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.gatewayMode")}</h2>
         <RadioGroup
           name="gatewayMode"
           value={gatewayMode}
           options={[
-            { label: "Local", value: "local" as GatewayMode },
-            { label: "Remote", value: "remote" as GatewayMode },
+            { label: t("settings.local"), value: "local" as GatewayMode },
+            { label: t("settings.remote"), value: "remote" as GatewayMode },
           ]}
           onChange={handleModeChange}
         />
@@ -174,10 +177,10 @@ function GatewayTab() {
       {/* Local mode: status + controls */}
       {gatewayMode === "local" && (
         <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-          <h2 className="mb-3 text-xs font-medium">Local Gateway</h2>
+          <h2 className="mb-3 text-xs font-medium">{t("settings.localGateway")}</h2>
 
           <div className="flex items-center gap-2 text-xs">
-            <span className="text-zinc-500">Status</span>
+            <span className="text-zinc-500">{t("settings.status")}</span>
             <span
               className={cn(
                 "h-2 w-2 rounded-full",
@@ -189,13 +192,13 @@ function GatewayTab() {
                 localIsStarting ? "text-amber-600 dark:text-amber-400" :
                   "text-zinc-500"
             )}>
-              {localIsRunning ? "Running" : localIsStarting ? "Starting..." : "Stopped"}
+              {localIsRunning ? t("settings.running") : localIsStarting ? t("settings.starting") : t("settings.stopped")}
             </span>
           </div>
 
           {health && localIsRunning && (
             <div className="mt-2 flex items-center gap-2 text-xs">
-              <span className="text-zinc-500">Version</span>
+              <span className="text-zinc-500">{t("settings.version")}</span>
               <span>{health.version}</span>
             </div>
           )}
@@ -207,7 +210,7 @@ function GatewayTab() {
                 disabled={starting}
                 className="rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
               >
-                {starting ? "Starting..." : "Start Gateway"}
+                {starting ? t("settings.starting") : t("settings.startGateway")}
               </button>
             )}
             {localIsRunning && (
@@ -217,14 +220,14 @@ function GatewayTab() {
                   disabled={starting}
                   className="rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
                 >
-                  {starting ? "Restarting..." : "Restart"}
+                  {starting ? t("settings.restarting") : t("settings.restart")}
                 </button>
                 <button
                   onClick={handleStopLocal}
                   disabled={stopping}
                   className="rounded-md border border-zinc-300 px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700 disabled:opacity-50"
                 >
-                  {stopping ? "Stopping..." : "Stop"}
+                  {stopping ? t("settings.stopping") : t("settings.stop")}
                 </button>
               </>
             )}
@@ -235,11 +238,11 @@ function GatewayTab() {
       {/* Remote mode: URL + test */}
       {gatewayMode === "remote" && (
         <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-          <h2 className="mb-3 text-xs font-medium">Gateway Connection</h2>
+          <h2 className="mb-3 text-xs font-medium">{t("settings.gatewayConnection")}</h2>
 
           <div className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Gateway URL</label>
+              <label className="mb-1 block text-xs text-zinc-500">{t("settings.gatewayUrl")}</label>
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -255,14 +258,14 @@ function GatewayTab() {
                     onClick={handleUrlSave}
                     className="rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium text-white hover:opacity-90" style={{ backgroundColor: "var(--color-accent)" }}
                   >
-                    Apply
+                    {t("settings.apply")}
                   </button>
                 )}
               </div>
             </div>
 
             <div className="flex items-center gap-2 text-xs">
-              <span className="text-zinc-500">Status</span>
+              <span className="text-zinc-500">{t("settings.status")}</span>
               <span
                 className={cn(
                   "h-2 w-2 rounded-full",
@@ -274,13 +277,13 @@ function GatewayTab() {
                   status === "error" ? "text-red-600 dark:text-red-400" :
                     "text-zinc-500"
               )}>
-                {status === "connected" ? "Connected" : status === "error" ? "Error" : "Disconnected"}
+                {status === "connected" ? t("settings.connected") : status === "error" ? t("settings.error") : t("settings.disconnected")}
               </span>
             </div>
 
             {health && (
               <div className="flex items-center gap-2 text-xs">
-                <span className="text-zinc-500">Version</span>
+                <span className="text-zinc-500">{t("settings.version")}</span>
                 <span>{health.version}</span>
               </div>
             )}
@@ -290,7 +293,7 @@ function GatewayTab() {
               disabled={testing || !urlDraft.trim()}
               className="rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
             >
-              {testing ? "Testing..." : "Test Connection"}
+              {testing ? t("settings.testing") : t("settings.testConnection")}
             </button>
           </div>
         </div>
@@ -298,14 +301,14 @@ function GatewayTab() {
 
       {/* Connected Agents (shared between modes) */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Connected Agents</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.connectedAgents")}</h2>
 
         {status !== "connected" ? (
-          <p className="text-xs text-zinc-400">Connect to Gateway to see running agents</p>
+          <p className="text-xs text-zinc-400">{t("settings.connectToSeeAgents")}</p>
         ) : agentsLoading ? (
-          <p className="text-xs text-zinc-400">Loading...</p>
+          <p className="text-xs text-zinc-400">{t("settings.loading")}</p>
         ) : agents.length === 0 ? (
-          <p className="text-xs text-zinc-400">No agents running</p>
+          <p className="text-xs text-zinc-400">{t("settings.noAgentsRunning")}</p>
         ) : (
           <div className="space-y-1">
             {agents.map((agent) => (
@@ -320,6 +323,7 @@ function GatewayTab() {
 
 /** Single runtime row component — fetches model info independently */
 function RuntimeRow({ agent }: { agent: AgentListResponse }) {
+  const { t } = useTranslation();
   const [modelInfo, setModelInfo] = useState<{ provider: string; model: string } | null>(null);
 
   useEffect(() => {
@@ -343,7 +347,7 @@ function RuntimeRow({ agent }: { agent: AgentListResponse }) {
         {agent.dev_mode && (
           <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
             <Bug className="h-3 w-3" />
-            Debug
+            {t("settings.debug")}
           </span>
         )}
       </div>
@@ -360,6 +364,7 @@ function RuntimeRow({ agent }: { agent: AgentListResponse }) {
 
 /** Appearance settings */
 function AppearanceTab() {
+  const { t } = useTranslation();
   const { theme, setTheme, fontSize, setFontSize, contentWidth, setContentWidth, opacity, setOpacity, accentColor, setAccentColor } = useSettingsStore();
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
@@ -386,22 +391,22 @@ function AppearanceTab() {
   return (
     <div className="w-fit space-y-4">
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Theme</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.theme")}</h2>
         <RadioGroup
           name="theme"
           value={theme}
           options={[
-            { label: "Light", value: "light" as const },
-            { label: "Dark", value: "dark" as const },
-            { label: "System", value: "system" as const },
+            { label: t("settings.light"), value: "light" as const },
+            { label: t("settings.dark"), value: "dark" as const },
+            { label: t("settings.system"), value: "system" as const },
           ]}
           onChange={setTheme}
         />
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Accent Color</h2>
-        <p className="mb-3 text-xs text-zinc-500">全局高亮色</p>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.accentColor")}</h2>
+        <p className="mb-3 text-xs text-zinc-500">{t("settings.accentColor")}</p>
         <div className="flex flex-wrap gap-[14px]">
           {[
             // Cool tones
@@ -437,8 +442,8 @@ function AppearanceTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Content Width</h2>
-        <p className="mb-2 text-xs text-zinc-500">聊天消息、工具调用、Thinking 的最大显示宽度</p>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.contentWidth")}</h2>
+        <p className="mb-2 text-xs text-zinc-500">{t("settings.contentWidthHint")}</p>
         <RadioGroup
           name="contentWidth"
           value={contentWidth}
@@ -449,7 +454,7 @@ function AppearanceTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Font Size</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.fontSize")}</h2>
         <RadioGroup
           name="fontSize"
           value={fontSize}
@@ -459,8 +464,8 @@ function AppearanceTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Opacity</h2>
-        <p className="mb-2 text-xs text-zinc-500">窗口透明度（需配合窗口毛玻璃效果使用）</p>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.opacity")}</h2>
+        <p className="mb-2 text-xs text-zinc-500">{t("settings.opacityHint")}</p>
         <div className="flex items-center gap-3">
           <input
             type="range"
@@ -483,14 +488,14 @@ function AppearanceTab() {
           onClick={() => setShowResetConfirm(true)}
           className="rounded-lg btn-solid px-3 py-[var(--ui-btn-py)] text-xs"
         >
-          Reset to defaults
+          {t("settings.resetToDefaults")}
         </button>
 
         <ConfirmDialog
           open={showResetConfirm}
-          title="Reset Appearance"
-          message="确定要重置所有外观设置为默认值吗？包括主题、字体大小、内容宽度、透明度和高亮色。"
-          confirmLabel="Reset"
+          title={t("settings.resetAppearance")}
+          message={t("settings.resetAppearanceConfirm")}
+          confirmLabel={t("settings.reset")}
           destructive
           onConfirm={() => {
             setTheme("system"); setFontSize(0.875); setContentWidth(90); setOpacity(1.0); setAccentColor("#3b82f6");
@@ -505,6 +510,7 @@ function AppearanceTab() {
 
 /** General settings */
 function GeneralTab() {
+  const { t } = useTranslation();
   const [config, setConfig] = useState<GatewayConfig | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -544,12 +550,12 @@ function GeneralTab() {
   return (
     <div className="max-w-lg space-y-4">
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Log setup</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.logSetup")}</h2>
 
         {/* Log level */}
         <div className="mb-3">
           <label className="block mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Log Level
+            {t("settings.logLevel")}
           </label>
           <div>
             <select
@@ -586,7 +592,7 @@ function GeneralTab() {
         {/* Log file size */}
         <div className="mb-3">
           <label className="block mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Log File Size (MB)
+            {t("settings.logFileSize")}
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -609,18 +615,18 @@ function GeneralTab() {
               className="w-16 rounded-md border border-zinc-200 px-2 py-[var(--ui-input-py)] text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
             />
             <span className="text-xs text-zinc-400">
-              {currentLogFileSize === 0 ? "No split" : `Auto-split at ${currentLogFileSize} MB`}
+              {currentLogFileSize === 0 ? t("settings.noSplit") : t("settings.autoSplit", { size: currentLogFileSize })}
             </span>
           </div>
           <p className="mt-1 text-[10px] text-zinc-400">
-            0 = disable split. Files named as YYYYMMDD_HHMMSS.log
+            {t("settings.logFileSizeHint")}
           </p>
         </div>
 
         {/* Max log file count */}
         <div className="mb-3">
           <label className="block mb-1.5 text-xs text-zinc-500 dark:text-zinc-400">
-            Max Log Files
+            {t("settings.maxLogFiles")}
           </label>
           <div className="flex items-center gap-2">
             <input
@@ -643,11 +649,11 @@ function GeneralTab() {
               className="w-16 rounded-md border border-zinc-200 px-2 py-[var(--ui-input-py)] text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
             />
             <span className="text-xs text-zinc-400">
-              {currentLogFileCount === 0 ? "Unlimited" : `Keep ${currentLogFileCount} files`}
+              {currentLogFileCount === 0 ? t("settings.unlimited") : t("settings.keepFiles", { count: currentLogFileCount })}
             </span>
           </div>
           <p className="mt-1 text-[10px] text-zinc-400">
-            0 = unlimited. Oldest files are deleted when limit is exceeded.
+            {t("settings.maxLogFilesHint")}
           </p>
         </div>
 
@@ -657,31 +663,29 @@ function GeneralTab() {
           disabled={deleting}
           className="rounded-lg btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium disabled:opacity-50"
         >
-          {deleting ? "Deleting..." : "Delete all logs"}
+          {deleting ? t("settings.deleting") : t("settings.deleteAllLogs")}
         </button>
 
         {/* Delete confirmation dialog */}
         {showDeleteConfirm && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="fixed inset-0 z-50 flex items-cell justify-center bg-black/50">
             <div className="w-[380px] rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-              <h3 className="mb-2 text-sm font-semibold">Delete all logs</h3>
+              <h3 className="mb-2 text-sm font-semibold">{t("settings.deleteLogsConfirmTitle")}</h3>
               <p className="mb-4 text-xs text-zinc-500 dark:text-zinc-400">
-                This will delete all log files from Gateway and all Agent workspaces.
-                Running agents will also rotate their log files.
-                This action cannot be undone.
+                {t("settings.deleteLogsConfirmMsg")}
               </p>
               <div className="flex justify-end gap-2">
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
                   className="rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button
                   onClick={handleDeleteLogs}
                   className="btn-accent rounded-md px-3 py-[var(--ui-btn-py)] text-xs font-medium"
                 >
-                  Confirm Delete
+                  {t("settings.confirmDelete")}
                 </button>
               </div>
             </div>
@@ -690,7 +694,7 @@ function GeneralTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Data Directory</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.dataDirectory")}</h2>
         <input
           type="text"
           value={config?.data_dir ?? "\u2014"}
@@ -700,7 +704,7 @@ function GeneralTab() {
       </div>
 
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">About</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.about")}</h2>
         <div className="text-xs text-zinc-500 dark:text-zinc-400">
           <p>Rollball Desktop v0.1.0</p>
           <p className="mt-1">Built with Tauri v2 + React 19</p>
@@ -709,23 +713,22 @@ function GeneralTab() {
 
       {/* Reset Onboarding */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="text-xs font-medium">Reset Onboarding</h2>
+        <h2 className="text-xs font-medium">{t("settings.resetOnboarding")}</h2>
         <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
-          Reset the onboarding wizard to reconfigure your Gateway connection and API keys.
-          Gateway models cache will be reloaded from disk (no re-download needed).
+          {t("settings.resetOnboardingDesc")}
         </p>
         <button
           onClick={() => setShowResetOnboardingConfirm(true)}
           className="mt-3 rounded-md btn-solid px-3 py-[var(--ui-btn-py)] text-xs font-medium"
         >
-          Reset Onboarding
+          {t("settings.resetOnboardingBtn")}
         </button>
 
         <ConfirmDialog
           open={showResetOnboardingConfirm}
-          title="Reset Onboarding"
-          message="确定要重置引导流程吗？这将会清除所有引导进度，需要重新配置 Gateway 连接和 API Key。页面将自动刷新以重新开始。"
-          confirmLabel="Reset"
+          title={t("settings.resetOnboarding")}
+          message={t("settings.resetOnboardingConfirm")}
+          confirmLabel={t("settings.reset")}
           destructive
           onConfirm={async () => {
             setShowResetOnboardingConfirm(false);

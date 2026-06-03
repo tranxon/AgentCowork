@@ -4,8 +4,10 @@ import { useAgentStore } from "../../stores/agentStore";
 import { MemoryNodeList } from "./MemoryNodeList";
 import { MemoryNodeDetail } from "./MemoryNodeDetail";
 import { AlertTriangle, Info } from "lucide-react";
+import { useTranslation } from "../../i18n/useTranslation";
 
 export function MemoryPanel() {
+  const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
   const {
     nodes,
@@ -73,7 +75,7 @@ export function MemoryPanel() {
   if (!selectedAgentId) {
     return (
       <div className="flex flex-1 items-center justify-center p-6 text-xs text-zinc-400 dark:text-zinc-500">
-        Select an agent to view memory
+        {t("memoryPanel.selectAgent")}
       </div>
     );
   }
@@ -86,7 +88,7 @@ export function MemoryPanel() {
           type="text"
           value={filters.keyword}
           onChange={(e) => setFilters({ keyword: e.target.value })}
-          placeholder="Search nodes..."
+          placeholder={t("memoryPanel.searchNodes")}
           className="min-w-[160px] flex-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:focus:border-zinc-500"
         />
         <select
@@ -109,7 +111,7 @@ export function MemoryPanel() {
             backgroundSize: '1.5em 1.5em',
           }}
         >
-          <option value="All">All Types</option>
+          <option value="All">{t("memoryPanel.allTypes")}</option>
           <option value="Knowledge">Knowledge</option>
           <option value="Episodic">Episodic</option>
           <option value="Procedural">Procedural</option>
@@ -130,22 +132,22 @@ export function MemoryPanel() {
             backgroundSize: '1.5em 1.5em',
           }}
         >
-          <option value="all">All Time</option>
-          <option value="1h">Last Hour</option>
-          <option value="1d">Last Day</option>
-          <option value="7d">Last 7 Days</option>
-          <option value="30d">Last 30 Days</option>
+          <option value="all">{t("memoryPanel.allTime")}</option>
+          <option value="1h">{t("memoryPanel.lastHour")}</option>
+          <option value="1d">{t("memoryPanel.lastDay")}</option>
+          <option value="7d">{t("memoryPanel.last7Days")}</option>
+          <option value="30d">{t("memoryPanel.last30Days")}</option>
         </select>
       </div>
 
       {/* Stats cards */}
       {stats && (
         <div className="grid grid-cols-2 gap-2 border-b border-zinc-200 px-3 py-2 sm:grid-cols-4 dark:border-zinc-800">
-          <StatCard label="Total Nodes" value={stats.total_nodes} />
-          <StatCard label="Active" value={stats.by_status["Active"] ?? 0} />
-          <StatCard label="Dormant" value={stats.by_status["Dormant"] ?? 0} />
+          <StatCard label={t("memoryPanel.totalNodes")} value={stats.total_nodes} />
+          <StatCard label={t("memoryPanel.active")} value={stats.by_status["Active"] ?? 0} />
+          <StatCard label={t("memoryPanel.dormant")} value={stats.by_status["Dormant"] ?? 0} />
           <StatCard
-            label="Health"
+            label={t("memoryPanel.health")}
             value={stats.index_health}
           />
         </div>
@@ -200,14 +202,14 @@ export function MemoryPanel() {
           disabled={loading}
           className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
-          Consolidate
+          {t("memoryPanel.consolidate")}
         </button>
         <button
           onClick={handleRefresh}
           disabled={loading}
           className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
-          Refresh
+          {t("memoryPanel.refresh")}
         </button>
       </div>
     </div>

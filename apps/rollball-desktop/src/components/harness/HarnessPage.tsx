@@ -10,16 +10,18 @@ import { Star } from "lucide-react";
 import { useMcpStore } from "../../stores/mcpStore";
 import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
+import { useTranslation } from "../../i18n/useTranslation";
 
 type HarnessTab = "providers" | "search" | "mcp";
 
 export function HarnessPage() {
+  const { t } = useTranslation();
   const [activeTab, setActiveTab] = useState<HarnessTab>("providers");
 
   const tabs: { id: HarnessTab; label: string }[] = [
-    { id: "providers", label: "Providers" },
-    { id: "search", label: "Search" },
-    { id: "mcp", label: "MCP" },
+    { id: "providers", label: t("harness.tabProviders") },
+    { id: "search", label: t("harness.tabSearch") },
+    { id: "mcp", label: t("harness.tabMcp") },
   ];
 
   return (
@@ -66,6 +68,7 @@ function providersEqual(a: ProviderListEntry[], b: ProviderListEntry[]): boolean
 
 /** Provider configuration */
 function ProvidersTab() {
+  const { t } = useTranslation();
   const [keys, setKeys] = useState<VaultKeyEntry[]>([]);
   const [keysLoading, setKeysLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -293,7 +296,7 @@ function ProvidersTab() {
   const handleAdd = async () => {
     // First test the API key (skip for local providers which don't need keys)
     if (!newProviderIsLocal && needsApiKey(newProvider) && !newKey.trim()) {
-      setTestResult({ success: false, message: "Please enter an API Key first" });
+      setTestResult({ success: false, message: t("harness.pleaseEnterApiKey") });
       return;
     }
 
@@ -335,7 +338,7 @@ function ProvidersTab() {
         await fetchConfig();
         window.dispatchEvent(new CustomEvent('models-added'));
       } catch (e) {
-        alert(`Failed to connect local provider: ${e}`);
+        alert(`${t("harness.failedConnectLocal")}: ${e}`);
       }
       setTesting(false);
       return;
@@ -355,7 +358,7 @@ function ProvidersTab() {
       // Try to fetch models to verify the key works
       await fetchProviderModels(newProvider);
 
-      setTestResult({ success: true, message: "API Key is valid!" });
+      setTestResult({ success: true, message: t("harness.apiKeyValid") });
 
       // Remove the temporary key
       await invoke("remove_key", { provider: newProvider });
@@ -423,17 +426,17 @@ function ProvidersTab() {
       await fetchConfig();
       window.dispatchEvent(new CustomEvent('models-added'));
     } catch (e) {
-      alert(`Failed to add key: ${e}`);
+      alert(`${t("harness.failedAddKey")}: ${e}`);
     }
   };
 
   const handleRemove = async (provider: string) => {
-    if (!confirm(`Remove key for ${provider}?`)) return;
+    if (!confirm(t("harness.removeKeyConfirm", { provider }))) return;
     try {
       await invoke("remove_key", { provider });
       await fetchKeys();
     } catch (e) {
-      alert(`Failed to remove key: ${e}`);
+      alert(`${t("harness.failedRemoveKey")}: ${e}`);
     }
   };
 
@@ -451,7 +454,7 @@ function ProvidersTab() {
       });
       await fetchConfig();
     } catch (e) {
-      alert(`Failed to set default provider: ${e}`);
+      alert(`${t("harness.failedSetDefault")}: ${e}`);
     }
   };
 
@@ -505,7 +508,7 @@ function ProvidersTab() {
         const mot = Number(editMaxOutputTokens);
         if ((editContextWindow && (!Number.isFinite(cw) || cw <= 0)) ||
           (editMaxOutputTokens && (!Number.isFinite(mot) || mot <= 0))) {
-          alert('Context Window and Max Output Tokens must be positive numbers');
+          alert(t("harness.contextWindowMaxOutputPositive"));
           return;
         }
         const caps: ModelCapabilitiesMap = {};
@@ -536,7 +539,7 @@ function ProvidersTab() {
       window.dispatchEvent(new CustomEvent('models-added'));
     } catch (e) {
       console.error("[handleEditSave] error:", e);
-      alert(`Failed to update key: ${e}`);
+      alert(`${t("harness.failedUpdateKey")}: ${e}`);
     }
   };
 
@@ -553,15 +556,15 @@ function ProvidersTab() {
     <div className="max-w-2xl space-y-4">
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-medium">Provider Management</h2>
+          <h2 className="text-xs font-medium">{t("harness.providerManagement")}</h2>
         </div>
 
         {/* Configured Providers (top section) — depends on fetchKeys */}
         {keysLoading ? (
-          <div className="py-3 text-center text-xs text-zinc-400">Loading keys...</div>
+          <div className="py-3 text-center text-xs text-zinc-400">{t("harness.loadingKeys")}</div>
         ) : keys.length > 0 && (
           <div>
-            <h3 className="mb-2 text-xs font-medium text-zinc-500">Configured Providers</h3>
+            <h3 className="mb-2 text-xs font-medium text-zinc-500">{t("harness.configuredProviders")}</h3>
             <div className="space-y-1">
               {keys.map((keyEntry) => {
                 const provider = dynamicProviders.find((p) => p.id === keyEntry.provider);
@@ -581,29 +584,29 @@ function ProvidersTab() {
                               ? "text-amber-500"
                               : "text-zinc-400 hover:text-amber-500 dark:hover:text-amber-400",
                           )}
-                          title={config?.default_provider === keyEntry.provider ? "Default provider" : "Set as default provider"}
+                          title={config?.default_provider === keyEntry.provider ? t("harness.defaultProvider") : t("harness.setDefaultProvider")}
                         >
                           <Star className="h-3.5 w-3.5" />
                         </button>
-                        <span className="text-xs" style={{ color: "var(--color-accent)" }}>Active</span>
+                        <span className="text-xs" style={{ color: "var(--color-accent)" }}>{t("harness.active")}</span>
                         {isLocal ? (
                           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" title="Local provider — no API key needed">
-                            🏠 Local
+                            🏠 {t("harness.local")}
                           </span>
                         ) : (
-                          <span className="text-xs text-zinc-400">Key: {keyEntry.key_preview}</span>
+                          <span className="text-xs text-zinc-400">{t("harness.key")}: {keyEntry.key_preview}</span>
                         )}
                         <button
                           onClick={() => handleEdit(keyEntry.provider)}
                           className="rounded-md btn-solid px-2 py-0.5 text-xs"
                         >
-                          Edit
+                          {t("harness.edit")}
                         </button>
                         <button
                           onClick={() => handleRemove(keyEntry.provider)}
                           className="rounded-md btn-solid px-2 py-0.5 text-xs"
                         >
-                          Remove
+                          {t("harness.remove")}
                         </button>
                       </div>
                     </div>
@@ -617,7 +620,7 @@ function ProvidersTab() {
                       )}
                       {keyEntry.compact_model && (
                         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" title="Compact model for summarization">
-                          compact: {keyEntry.compact_model}
+                          {t("harness.compact")}: {keyEntry.compact_model}
                         </span>
                       )}
                     </div>
@@ -636,7 +639,7 @@ function ProvidersTab() {
         <div>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-medium text-zinc-500">
-              Available Providers {dynamicProvidersLoading && <span className="text-zinc-400">(refreshing...)</span>}
+              {t("harness.availableProviders")} {dynamicProvidersLoading && <span className="text-zinc-400">({t("harness.refreshing")})</span>}
             </h3>
             <div className="flex gap-1">
               <button
@@ -650,7 +653,7 @@ function ProvidersTab() {
                 className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:text-red-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-red-400 dark:hover:bg-zinc-800"
                 title="Clear cache and refresh"
               >
-                🗑 Clear Cache
+                🗑 {t("harness.clearCache")}
               </button>
               <button
                 onClick={() => fetchDynamicProviders(false)}
@@ -658,22 +661,22 @@ function ProvidersTab() {
                 className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
                 title="Refresh provider list"
               >
-                {dynamicProvidersLoading ? "Refreshing..." : "↻ Refresh"}
+                {dynamicProvidersLoading ? t("harness.refreshing2") : "↻ " + t("harness.refresh")}
               </button>
             </div>
           </div>
 
           {/* Show loading indicator when no data and still loading */}
           {dynamicProvidersLoading && dynamicProviders.length === 0 ? (
-            <div className="py-3 text-center text-xs text-zinc-400">Loading providers...</div>
+            <div className="py-3 text-center text-xs text-zinc-400">{t("harness.loadingProviders")}</div>
           ) : dynamicProviders.length === 0 && !dynamicProvidersLoading ? (
-            <div className="py-3 text-center text-xs text-zinc-400">No providers available</div>
+            <div className="py-3 text-center text-xs text-zinc-400">{t("harness.noProvidersAvailable")}</div>
           ) : (
             <div className="space-y-3">
               {/* ── Local Providers (always visible) ── */}
               {localProviders.length > 0 && (
                 <div>
-                  <h4 className="mb-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">🏠 Local Providers</h4>
+                  <h4 className="mb-1.5 text-xs font-medium text-zinc-500 dark:text-zinc-400">🏠 {t("harness.localProviders")}</h4>
                   <div className="space-y-1">
                     {localProviders.map((item) => {
                       const providerId = item.id;
@@ -699,7 +702,7 @@ function ProvidersTab() {
                               }}
                               className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                             >
-                              Connect
+                              {t("harness.connect")}
                             </button>
                           </div>
                         </div>
@@ -717,7 +720,7 @@ function ProvidersTab() {
                     className="mb-1.5 flex w-full items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
                   >
                     <span className={cn("transition-transform", showRemoteProviders && "rotate-90")}>▶</span>
-                    ☁️ Remote Providers ({remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length} available)
+                    ☁️ {t("harness.remoteProviders")} ({remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length} {t("harness.available")})
                   </button>
                   {showRemoteProviders && (
                     <div className="space-y-1">
@@ -733,7 +736,7 @@ function ProvidersTab() {
                               <div className="min-w-0 flex-1">
                                 <span className="text-xs font-medium">{providerName}</span>
                                 {modelCount ? (
-                                  <span className="ml-2 text-xs text-zinc-400">{modelCount} models available</span>
+                                  <span className="ml-2 text-xs text-zinc-400">{t("harness.modelsAvailable", { count: modelCount })}</span>
                                 ) : null}
                               </div>
                               <button
@@ -749,7 +752,7 @@ function ProvidersTab() {
                                 }}
                                 className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
                               >
-                                Add Key
+                                {t("harness.addKey")}
                               </button>
                             </div>
                           </div>
@@ -769,14 +772,14 @@ function ProvidersTab() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
             <h3 className="mb-3 text-sm font-semibold">
-              {newProviderIsLocal ? "Connect Local Provider: " : "Add API Key: "}
+              {newProviderIsLocal ? t("harness.connectLocalProvider") + " " : t("harness.addApiKey") + " "}
               {dynamicProviders.find((p) => p.id === newProvider)?.name || newProvider}
             </h3>
 
             <div className="space-y-2">
               {/* Provider display (read-only) */}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Provider</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harness.provider")}</label>
                 <div className="w-full rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200">
                   {dynamicProviders.find((p) => p.id === newProvider)?.name || newProvider}
                 </div>
@@ -784,7 +787,7 @@ function ProvidersTab() {
 
               {needsApiKey(newProvider) && (
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">API Key</label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harness.apiKey")}</label>
                   <input
                     type="password"
                     value={newKey}
@@ -798,7 +801,7 @@ function ProvidersTab() {
               {(() => {
                 return (
                   <div>
-                    <label className="mb-1 block text-xs text-zinc-500">Base URL</label>
+                    <label className="mb-1 block text-xs text-zinc-500">{t("harness.baseUrl")}</label>
                     <input
                       type="text"
                       value={newBaseUrl}
@@ -813,7 +816,7 @@ function ProvidersTab() {
               {/* Model selection (multi-select) */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">
-                  Default Model {newModels.length > 0 && <span className="text-accent-green">({newModels.length} selected)</span>}
+                  {t("harness.defaultModel")} {newModels.length > 0 && <span className="text-accent-green">({newModels.length} {t("harness.selected")})</span>}
                 </label>
 
                 {/* Capability filters */}
@@ -831,7 +834,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🔧 Tool Calling
+                    🔧 {t("harness.toolCalling")}
                   </button>
                   <button
                     onClick={() => setModelCapabilityFilter(
@@ -846,7 +849,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🧠 Reasoning
+                    🧠 {t("harness.reasoning")}
                   </button>
                   <button
                     onClick={() => setModelCapabilityFilter(
@@ -861,7 +864,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🖼️ Image
+                    🖼️ {t("harness.image")}
                   </button>
                 </div>
 
@@ -881,12 +884,12 @@ function ProvidersTab() {
                   type="text"
                   value={modelSearchTerm}
                   onChange={(e) => setModelSearchTerm(e.target.value)}
-                  placeholder="Search models..."
+                  placeholder={t("harness.searchModels")}
                   className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {modelsLoading ? (
-                    <div className="px-3 py-2 text-xs text-zinc-400">Loading models...</div>
+                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.loadingModels")}</div>
                   ) : (
                     availableModels
                       .filter((m) => {
@@ -921,28 +924,28 @@ function ProvidersTab() {
                             <span className="truncate">{m.name || m.id}</span>
                             <div className="flex gap-2 text-xs text-zinc-400">
                               {m.context_window && (
-                                <span>{(m.context_window / 1000).toFixed(0)}K context</span>
+                                <span>{(m.context_window / 1000).toFixed(0)}K {t("harness.context")}</span>
                               )}
                               {m.max_tokens && (
-                                <span>{(m.max_tokens / 1000).toFixed(1)}K max output</span>
+                                <span>{(m.max_tokens / 1000).toFixed(1)}K {t("harness.maxOutput")}</span>
                               )}
-                              {m.reasoning && <span>🧠 reasoning</span>}
-                              {m.tool_call && <span>🔧 tools</span>}
-                              {m.input_modalities?.includes('image') && <span>🖼️ image</span>}
+                              {m.reasoning && <span>🧠 {t("harness.reasoning")}</span>}
+                              {m.tool_call && <span>🔧 {t("harness.tools")}</span>}
+                              {m.input_modalities?.includes('image') && <span>🖼️ {t("harness.image")}</span>}
                             </div>
                           </div>
                         </label>
                       ))
                   )}
                   {!modelsLoading && availableModels.length === 0 && (
-                    <div className="px-3 py-2 text-xs text-zinc-400">No models found. Select provider first.</div>
+                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.noModelsFound")}</div>
                   )}
                 </div>
                 {/* Manual model input */}
                 <div className="mt-2 flex gap-1">
                   <input
                     type="text"
-                    placeholder="Or type a custom model name..."
+                    placeholder={t("harness.customModelPlaceholder")}
                     className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
@@ -974,13 +977,13 @@ function ProvidersTab() {
                 return (
                   <div>
                     <label className="mb-1 block text-xs text-zinc-500">
-                      Model Capabilities
-                      {hasModelsDevData && <span className="ml-1 text-xs text-zinc-400">(from models.dev)</span>}
-                      {!hasModelsDevData && <span className="ml-1 text-xs text-amber-500">(manual input required)</span>}
+                      {t("harness.modelCapabilities")}
+                      {hasModelsDevData && <span className="ml-1 text-xs text-zinc-400">({t("harness.fromModelsDev")})</span>}
+                      {!hasModelsDevData && <span className="ml-1 text-xs text-amber-500">({t("harness.manualInputRequired")})</span>}
                     </label>
                     <div className="flex gap-2">
                       <div className="flex-1">
-                        <label className="mb-0.5 block text-xs text-zinc-400">Context Window</label>
+                        <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.contextWindow")}</label>
                         <input
                           type="number"
                           value={displayContextWindow}
@@ -996,7 +999,7 @@ function ProvidersTab() {
                         />
                       </div>
                       <div className="flex-1">
-                        <label className="mb-0.5 block text-xs text-zinc-400">Max Output Tokens</label>
+                        <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.maxOutputTokens")}</label>
                         <input
                           type="number"
                           value={displayMaxOutputTokens}
@@ -1021,7 +1024,7 @@ function ProvidersTab() {
                           disabled={hasModelsDevData}
                           className="accent-[var(--color-accent)]"
                         />
-                        Supports Tool Calling
+                        {t("harness.supportsToolCalling")}
                       </label>
                     </div>
                   </div>
@@ -1032,14 +1035,14 @@ function ProvidersTab() {
               {newModels.length > 0 && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">
-                    Compact Model (Summarization)
+                    {t("harness.compactModel")}
                   </label>
                   <select
                     value={newCompactModel}
                     onChange={(e) => setNewCompactModel(e.target.value)}
                     className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   >
-                    <option value="">Use current model (default)</option>
+                    <option value="">{t("harness.useCurrentModel")}</option>
                     {newModels.map((m) => (
                       <option key={m} value={m}>{m}</option>
                     ))}
@@ -1074,7 +1077,7 @@ function ProvidersTab() {
                   </div>
                 )}
                 {testing && (
-                  <div className="text-xs text-zinc-400">Testing...</div>
+                  <div className="text-xs text-zinc-400">{t("harness.testing")}</div>
                 )}
               </div>
 
@@ -1084,14 +1087,14 @@ function ProvidersTab() {
                   onClick={() => { setShowAddDialog(false); setNewModels([]); setTestResult(null); }}
                   className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
                 <button
                   onClick={handleAdd}
                   disabled={(needsApiKey(newProvider) ? !newKey.trim() : false) || testing}
                   className="rounded-md bg-zinc-200 px-3 py-1.5 text-xs font-medium text-zinc-800 hover:bg-zinc-300 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
                 >
-                  {testing ? "Saving..." : "Save"}
+                  {testing ? t("harness.saving") : t("harness.save")}
                 </button>
               </div>
             </div>
@@ -1103,17 +1106,17 @@ function ProvidersTab() {
       {showEditDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-            <h3 className="mb-3 text-sm font-semibold">Edit: {showEditDialog}</h3>
+            <h3 className="mb-3 text-sm font-semibold">{t("harness.editProvider")} {showEditDialog}</h3>
 
             <div className="space-y-2">
               {!isLocalProvider(showEditDialog) && (
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">API Key</label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harness.apiKey")}</label>
                   <input
                     type="password"
                     value={editKey}
                     onChange={(e) => setEditKey(e.target.value)}
-                    placeholder="Enter new API key..."
+                    placeholder={t("harness.enterNewApiKey")}
                     className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                 </div>
@@ -1121,7 +1124,7 @@ function ProvidersTab() {
 
               {(
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">Base URL</label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harness.baseUrl")}</label>
                   <input
                     type="text"
                     value={editBaseUrl}
@@ -1135,7 +1138,7 @@ function ProvidersTab() {
               {/* Model selection */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">
-                  Default Model {editModels.length > 0 && <span className="text-accent-green">({editModels.length} selected)</span>}
+                  {t("harness.defaultModel")} {editModels.length > 0 && <span className="text-accent-green">({editModels.length} {t("harness.selected")})</span>}
                 </label>
 
                 {/* Capability filters */}
@@ -1153,7 +1156,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🔧 Tool Calling
+                    🔧 {t("harness.toolCalling")}
                   </button>
                   <button
                     onClick={() => setEditModelCapabilityFilter(
@@ -1168,7 +1171,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🧠 Reasoning
+                    🧠 {t("harness.reasoning")}
                   </button>
                   <button
                     onClick={() => setEditModelCapabilityFilter(
@@ -1183,7 +1186,7 @@ function ProvidersTab() {
                         : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
                     )}
                   >
-                    🖼️ Image
+                    🖼️ {t("harness.image")}
                   </button>
                 </div>
 
@@ -1201,12 +1204,12 @@ function ProvidersTab() {
                   type="text"
                   value={editModelSearchTerm}
                   onChange={(e) => setEditModelSearchTerm(e.target.value)}
-                  placeholder="Search models..."
+                  placeholder={t("harness.searchModels")}
                   className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {editModelsLoading ? (
-                    <div className="px-3 py-2 text-xs text-zinc-400">Loading models...</div>
+                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.loadingModels")}</div>
                   ) : (
                     editAvailableModels
                       .filter((m) => {
@@ -1241,14 +1244,14 @@ function ProvidersTab() {
                             <span className="truncate">{m.name || m.id}</span>
                             <div className="flex gap-2 text-xs text-zinc-400">
                               {m.context_window && (
-                                <span>{(m.context_window / 1000).toFixed(0)}K context</span>
+                                <span>{(m.context_window / 1000).toFixed(0)}K {t("harness.context")}</span>
                               )}
                               {m.max_tokens && (
-                                <span>{(m.max_tokens / 1000).toFixed(1)}K max output</span>
+                                <span>{(m.max_tokens / 1000).toFixed(1)}K {t("harness.maxOutput")}</span>
                               )}
-                              {m.reasoning && <span>🧠 reasoning</span>}
-                              {m.tool_call && <span>🔧 tools</span>}
-                              {m.input_modalities?.includes('image') && <span>🖼️ image</span>}
+                              {m.reasoning && <span>🧠 {t("harness.reasoning")}</span>}
+                              {m.tool_call && <span>🔧 {t("harness.tools")}</span>}
+                              {m.input_modalities?.includes('image') && <span>🖼️ {t("harness.image")}</span>}
                             </div>
                           </div>
                         </label>
@@ -1258,7 +1261,7 @@ function ProvidersTab() {
                 <div className="mt-2 flex gap-1">
                   <input
                     type="text"
-                    placeholder="Or type a custom model name..."
+                    placeholder={t("harness.customModelPlaceholder")}
                     className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
@@ -1287,13 +1290,13 @@ function ProvidersTab() {
                 return (
                   <div>
                     <label className="mb-1 block text-xs text-zinc-500">
-                      Model Capabilities
-                      {hasModelsDevData && <span className="ml-1 text-xs text-zinc-400">(from models.dev)</span>}
-                      {!hasModelsDevData && <span className="ml-1 text-xs text-amber-500">(manual input required)</span>}
+                      {t("harness.modelCapabilities")}
+                      {hasModelsDevData && <span className="ml-1 text-xs text-zinc-400">({t("harness.fromModelsDev")})</span>}
+                      {!hasModelsDevData && <span className="ml-1 text-xs text-amber-500">({t("harness.manualInputRequired")})</span>}
                     </label>
                     <div className="flex gap-2">
                       <div className="flex-1">
-                        <label className="mb-0.5 block text-xs text-zinc-400">Context Window</label>
+                        <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.contextWindow")}</label>
                         <input
                           type="number"
                           value={displayContextWindow}
@@ -1309,7 +1312,7 @@ function ProvidersTab() {
                         />
                       </div>
                       <div className="flex-1">
-                        <label className="mb-0.5 block text-xs text-zinc-400">Max Output Tokens</label>
+                        <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.maxOutputTokens")}</label>
                         <input
                           type="number"
                           value={displayMaxOutputTokens}
@@ -1334,7 +1337,7 @@ function ProvidersTab() {
                           disabled={hasModelsDevData}
                           className="accent-[var(--color-accent)]"
                         />
-                        Supports Tool Calling
+                        {t("harness.supportsToolCalling")}
                       </label>
                     </div>
                   </div>
@@ -1345,14 +1348,14 @@ function ProvidersTab() {
               {editModels.length > 0 && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">
-                    Compact Model (Summarization)
+                    {t("harness.compactModel")}
                   </label>
                   <select
                     value={editCompactModel}
                     onChange={(e) => setEditCompactModel(e.target.value)}
                     className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   >
-                    <option value="">Use current model (default)</option>
+                    <option value="">{t("harness.useCurrentModel")}</option>
                     {editModels.map((m) => (
                       <option key={m} value={m}>{m}</option>
                     ))}
@@ -1367,13 +1370,13 @@ function ProvidersTab() {
                 onClick={() => setShowEditDialog(null)}
                 className="w-20 rounded-md px-3 py-1.5 text-xs font-medium text-center text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleEditSave}
                 className="w-20 rounded-md bg-zinc-200 px-3 py-1.5 text-xs font-medium text-center text-zinc-800 hover:bg-zinc-300 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
               >
-                Save
+                {t("harness.save")}
               </button>
             </div>
           </div>
@@ -1385,6 +1388,7 @@ function ProvidersTab() {
 
 /** MCP tab — placeholder, content TBD */
 function McpTab() {
+  const { t } = useTranslation();
   const { catalog, loading, error, loadCatalog, addServer, removeServer } = useMcpStore();
   const [showAddForm, setShowAddForm] = useState(false);
 
@@ -1459,12 +1463,12 @@ function McpTab() {
       {/* Catalog servers */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <div className="flex items-center justify-between">
-          <h2 className="text-xs font-medium">MCP Server Catalog</h2>
+          <h2 className="text-xs font-medium">{t("harnessMcp.mcpServerCatalog")}</h2>
           <button
             onClick={() => setShowAddForm(true)}
             className="rounded-md bg-zinc-800 px-3 py-1 text-xs font-medium text-white hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600"
           >
-            Add Server
+            {t("harnessMcp.addServer")}
           </button>
         </div>
 
@@ -1473,12 +1477,12 @@ function McpTab() {
         )}
 
         {loading && catalog.length === 0 && (
-          <p className="mt-3 text-xs text-zinc-400">Loading catalog...</p>
+          <p className="mt-3 text-xs text-zinc-400">{t("harnessMcp.loadingCatalog")}</p>
         )}
 
         {!loading && catalog.length === 0 && (
           <p className="mt-3 text-xs text-zinc-400">
-            No MCP servers configured yet.
+            {t("harnessMcp.noMcpServers")}
           </p>
         )}
 
@@ -1496,7 +1500,7 @@ function McpTab() {
                   </span>
                   <span className="text-xs font-medium">{server.name}</span>
                   {server.has_secrets && (
-                    <span className="text-[10px] text-amber-500">has API key</span>
+                    <span className="text-[10px] text-amber-500">{t("harnessMcp.hasApiKey")}</span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -1507,7 +1511,7 @@ function McpTab() {
                     onClick={() => removeServer(server.name)}
                     className="text-xs text-zinc-400 hover:text-red-500"
                   >
-                    Remove
+                    {t("harnessMcp.remove")}
                   </button>
                 </div>
               </div>
@@ -1518,7 +1522,7 @@ function McpTab() {
 
       {/* Presets gallery — always visible */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="text-xs font-medium mb-3">Recommended MCP Servers</h2>
+        <h2 className="text-xs font-medium mb-3">{t("harnessMcp.recommendedMcpServers")}</h2>
         <div className="grid grid-cols-2 gap-2">
           {MCP_PRESETS.map((preset) => {
             const isInstalled = catalogNames.has(preset.id);
@@ -1535,13 +1539,13 @@ function McpTab() {
                     </span>
                   </div>
                   {isInstalled ? (
-                    <span className="text-[10px] text-green-500">Installed</span>
+                    <span className="text-[10px] text-green-500">{t("harnessMcp.installed")}</span>
                   ) : (
                     <button
                       onClick={() => handleAddFromPreset(preset)}
                       className="rounded-md bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-white hover:bg-zinc-700 dark:bg-zinc-700 dark:hover:bg-zinc-600"
                     >
-                      Add
+                      {t("harnessMcp.add")}
                     </button>
                   )}
                 </div>
@@ -1550,7 +1554,7 @@ function McpTab() {
                 </p>
                 {preset.requiredEnv.length > 0 && !isInstalled && (
                   <p className="mt-1 text-[10px] text-amber-500">
-                    Requires: {preset.requiredEnv.join(", ")}
+                    {t("harnessMcp.requires")}{preset.requiredEnv.join(", ")}
                   </p>
                 )}
               </div>
@@ -1563,10 +1567,10 @@ function McpTab() {
       {showAddForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
           <div className="w-[440px] max-h-[85vh] overflow-y-auto rounded-lg bg-white p-6 shadow-xl dark:bg-zinc-800">
-            <h3 className="mb-3 text-sm font-semibold">Add Custom MCP Server</h3>
+            <h3 className="mb-3 text-sm font-semibold">{t("harnessMcp.addCustomMcpServer")}</h3>
             <div className="space-y-2">
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Name</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.name")}</label>
                 <input
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -1575,7 +1579,7 @@ function McpTab() {
                 />
               </div>
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Transport</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.transport")}</label>
                 <select
                   value={newTransport}
                   onChange={(e) => setNewTransport(e.target.value as McpTransportDef)}
@@ -1589,7 +1593,7 @@ function McpTab() {
               {newTransport === "stdio" ? (
                 <>
                   <div>
-                    <label className="mb-1 block text-xs text-zinc-500">Command</label>
+                    <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.command")}</label>
                     <input
                       value={newCommand}
                       onChange={(e) => setNewCommand(e.target.value)}
@@ -1598,7 +1602,7 @@ function McpTab() {
                     />
                   </div>
                   <div>
-                    <label className="mb-1 block text-xs text-zinc-500">Arguments (space-separated)</label>
+                    <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.arguments")}</label>
                     <input
                       value={newArgs}
                       onChange={(e) => setNewArgs(e.target.value)}
@@ -1609,7 +1613,7 @@ function McpTab() {
                 </>
               ) : (
                 <div>
-                  <label className="mb-1 block text-xs text-zinc-500">URL</label>
+                  <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.url")}</label>
                   <input
                     value={newUrl}
                     onChange={(e) => setNewUrl(e.target.value)}
@@ -1619,7 +1623,7 @@ function McpTab() {
                 </div>
               )}
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Environment (KEY=VALUE, comma-separated)</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("harnessMcp.environment")}</label>
                 <input
                   value={newEnv}
                   onChange={(e) => setNewEnv(e.target.value)}
@@ -1633,14 +1637,14 @@ function McpTab() {
                 onClick={() => { setShowAddForm(false); }}
                 className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
               <button
                 onClick={handleAddManual}
                 disabled={!newName.trim()}
                 className="rounded-md bg-zinc-800 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
               >
-                Add Server
+                {t("harnessMcp.addServer")}
               </button>
             </div>
           </div>
@@ -1650,7 +1654,7 @@ function McpTab() {
       {/* Preset env form (for servers requiring API keys) */}
       {activePreset && (
         <div className="rounded-lg border border-amber-200 bg-white p-4 dark:border-amber-700 dark:bg-zinc-800">
-          <h2 className="text-xs font-medium mb-1">Configure {activePreset.name}</h2>
+          <h2 className="text-xs font-medium mb-1">{t("harnessMcp.configure")}{activePreset.name}</h2>
           <p className="text-[10px] text-zinc-400 mb-3">{activePreset.installHint}</p>
           <div className="space-y-2">
             {activePreset.requiredEnv.map((envKey) => (
@@ -1663,7 +1667,7 @@ function McpTab() {
                     setPresetEnvForm((prev) => ({ ...prev, [envKey]: e.target.value }))
                   }
                   className="w-full rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-700"
-                  placeholder={`Enter ${envKey}`}
+                  placeholder={`${t("harnessMcp.enter")}${envKey}`}
                 />
               </div>
             ))}
@@ -1672,13 +1676,13 @@ function McpTab() {
                 onClick={handlePresetEnvSubmit}
                 className="rounded px-3 py-1 text-xs bg-accent text-white hover:opacity-90"
               >
-                Add Server
+                {t("harnessMcp.addServer")}
               </button>
               <button
                 onClick={() => { setActivePreset(null); setPresetEnvForm({}); }}
                 className="rounded px-3 py-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:hover:bg-zinc-700"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           </div>

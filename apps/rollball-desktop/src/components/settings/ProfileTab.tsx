@@ -4,14 +4,8 @@ import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvata
 import { RadioGroup } from "../common/RadioGroup";
 import { fetchActiveUser, updateUser } from "../../lib/gateway-api";
 import type { BackendUserProfile } from "../../lib/types";
-
-const LANGUAGES = [
-  { value: "zh-CN", label: "中文 (简体)" },
-  { value: "zh-TW", label: "中文 (繁體)" },
-  { value: "en", label: "English" },
-  { value: "ja", label: "日本語" },
-  { value: "ko", label: "한국어" },
-];
+import { useTranslation } from "../../i18n/useTranslation";
+import i18n from "../../i18n";
 
 const TIMEZONES = [
   "Asia/Shanghai",
@@ -25,10 +19,19 @@ const TIMEZONES = [
 // ── Component ───────────────────────────────────────────────────────────
 
 export function ProfileTab() {
+  const { t } = useTranslation();
   const { profile, setProfile } = useUserProfileStore();
   const [nameValue, setNameValue] = useState(profile.displayName);
   const [iconOpen, setIconOpen] = useState(false);
   const iconRef = useRef<HTMLDivElement>(null);
+
+  const languages = [
+    { value: "zh-CN", label: t("language.zhCN") },
+    { value: "zh-TW", label: t("language.zhTW") },
+    { value: "en", label: t("language.en") },
+    { value: "ja", label: t("language.ja") },
+    { value: "ko", label: t("language.ko") },
+  ];
 
   // Close icon picker on outside click
   useEffect(() => {
@@ -63,6 +66,9 @@ export function ProfileTab() {
         setBackendUser(user);
         if (user) {
           setLanguage(user.language);
+          if (user.language) {
+            i18n.changeLanguage(user.language);
+          }
           setTimezone(user.timezone);
           setCity(user.city ?? "");
           setOccupation(user.occupation ?? "");
@@ -91,11 +97,11 @@ export function ProfileTab() {
     try {
       const updated = await updateUser(userId, { [field]: value });
       setBackendUser(updated);
-      setSavedMsg("Saved");
+      setSavedMsg("saved");
       setTimeout(() => setSavedMsg(null), 2000);
     } catch (err) {
       console.warn(`Failed to save ${field}:`, err);
-      setSavedMsg("Save failed");
+      setSavedMsg("failed");
     } finally {
       setSaving(false);
     }
@@ -119,7 +125,7 @@ export function ProfileTab() {
     <div className="max-w-lg space-y-4">
       {/* ── Avatar & Display Name ────────────────────────────────── */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Your Profile</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.profileTitle")}</h2>
 
         {/* Live avatar preview — click to open icon picker */}
         <div className="flex items-center gap-4">
@@ -127,7 +133,7 @@ export function ProfileTab() {
             <button
               onClick={() => setIconOpen(!iconOpen)}
               className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
-              title="Choose icon"
+              title={t("settings.chooseIcon")}
             >
               <UserAvatar size={64} />
             </button>
@@ -168,7 +174,7 @@ export function ProfileTab() {
         {/* Display name */}
         <div className="mt-3 space-y-1.5">
           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            Display Name
+            {t("settings.displayName")}
           </label>
           <input
             type="text"
@@ -181,7 +187,7 @@ export function ProfileTab() {
                 (e.target as HTMLInputElement).blur();
               }
             }}
-            placeholder="Your display name"
+            placeholder={t("settings.displayNamePlaceholder")}
             className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
           />
         </div>
@@ -190,27 +196,34 @@ export function ProfileTab() {
       {/* ── Backend Identity Fields ───────────────────────────────── */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <div className="flex items-center justify-between mb-3">
-          <h2 className="text-xs font-medium">Identity (shared with Agents)</h2>
+          <h2 className="text-xs font-medium">{t("settings.identityTitle")}</h2>
           {savedMsg && (
-            <span className={`text-[10px] ${savedMsg === "Saved" ? "text-[var(--color-accent)]" : "text-red-500"}`}>
-              {savedMsg}
+            <span className={`text-[10px] ${savedMsg === "saved" ? "text-[var(--color-accent)]" : "text-red-500"}`}>
+              {savedMsg === "saved" ? t("settings.saved") : t("settings.saveFailed")}
             </span>
           )}
-          {saving && <span className="text-[10px] text-zinc-400">Saving...</span>}
+          {saving && <span className="text-[10px] text-zinc-400">{t("settings.saving")}</span>}
         </div>
 
         {backendLoading ? (
-          <p className="text-xs text-zinc-400">Loading...</p>
+          <p className="text-xs text-zinc-400">{t("settings.loading")}</p>
         ) : backendUser ? (
           <div className="space-y-3">
             {/* Language */}
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Language</label>
+              <label className="mb-1 block text-xs text-zinc-500">{t("settings.language")}</label>
               <select
                 value={language}
                 onChange={(e) => {
-                  setLanguage(e.target.value);
-                  saveField(backendUser.user_id, "language", e.target.value);
+                  const lng = e.target.value;
+                  console.log("[ProfileTab] Switching language to:", lng);
+                  setLanguage(lng);
+                  i18n.changeLanguage(lng).then(() => {
+                    console.log("[ProfileTab] changeLanguage resolved, i18n.language =", i18n.language);
+                  });
+                  if (backendUser?.user_id) {
+                    saveField(backendUser.user_id, "language", lng);
+                  }
                 }}
                 className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
                 style={{
@@ -224,7 +237,7 @@ export function ProfileTab() {
                   MozAppearance: 'none',
                 }}
               >
-                {LANGUAGES.map((l) => (
+                {languages.map((l) => (
                   <option key={l.value} value={l.value}>{l.label}</option>
                 ))}
               </select>
@@ -232,7 +245,7 @@ export function ProfileTab() {
 
             {/* Timezone */}
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Timezone</label>
+              <label className="mb-1 block text-xs text-zinc-500">{t("settings.timezone")}</label>
               <select
                 value={timezone}
                 onChange={(e) => {
@@ -259,7 +272,7 @@ export function ProfileTab() {
 
             {/* City */}
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">City (optional)</label>
+              <label className="mb-1 block text-xs text-zinc-500">{t("settings.city")}</label>
               <input
                 type="text"
                 value={city}
@@ -271,14 +284,14 @@ export function ProfileTab() {
                     (e.target as HTMLInputElement).blur();
                   }
                 }}
-                placeholder="e.g. Shanghai"
+                placeholder={t("settings.cityPlaceholder")}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
               />
             </div>
 
             {/* Occupation */}
             <div>
-              <label className="mb-1 block text-xs text-zinc-500">Occupation (optional)</label>
+              <label className="mb-1 block text-xs text-zinc-500">{t("settings.occupation")}</label>
               <input
                 type="text"
                 value={occupation}
@@ -290,32 +303,32 @@ export function ProfileTab() {
                     (e.target as HTMLInputElement).blur();
                   }
                 }}
-                placeholder="e.g. Software Engineer"
+                placeholder={t("settings.occupationPlaceholder")}
                 className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
               />
             </div>
           </div>
         ) : (
           <p className="text-xs text-zinc-400">
-            No user profile found on Gateway. Complete the onboarding to create one, or ensure Gateway is running.
+            {t("settings.noProfile")}
           </p>
         )}
       </div>
 
       {/* ── Avatar Customization ───────────────────────────────────── */}
       <div className="rounded-lg border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
-        <h2 className="mb-3 text-xs font-medium">Avatar Customization</h2>
+        <h2 className="mb-3 text-xs font-medium">{t("settings.avatarCustomization")}</h2>
 
         <div className="space-y-1.5">
           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
-            Avatar Type
+            {t("settings.avatarType")}
           </label>
           <RadioGroup
             name="avatarType"
             value={profile.avatarType}
             options={[
-              { label: "Built-in Icon", value: "icon" as const },
-              { label: "Letter", value: "letter" as const },
+              { label: t("settings.avatarTypeIcon"), value: "icon" as const },
+              { label: t("settings.avatarTypeLetter"), value: "letter" as const },
             ]}
             onChange={(type) => setProfile({ avatarType: type })}
           />

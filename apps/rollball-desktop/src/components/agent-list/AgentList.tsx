@@ -8,6 +8,7 @@ import { CloneDialog } from "./CloneDialog";
 import { PublishWizard } from "./PublishWizard";
 import { CreateWizard } from "./CreateWizard";
 import { AgentAvatar } from "../common/AgentAvatar";
+import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
 import { Play, Square, Trash2, Info, Copy, Plus, Search, Package, Sparkles, Bug } from "lucide-react";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -21,6 +22,7 @@ interface AgentListProps {
 }
 
 export function AgentList({ width }: AgentListProps) {
+  const { t } = useTranslation();
   const { agents, selectedAgentId, loading, fetchAgents, selectAgent, startAgent, stopAgent, uninstallAgent, restartAgentInDebug } =
     useAgentStore();
   const sessionTitles = useSessionStore((s) => s.sessionTitles);
@@ -184,7 +186,7 @@ export function AgentList({ width }: AgentListProps) {
     setConfirmDialog({
       open: true,
       title: "Stop Agent",
-      message: `确定要停止 ${agent?.name ?? agentId} 吗？当前对话状态将保留。`,
+      message: t("agentList.stopConfirm", { agent: agent?.name ?? agentId }),
       confirmLabel: "Stop",
       destructive: true,
       onConfirm: async () => {
@@ -210,7 +212,7 @@ export function AgentList({ width }: AgentListProps) {
     setConfirmDialog({
       open: true,
       title: "Uninstall Agent",
-      message: `确定要卸载 ${agent?.name ?? agentId} 吗？此操作不可撤销。`,
+      message: t("agentList.uninstallConfirm", { agent: agent?.name ?? agentId }),
       confirmLabel: "Uninstall",
       destructive: true,
       onConfirm: async () => {
@@ -251,7 +253,7 @@ export function AgentList({ width }: AgentListProps) {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search agents..."
+              placeholder={t("agentList.searchPlaceholder")}
               className="w-full rounded-md bg-[#D8D9DC] py-1.5 pl-7 pr-2 text-xs text-zinc-800 placeholder-zinc-500 outline-none dark:bg-[#3D3D3F] dark:text-zinc-200 dark:placeholder-zinc-400"
             />
           </div>

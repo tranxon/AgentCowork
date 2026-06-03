@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useChatStore } from "../../stores/chatStore";
+import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
 
 /** Six-bar SVG icon showing context usage percentage.
@@ -39,6 +40,7 @@ function SixBarIcon({ usagePercent }: { usagePercent: number }) {
 }
 
 export function ContextUsageIcon() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const popoverRef = useRef<HTMLDivElement>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,7 +132,7 @@ export function ContextUsageIcon() {
           "rounded-lg p-1.5 transition-colors",
           "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200",
         )}
-        aria-label="上下文用量"
+        aria-label={t("contextUsage.ariaLabel")}
       >
         {isCompacting ? (
           <span className="h-4 w-4 flex items-center justify-center">
@@ -186,10 +188,10 @@ export function ContextUsageIcon() {
             )}
           >
             {isCompacting
-              ? "压缩中..."
+              ? t("contextUsage.compressing")
               : !isIdle
-                ? "Agent 运行中"
-                : "压缩上下文"}
+                ? t("contextUsage.agentRunning")
+                : t("contextUsage.compressContext")}
           </button>
         </div>
       )}

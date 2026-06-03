@@ -5,6 +5,7 @@ import { UserAvatar, BUILTIN_ICONS, BUILTIN_ICON_IDS } from "../common/UserAvata
 import { getGatewayUrl } from "../../lib/config";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { useMcpStore } from "../../stores/mcpStore";
+import { useTranslation } from "../../i18n/useTranslation";
 import type { SearchProviderListItem, AgentSearchProvider } from "../../lib/types";
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ interface SearchProvidersResponse {
 // ── Component ───────────────────────────────────────────────────────────
 
 export function AgentSetupTab() {
+  const { t } = useTranslation();
   const { agents, selectedAgentId } = useAgentStore();
   const { getProfile, setProfile, resetProfile } = useAgentProfileStore();
 
@@ -262,7 +264,7 @@ export function AgentSetupTab() {
   if (!selectedAgentId || !selectedAgent || !profile) {
     return (
       <div className="flex flex-1 items-center justify-center p-6">
-        <span className="text-xs text-zinc-400 dark:text-zinc-500">No agent selected</span>
+        <span className="text-xs text-zinc-400 dark:text-zinc-500">{t("agentSetup.noAgentSelected")}</span>
       </div>
     );
   }
@@ -277,7 +279,7 @@ export function AgentSetupTab() {
           <button
             onClick={() => setIconOpen(!iconOpen)}
             className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
-            title="Choose icon"
+            title={t("agentSetup.chooseIcon")}
           >
             <UserAvatar
               displayName={agentName}
@@ -326,7 +328,7 @@ export function AgentSetupTab() {
       {/* Agent Name */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Agent Name
+          {t("agentSetup.agentName")}
         </label>
         <input
           type="text"
@@ -342,7 +344,7 @@ export function AgentSetupTab() {
       {/* Max Output Tokens */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Max Output Tokens
+          {t("agentSetup.maxOutputTokens")}
         </label>
         <input
           type="number"
@@ -356,18 +358,18 @@ export function AgentSetupTab() {
               maxTokens: v === "" ? 0 : Math.max(0, parseInt(v, 10) || 0),
             });
           }}
-          placeholder={`${profile.globalMaxTokens ?? 32768} (gateway limit)`}
+          placeholder={`${profile.globalMaxTokens ?? 32768} ${t("agentSetup.gatewayLimit")}`}
           className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Leave empty to use runtime default
+          {t("agentSetup.leaveEmptyDefault")}
         </p>
       </div>
 
       {/* Max Iterations */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Max Iterations (per run)
+          {t("agentSetup.maxIterations")}
         </label>
         <input
           type="number"
@@ -380,18 +382,18 @@ export function AgentSetupTab() {
               maxIterations: v === "" ? 0 : Math.max(0, parseInt(v, 10) || 0),
             });
           }}
-          placeholder="50 (default)"
+          placeholder={t("agentSetup.defaultIterations")}
           className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Leave empty to use runtime default
+          {t("agentSetup.leaveEmptyDefault")}
         </p>
       </div>
 
       {/* Temperature */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Temperature: {profile.temperature ?? 0.7}
+          {t("agentSetup.temperature", { value: profile.temperature ?? 0.7 })}
         </label>
         <input
           type="range"
@@ -408,15 +410,15 @@ export function AgentSetupTab() {
           style={{ "--progress": `${((profile.temperature ?? 0.7) / 2) * 100}%` } as React.CSSProperties}
         />
         <div className="flex justify-between text-[9px] text-zinc-400 dark:text-zinc-500">
-          <span>0 (deterministic)</span>
-          <span>2 (creative)</span>
+          <span>{t("agentSetup.deterministic")}</span>
+          <span>{t("agentSetup.creative")}</span>
         </div>
       </div>
 
       {/* Shell Command Approval Threshold */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Shell Command Approval
+          {t("agentSetup.shellCommandApproval")}
         </label>
         <select
           value={profile.shellApprovalThreshold ?? "medium"}
@@ -434,20 +436,20 @@ export function AgentSetupTab() {
             backgroundSize: '1.5em 1.5em',
           }}
         >
-          <option value="medium">Medium (default) — e.g. curl, wget, python, node</option>
-          <option value="low">Low — e.g. ls, cat, echo, pwd, grep (most cautious)</option>
-          <option value="high">High — e.g. sudo, eval, source</option>
-          <option value="never">Never — auto-approve all shell commands</option>
+          <option value="medium">{t("agentSetup.approvalMedium")}</option>
+          <option value="low">{t("agentSetup.approvalLow")}</option>
+          <option value="high">{t("agentSetup.approvalHigh")}</option>
+          <option value="never">{t("agentSetup.approvalNever")}</option>
         </select>
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Controls which shell commands require user confirmation. Default: Medium.
+          {t("agentSetup.approvalDesc")}
         </p>
       </div>
 
       {/* Approval Timeout */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Approval Timeout (seconds)
+          {t("agentSetup.approvalTimeout")}
         </label>
         <input
           type="number"
@@ -465,19 +467,19 @@ export function AgentSetupTab() {
           className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Leave empty to use default (300s = 5 min). Tool approval will auto-deny after timeout.
+          {t("agentSetup.approvalTimeoutDesc")}
         </p>
       </div>
 
       {/* Tools Configuration */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Active Tools
+          {t("agentSetup.activeTools")}
         </label>
         {toolsLoading ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">Loading...</span>
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{t("agentSetup.loading")}</span>
         ) : availableTools.length === 0 ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">No tools available</span>
+          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{t("agentSetup.noToolsAvailable")}</span>
         ) : (
           <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-zinc-200 bg-white p-1.5 dark:border-zinc-700 dark:bg-zinc-800">
             {availableTools.map((tool) => {
@@ -515,19 +517,19 @@ export function AgentSetupTab() {
           </div>
         )}
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Uncheck all to disable all tools; empty = use manifest defaults
+          {t("agentSetup.uncheckAllHint")}
         </p>
       </div>
 
       {/* Web Search Providers */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          Web Search Providers
+          {t("agentSetup.webSearchProviders")}
         </label>
         {searchProviders.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-800">
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              No search API keys configured. Add keys in Harness &gt; Search tab first.
+              {t("agentSetup.noSearchKeys")}
             </span>
           </div>
         ) : (
@@ -564,12 +566,12 @@ export function AgentSetupTab() {
                       </span>
                       {isChecked && priority !== undefined && (
                         <span className="rounded bg-zinc-100 px-1 py-0.5 text-[9px] text-zinc-400 dark:bg-zinc-700">
-                          Prio: {priority}
+                          {t("agentSetup.priority", { value: priority })}
                         </span>
                       )}
                       {!hasKey && (
                         <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
-                          No key
+                          {t("agentSetup.noKey")}
                         </span>
                       )}
                     </div>
@@ -582,7 +584,7 @@ export function AgentSetupTab() {
                       onClick={() => moveSearchProviderUp(sp.id)}
                       disabled={searchSaving}
                       className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-                      title="Move up (higher priority)"
+                      title={t("agentSetup.moveUp")}
                     >
                       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="m18 15-6-6-6 6" />
@@ -595,19 +597,19 @@ export function AgentSetupTab() {
           </div>
         )}
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Select and prioritize search providers for this agent. Higher priority = tried first.
+          {t("agentSetup.searchProvidersDesc")}
         </p>
       </div>
 
       {/* MCP Server Activation */}
       <div className="mb-3 space-y-1">
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          MCP Servers
+          {t("agentSetup.mcpServers")}
         </label>
         {catalog.length === 0 ? (
           <div className="rounded-lg border border-zinc-200 bg-white p-2 dark:border-zinc-700 dark:bg-zinc-800">
             <span className="text-[10px] text-zinc-400 dark:text-zinc-500">
-              No MCP servers in catalog. Add servers in Harness &gt; MCP tab.
+              {t("agentSetup.noMcpInCatalog")}
             </span>
           </div>
         ) : (
@@ -645,7 +647,7 @@ export function AgentSetupTab() {
           </div>
         )}
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          Toggle MCP servers for this agent. Add more in Harness &gt; MCP tab.
+          {t("agentSetup.mcpToggleDesc")}
         </p>
       </div>
 
@@ -656,21 +658,21 @@ export function AgentSetupTab() {
           disabled={configSaving}
           className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
         >
-          {configSaving ? "Applying..." : "Apply to Runtime"}
+          {configSaving ? t("agentSetup.applying") : t("agentSetup.applyToRuntime")}
         </button>
         <button
           onClick={() => setShowResetConfirm(true)}
           className="flex-1 rounded-lg btn-solid px-3 py-1.5 text-xs font-medium"
         >
-          Reset to defaults
+          {t("agentSetup.resetToDefaults")}
         </button>
       </div>
 
       <ConfirmDialog
         open={showResetConfirm}
-        title="Reset Agent Setup"
-        message="确定要重置 Agent 设置为默认值吗？包括名称、描述、提示词角色、头像图标、Shell 审批阈值和工具配置。"
-        confirmLabel="Reset"
+        title={t("agentSetup.resetAgentSetup")}
+        message={t("agentSetup.resetConfirm")}
+        confirmLabel={t("agentSetup.reset")}
         destructive
         onConfirm={() => {
           resetProfile(selectedAgentId);

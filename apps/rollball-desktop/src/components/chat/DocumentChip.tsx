@@ -1,5 +1,6 @@
 import { FileText, FileSpreadsheet, Table, X, Loader, Check, AlertCircle } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useTranslation } from "../../i18n/useTranslation";
 
 /** Status of a document upload/persistence */
 export type DocumentChipStatus = "uploading" | "success" | "error";
@@ -53,6 +54,7 @@ export function DocumentChip({
   onRemove,
   className,
 }: DocumentChipProps) {
+  const { t } = useTranslation();
   const borderClass = status === "uploading"
     ? "border-blue-400 dark:border-blue-500 animate-pulse"
     : status === "error"
@@ -90,7 +92,7 @@ export function DocumentChip({
         <>
           <AlertCircle className="h-3 w-3 shrink-0 text-red-500" />
           <span className="text-red-500 dark:text-red-400">
-            {errorMessage || "上传失败"}
+            {errorMessage || t("documentChip.uploadFailed")}
           </span>
         </>
       )}
@@ -104,7 +106,7 @@ export function DocumentChip({
             e.stopPropagation();
             onRemove();
           }}
-          aria-label={`Remove ${filename}`}
+          aria-label={t("documentChip.removeFile", { filename })}
         >
           <X className="h-3 w-3" />
         </button>

@@ -3,6 +3,7 @@ import { useAgentStore } from "../../stores/agentStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useChatStore } from "../../stores/chatStore";
+import { useTranslation } from "../../i18n/useTranslation";
 import type { WorkspaceDir } from "../../stores/workspaceStore";
 import { useToast } from "../common/ToastProvider";
 import { ChevronDown, FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } from "lucide-react";
@@ -10,6 +11,7 @@ import * as dialog from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
 
 export function WorkspaceSelector() {
+  const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
   const { gatewayUrl } = useSettingsStore();
   const { addToast } = useToast();
@@ -243,7 +245,7 @@ export function WorkspaceSelector() {
                                 className="rounded px-2 py-0.5 text-xs text-white disabled:opacity-50 disabled:cursor-not-allowed"
                                 style={{ backgroundColor: "var(--color-accent)" }}
                               >
-                                删除
+                                {t("workspace.delete")}
                               </button>
                               <button
                                 onClick={(e) => {
@@ -252,7 +254,7 @@ export function WorkspaceSelector() {
                                 }}
                                 className="rounded bg-zinc-200 px-2 py-0.5 text-xs text-zinc-600 hover:bg-zinc-300 dark:bg-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-500"
                               >
-                                取消
+                                {t("workspace.cancel")}
                               </button>
                             </div>
                           ) : (

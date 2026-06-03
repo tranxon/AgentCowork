@@ -3,14 +3,15 @@ import { useSessionStore } from "../../stores/sessionStore";
 import { useChatStore } from "../../stores/chatStore";
 import { MessageSquarePlus, Clock, MessageCircle, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface SessionPanelProps {
   agentId: string;
   onOpenMemory?: () => void;
 }
 
-/** Format a date string to relative time in Chinese */
-function formatRelativeTime(dateStr: string): string {
+/** Format a date string to relative time */
+function formatRelativeTime(dateStr: string, t: (key: string, options?: Record<string, unknown>) => string): string {
   const date = new Date(dateStr);
   const now = new Date();
   const diffMs = now.getTime() - date.getTime();
@@ -19,14 +20,15 @@ function formatRelativeTime(dateStr: string): string {
   const diffHour = Math.floor(diffMin / 60);
   const diffDay = Math.floor(diffHour / 24);
 
-  if (diffSec < 60) return "刚刚";
-  if (diffMin < 60) return `${diffMin} 分钟前`;
-  if (diffHour < 24) return `${diffHour} 小时前`;
-  if (diffDay < 30) return `${diffDay} 天前`;
+  if (diffSec < 60) return t("time.justNow");
+  if (diffMin < 60) return t("time.minutesAgo", { count: diffMin });
+  if (diffHour < 24) return t("time.hoursAgo", { count: diffHour });
+  if (diffDay < 30) return t("time.daysAgo", { count: diffDay });
   return date.toLocaleDateString("zh-CN", { month: "short", day: "numeric" });
 }
 
 export function SessionPanel({ agentId }: SessionPanelProps) {
+  const { t } = useTranslation();
   const {
     sessions,
     currentSessionId,
@@ -111,13 +113,13 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
             {isLoading && sessions.length === 0 && (
               <div className="flex items-center justify-center gap-2 px-3 py-6 text-xs text-zinc-400 dark:text-zinc-500">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Loading sessions...
+                {t("sessionPanel.loadingSessions")}
               </div>
             )}
 
             {!isLoading && sessions.length === 0 && (
               <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-                No sessions yet
+                {t("sessionPanel.noSessions")}
               </div>
             )}
 
@@ -151,16 +153,16 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
                         <MessageCircle className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
                       )}
                       <span className={cn("min-w-0 flex-1 truncate text-xs", isActive && "font-semibold text-[var(--color-accent)]", !isActive && "text-zinc-700 dark:text-zinc-300")}>
-                        {session.title || "Untitled session"}
+                        {session.title || t("sessionPanel.untitledSession")}
                       </span>
                     </div>
                     <div className="ml-5.5 flex items-center gap-2 text-[10px] text-zinc-400 dark:text-zinc-500">
                       <span className="flex items-center gap-1">
                         <Clock className="h-3 w-3" />
-                        {formatRelativeTime(session.created_at)}
+                        {formatRelativeTime(session.created_at, t)}
                       </span>
                       <span>·</span>
-                      <span>{session.message_count} messages</span>
+                      <span>{t("sessionPanel.messages", { count: session.message_count })}</span>
                     </div>
                   </button>
 
@@ -175,7 +177,7 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
                         disabled={deletingId !== null}
                         className="rounded-md btn-accent px-2 py-0.5 text-xs disabled:opacity-50 disabled:cursor-not-allowed"
                       >
-                        删除
+                        {t("common.delete")}
                       </button>
                       <button
                         onClick={(e) => {
@@ -184,7 +186,7 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
                         }}
                         className="rounded-md btn-solid px-2 py-0.5 text-xs"
                       >
-                        取消
+                        {t("common.cancel")}
                       </button>
                     </div>
                   ) : (
@@ -195,7 +197,7 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
                       }}
                       disabled={deletingId !== null}
                       className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title="Delete session"
+                      title={t("sessionPanel.deleteSession")}
                     >
                       <Trash2 className="h-3 w-3" />
                     </button>
@@ -215,7 +217,7 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
               className="mx-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-2 text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
             >
               <MessageSquarePlus className="h-3.5 w-3.5" />
-              New Conversation
+              {t("sessionPanel.newConversation")}
             </button>
           </div>
         </div>
