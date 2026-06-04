@@ -6,7 +6,7 @@ import type { AgentListResponse, GatewayConfig, GatewayMode } from "../../lib/ty
 import { cn } from "../../lib/utils";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { RadioGroup } from "../common/RadioGroup";
-import { DEFAULT_GATEWAY_URL, getGatewayUrl } from "../../lib/config";
+import { DEFAULT_GATEWAY_URL, getGatewayUrl, DEFAULT_THEME, DEFAULT_FONT_SIZE, DEFAULT_CONTENT_WIDTH, DEFAULT_OPACITY, DEFAULT_ACCENT_COLOR } from "../../lib/config";
 import { Bug, Monitor } from "lucide-react";
 import { inputReadonly, inputBase } from "../../lib/ui-styles";
 import { ProfileTab } from "./ProfileTab";
@@ -498,7 +498,7 @@ function AppearanceTab() {
           confirmLabel={t("settings.reset")}
           destructive
           onConfirm={() => {
-            setTheme("system"); setFontSize(0.875); setContentWidth(90); setOpacity(1.0); setAccentColor("#3b82f6");
+            setTheme(DEFAULT_THEME); setFontSize(DEFAULT_FONT_SIZE); setContentWidth(DEFAULT_CONTENT_WIDTH); setOpacity(DEFAULT_OPACITY); setAccentColor(DEFAULT_ACCENT_COLOR);
             setShowResetConfirm(false);
           }}
           onCancel={() => setShowResetConfirm(false)}

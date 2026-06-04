@@ -1,6 +1,17 @@
 import { create } from "zustand";
 import type { Theme, GatewayMode } from "../lib/types";
-import { DEFAULT_GATEWAY_URL } from "../lib/config";
+import {
+  DEFAULT_GATEWAY_URL,
+  DEFAULT_THEME,
+  DEFAULT_FONT_SIZE,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_CONTENT_WIDTH,
+  DEFAULT_OPACITY,
+  DEFAULT_ACCENT_COLOR,
+  DEFAULT_GATEWAY_MODE,
+  DEFAULT_LOG_FILE_SIZE_MB,
+  DEFAULT_LOG_FILE_COUNT,
+} from "../lib/config";
 
 const STORAGE_KEY_THEME = "rollball-theme";
 const STORAGE_KEY_FONT_SIZE = "rollball-font-size";
@@ -12,8 +23,6 @@ const STORAGE_KEY_GATEWAY_URL = "rollball-gateway-url";
 const STORAGE_KEY_GATEWAY_MODE = "rollball-gateway-mode";
 const STORAGE_KEY_LOG_FILE_SIZE = "rollball-log-file-size";
 const STORAGE_KEY_LOG_FILE_COUNT = "rollball-log-file-count";
-
-const DEFAULT_ACCENT_COLOR = "#3b82f6";
 
 /** Apply theme to DOM by toggling .dark class on <html> */
 function applyTheme(theme: Theme) {
@@ -57,7 +66,7 @@ function getPersistedTheme(): Theme {
   } catch {
     // localStorage unavailable (SSR / privacy mode)
   }
-  return "system";
+  return DEFAULT_THEME;
 }
 
 /** Read persisted font size from localStorage, fallback to 0.875 (M) */
@@ -69,7 +78,7 @@ function getPersistedFontSize(): number {
       if (!isNaN(val) && val > 0) return val;
     }
   } catch { }
-  return 0.875;
+  return DEFAULT_FONT_SIZE;
 }
 
 /** Read persisted log level from localStorage, fallback to "info" */
@@ -78,7 +87,7 @@ function getPersistedLogLevel(): string {
     const stored = localStorage.getItem(STORAGE_KEY_LOG_LEVEL);
     if (stored) return stored;
   } catch { }
-  return "info";
+  return DEFAULT_LOG_LEVEL;
 }
 
 /** Read persisted content width from localStorage, fallback to 90 */
@@ -90,7 +99,7 @@ function getPersistedContentWidth(): number {
       if (!isNaN(val) && val >= 40 && val <= 100) return val;
     }
   } catch { }
-  return 90;
+  return DEFAULT_CONTENT_WIDTH;
 }
 
 /** Read persisted accent color from localStorage, fallback to default blue */
@@ -117,7 +126,7 @@ function getPersistedGatewayMode(): GatewayMode {
     const stored = localStorage.getItem(STORAGE_KEY_GATEWAY_MODE);
     if (stored === "local" || stored === "remote") return stored;
   } catch { }
-  return "local";
+  return DEFAULT_GATEWAY_MODE;
 }
 
 /** Read persisted log file size from localStorage, fallback to 10 (MB) */
@@ -129,7 +138,7 @@ function getPersistedLogFileSizeMb(): number {
       if (!isNaN(val) && val >= 0) return val;
     }
   } catch { }
-  return 10;
+  return DEFAULT_LOG_FILE_SIZE_MB;
 }
 
 /** Read persisted log file count from localStorage, fallback to 20 */
@@ -141,7 +150,7 @@ function getPersistedLogFileCount(): number {
       if (!isNaN(val) && val >= 0) return val;
     }
   } catch { }
-  return 20;
+  return DEFAULT_LOG_FILE_COUNT;
 }
 
 /** Read persisted opacity from localStorage, fallback to 1.0 (opaque) */
@@ -153,7 +162,7 @@ function getPersistedOpacity(): number {
       if (!isNaN(val) && val >= 0.0 && val <= 1.0) return val;
     }
   } catch { }
-  return 1.0;
+  return DEFAULT_OPACITY;
 }
 
 interface SettingsStore {

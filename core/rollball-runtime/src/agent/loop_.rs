@@ -620,6 +620,12 @@ impl AgentLoop {
     fn trim_history_to_budget(&mut self, model_name: &str) {
         let budget = self.context_trim_budget(model_name);
 
+        // Sync HistoryManager::max_tokens to the actual model budget so
+        // trim_fifo uses the correct threshold. Without this, max_tokens
+        // remains at the static config default (128K) even after model
+        // switch, capabilities update, or max_output_tokens change.
+        self.session.history.set_max_tokens(budget);
+
         // Stage 1: FIFO trim oldest non-system messages until within budget
         self.session.history.trim_fifo();
 
@@ -1451,8 +1457,22 @@ impl AgentLoop {
                     "Context usage: local estimate vs API ground truth"
                 );
 
-                // Calibrate history token count from API ground truth
-                self.session.history.calibrate_from_usage(usage.prompt_tokens);
+                // Detect providers that return prompt_tokens=0 despite having
+                // non-trivial context (observed with MiniMax Anthropic-protocol
+                // API when message_start SSE event lacks usage fields).
+                // When this happens, skip calibration to avoid corrupting
+                // the internal token counter and use the local estimate
+                // for the context usage report instead.
+                let prompt_tokens_reliable = usage.prompt_tokens > 0;
+                if prompt_tokens_reliable {
+                    self.session.history.calibrate_from_usage(usage.prompt_tokens);
+                } else {
+                    tracing::warn!(
+                        local_estimate,
+                        "API returned prompt_tokens=0 despite non-trivial context; \
+                         skipping calibration and using local estimate"
+                    );
+                }
 
                 // Compute and emit context usage report — use exact model lookup
                 // to avoid capability confusion in multi-model scenarios.
@@ -1465,7 +1485,26 @@ impl AgentLoop {
                     "ContextUsage: checking preconditions"
                 );
                 if let Some(caps) = model_caps {
-                    let ctx_usage = crate::agent::context::compute_context_usage(caps, usage, self.core.max_output_tokens_limit);
+                    let ctx_usage = if prompt_tokens_reliable {
+                        crate::agent::context::compute_context_usage(caps, usage, self.core.max_output_tokens_limit)
+                    } else {
+                        // Fall back to local estimate when API usage is unreliable
+                        let usable = caps.effective_input_budget(self.core.max_output_tokens_limit);
+                        let percent = if usable > 0 {
+                            ((local_estimate as f64 / usable as f64) * 100.0).min(100.0) as u8
+                        } else {
+                            0
+                        };
+                        rollball_core::protocol::ContextUsageInfo {
+                            context_window: caps.context_window,
+                            input_tokens: local_estimate,
+                            output_tokens: usage.completion_tokens,
+                            total_tokens: local_estimate + usage.completion_tokens,
+                            max_input_tokens: caps.max_input_tokens,
+                            usable_context: usable,
+                            usage_percent: percent,
+                        }
+                    };
                     tracing::debug!(
                         context_window = ctx_usage.context_window,
                         total_tokens = ctx_usage.total_tokens,

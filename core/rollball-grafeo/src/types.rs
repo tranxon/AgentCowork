@@ -451,7 +451,7 @@ impl Episode {
             ("turn_index".to_string(), Value::from(i64::from(self.turn_index))),
             ("role".to_string(), Value::from(self.role.as_str())),
             ("content".to_string(), Value::from(self.content.as_str())),
-            ("timestamp".to_string(), Value::from(dt_to_timestamp(self.timestamp))),
+            ("created_at".to_string(), Value::from(dt_to_timestamp(self.timestamp))),
             ("consolidated".to_string(), Value::from(self.consolidated)),
             ("metadata".to_string(), metadata_to_value(&self.metadata)),
             ("importance".to_string(), Value::from(f64::from(self.importance))),
@@ -473,9 +473,9 @@ impl Episode {
             content: get_string(&map, "content")?.to_string(),
             embedding: value_to_embedding(map.get("embedding").copied()),
             timestamp: timestamp_to_dt(
-                map.get("timestamp")
+                map.get("created_at")
                     .and_then(|v| v.as_timestamp())
-                    .ok_or_else(|| GrafeoError::Memory("missing timestamp".to_string()))?,
+                    .ok_or_else(|| GrafeoError::Memory("missing created_at".to_string()))?,
             )?,
             consolidated: get_bool(&map, "consolidated")?,
             metadata: value_to_metadata(map.get("metadata").copied())?,
