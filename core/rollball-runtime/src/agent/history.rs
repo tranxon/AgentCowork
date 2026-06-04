@@ -69,6 +69,21 @@ impl HistoryManager {
         self.model_name = Some(model);
     }
 
+    /// Dynamically update the max token budget for FIFO trimming.
+    ///
+    /// This should be called whenever the model changes (session creation,
+    /// model switch), so that [`trim_fifo`] uses the correct
+    /// [`ModelCapabilitiesInfo::effective_input_budget`] instead of
+    /// the static config default.
+    pub fn set_max_tokens(&mut self, max_tokens: u64) {
+        tracing::info!(
+            old = self.max_tokens,
+            new = max_tokens,
+            "HistoryManager max_tokens updated"
+        );
+        self.max_tokens = max_tokens;
+    }
+
     /// Get the model name for token counting, falling back to empty string (Tier3).
     fn model_for_counting(&self) -> &str {
         self.model_name.as_deref().unwrap_or("")
@@ -100,9 +115,32 @@ impl HistoryManager {
     /// token count for the entire prompt (system + history). This method replaces
     /// our heuristic estimate with the ground truth value, preventing cumulative
     /// estimation drift across turns.
+    ///
+    /// **Safety guard**: when `prompt_tokens` is 0, the API response is
+    /// considered unreliable (observed with some Anthropic-protocol providers
+    /// like MiniMax that occasionally omit `message_start` usage fields).
+    /// In this case, the calibration is skipped entirely to prevent corrupting
+    /// the internal counter with a bogus zero value.
     pub fn calibrate_from_usage(&mut self, prompt_tokens: u64) {
+        if prompt_tokens == 0 {
+            tracing::warn!(
+                current_tokens = self.current_tokens,
+                "Skipping calibration: API returned prompt_tokens=0 (unreliable usage data)"
+            );
+            return;
+        }
         let old = self.current_tokens;
         self.current_tokens = prompt_tokens;
+
+        // Feed the API ground truth back into TokenCounter so it can
+        // learn the actual chars/token ratio for this model. After a
+        // few turns the observed ratio becomes more accurate than any
+        // hardcoded sampling_ratios entry — no manual tuning needed.
+        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
+        if let Some(ref model) = self.model_name {
+            self.counter.update_observed_ratio(model, prompt_tokens, total_chars);
+        }
+
         tracing::debug!(old, new = prompt_tokens, "History token count calibrated from API usage");
     }
 

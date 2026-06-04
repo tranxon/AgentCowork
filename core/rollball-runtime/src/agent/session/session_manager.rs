@@ -291,6 +291,13 @@ impl SessionManager {
         // ADR-012: Set per-session model/provider on SessionState (only if we have one).
         if let Some(m) = initial_model.as_ref() {
             session_state.set_model(m.clone());
+            // Update HistoryManager::max_tokens to the model's actual effective
+            // input budget rather than the static config.history_max_tokens (128K).
+            // Without this, trim_fifo would clamp history at 128K which may be
+            // far below the model's actual context window, making auto compaction
+            // at 80% threshold unreachable.
+            let budget = self.core.context_trim_budget(m);
+            session_state.history_mut().set_max_tokens(budget);
         }
         if let Some(p) = initial_provider.as_ref() {
             session_state.set_provider(p.clone());

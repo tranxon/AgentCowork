@@ -430,7 +430,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                   {isCompacting && (
                     <div className="flex items-center gap-1.5 mt-1">
                       <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                      <span className="thinking-shimmer text-zinc-500" style={{ fontSize: "var(--ui-font-size, 0.75rem)" }}>{t("resultsPanel.compacting")}</span>
+                      <span className="thinking-shimmer text-zinc-500">{t("resultsPanel.compacting")}</span>
                     </div>
                   )}
                 </div>

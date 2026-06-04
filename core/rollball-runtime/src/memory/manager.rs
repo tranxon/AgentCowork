@@ -523,7 +523,7 @@ impl MemoryManager {
             ("role", Value::from("conversation")),
             ("content", Value::from(content.as_str())),
             (
-                "timestamp",
+                "created_at",
                 Value::from(Timestamp::from_micros(
                     record.timestamp.timestamp_micros(),
                 )),
@@ -602,7 +602,7 @@ impl MemoryManager {
             ("role", Value::from("distilled")),
             ("content", Value::from(episode.summary.as_str())),
             (
-                "timestamp",
+                "created_at",
                 Value::from(Timestamp::from_micros(
                     chrono::Utc::now().timestamp_micros(),
                 )),
