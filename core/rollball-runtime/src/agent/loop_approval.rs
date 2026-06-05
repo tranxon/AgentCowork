@@ -21,6 +21,13 @@ use crate::agent::loop_::{AgentLoop, ChunkEvent};
 use crate::agent::session_state::SessionStatus;
 use crate::security::approval_gate::ApprovalRequest;
 
+/// Default approval/question timeout: 5 minutes.
+///
+/// D5 dedup: previously duplicated as `APPROVAL_TIMEOUT_SECS` (u64) in
+/// `await_approval_decision` and `send_tool_approval_needed`, plus
+/// `DEFAULT_TIMEOUT_SECS` (u32) in `await_question_answer`.
+const APPROVAL_TIMEOUT_SECS: u64 = 300;
+
 /// User's decision on a tool approval request.
 #[derive(Debug, Clone)]
 pub(crate) struct ApprovalDecision {
@@ -76,9 +83,6 @@ impl AgentLoop {
     /// Returns `ApprovalDecision` with the user's choice, auto-rejects
     /// on Stop signal, channel close, or timeout (5 minutes).
     async fn await_approval_decision(&mut self, request_id: &str) -> ApprovalDecision {
-        // Approval timeout: auto-reject after 5 minutes to prevent deadlock.
-        const APPROVAL_TIMEOUT_SECS: u64 = 300;
-
         loop {
             tokio::select! {
                 // Primary: wait for the matching approval decision from inbound channel
@@ -185,10 +189,8 @@ impl AgentLoop {
     /// Also processes concurrent approval requests from `approval_rx`.
     /// Returns the user's answer string, or a cancellation/timeout message.
     pub(crate) async fn await_question_answer(&mut self, request_id: &str, timeout_seconds: Option<u32>) -> String {
-        /// Default timeout when none specified
-        const DEFAULT_TIMEOUT_SECS: u32 = 300;
         let timeout_duration = std::time::Duration::from_secs(
-            timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS) as u64
+            timeout_seconds.unwrap_or(APPROVAL_TIMEOUT_SECS as u32) as u64
         );
 
         let timeout_future = tokio::time::timeout(timeout_duration, async {
@@ -265,7 +267,7 @@ impl AgentLoop {
             Err(_elapsed) => {
                 tracing::warn!(
                     request_id = %request_id,
-                    timeout_secs = %timeout_seconds.unwrap_or(DEFAULT_TIMEOUT_SECS),
+                    timeout_secs = %timeout_seconds.unwrap_or(APPROVAL_TIMEOUT_SECS as u32),
                     "Question answer timed out"
                 );
                 "[Timeout: user did not respond]".to_string()
@@ -275,8 +277,6 @@ impl AgentLoop {
 
     /// Send ToolApprovalNeeded chunk event to Gateway (via on_chunk channel).
     fn send_tool_approval_needed(&self, request_id: &str, req: &ApprovalRequest) {
-        // Approval timeout: 300s (5 min) — same as await_approval_decision.
-        const APPROVAL_TIMEOUT_SECS: u64 = 300;
         let _ = self.core.try_send_chunk(ChunkEvent::ToolApprovalNeeded {
             request_id: request_id.to_string(),
             tool_name: req.tool_name.clone(),

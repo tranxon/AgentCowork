@@ -379,8 +379,6 @@ impl AgentLoop {
         context_builder: &mut crate::agent::context::ContextBuilder,
         current_model: &str,
     ) -> rollball_core::providers::traits::ChatRequest {
-        use rollball_core::providers::traits::ChatRequest;
-
         // Inject current todo list into system prompt before building
         context_builder.set_todo_context(self.session.format_todos());
         let mut chat_request = context_builder.build(

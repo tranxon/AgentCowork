@@ -11,7 +11,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use rollball_core::providers::traits::{
-    ChatMessage, ChatResponse, MessageRole, Provider, ToolCall,
+    ChatMessage, Provider,
 };
 use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::tools::traits::Tool;
@@ -794,7 +794,7 @@ mod tests {
     use crate::agent::loop_llm::make_incomplete_marker;
     use crate::agent::loop_tools::execute_single_tool;
     use rollball_core::providers::mock::MockProvider;
-    use rollball_core::providers::traits::FunctionCall;
+    use rollball_core::providers::traits::{ChatResponse, FunctionCall, MessageRole, ToolCall};
 
     /// Simple echo tool for testing
     struct EchoTool;

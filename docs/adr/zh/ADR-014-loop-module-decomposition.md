@@ -327,7 +327,7 @@ impl AgentLoop {
 | `loop_.rs` 生产代码 | 2635 | ~1300（含测试） |
 | `execute_single_iteration` | 742 行 | 106 行 |
 | 文件数 | 3（loop_ + loop_llm + loop_tools） | 9（+6 新模块） |
-| 代码重复 | 5 处 / ~192 行 | D2+D3 已消除（~42 行），D4+D5 待定 |
+| 代码重复 | 5 处 / ~192 行 | D1+D2+D3+D5 已消除（~142 行），D4 暂缓（见 Risk 4） |
 | 最大单方法 | 742 行 | ~171 行（compact_history_if_needed） |
 
 ### 各模块行数预估

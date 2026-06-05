@@ -15,9 +15,8 @@ use rollball_core::providers::traits::ToolCall;
 
 use crate::agent::context::ContextBuilder;
 use crate::agent::loop_::{AgentLoop, ChunkEvent};
-use crate::agent::loop_approval::ApprovalDecision;
 use crate::agent::session_state::SessionStatus;
-use crate::tools::builtin::ask_user_question::{AskUserQuestionTool, QuestionOption};
+use crate::tools::builtin::ask_user_question::AskUserQuestionTool;
 
 impl AgentLoop {
     /// Handle an `ask_user_question` tool call.
