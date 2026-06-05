@@ -1,9 +1,9 @@
 # ADR-014: AgentLoop 主循环模块拆分 — 从 God Object 到职责模块
 
-**状态**：已实施（6/6 Phase 完成）
+**状态**：已实施（8/8 Phase 完成）
 **日期**：2026-06-05
 **决策者**：架构讨论
-**影响范围**：`agent/loop_.rs`（3908 行），及其所有调用方
+**影响范围**：`agent/loop_.rs`（3908 行 → 2024 行），及其所有调用方
 
 ---
 
@@ -302,17 +302,32 @@ impl AgentLoop {
 | `loop_.rs` | **小改** | 删除 3 个记忆方法 |
 | `agent/mod.rs` | 小改 | 新增 `mod loop_memory` |
 
+### Phase 7: 去重 + 核心提取（execute_single_iteration 骨架化 Part 1）
+
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `loop_session.rs` | **中改** | +`persist_think_to_conversation()` (D2 去重) +`handle_text_response()` |
+| `loop_inbound.rs` | **中改** | +`handle_stopped()` (D3 去重) |
+| `loop_.rs` | **大改** | +`await_debug_resume()`；替换 text response / stopped 内联代码 |
+
+### Phase 8: Tool Pipeline 提取（execute_single_iteration 骨架化 Part 2）
+
+| 文件 | 变更 | 说明 |
+|------|------|------|
+| `loop_tools.rs` | **大改** | +`prepare_tool_calls()` +`pre_check_loop_detection()` +`dispatch_and_merge_tools()` +`persist_and_emit_tool_results()` +`post_check_loop_detection()` |
+| `loop_.rs` | **大改** | 替换 5 段内联工具 pipeline 代码为子方法调用 |
+
 ---
 
 ## 重构后预期效果
 
-| 指标 | 重构前 | 重构后 |
+| 指标 | 重构前 | 重构后（实际） |
 |------|--------|--------|
-| `loop_.rs` 总行数 | 3908 | ~800（含测试） |
-| `loop_.rs` 生产代码 | 2635 | ~400（纯编排） |
-| `execute_single_iteration` | 742 行 | ~80 行 |
+| `loop_.rs` 总行数 | 3908 | 2024 |
+| `loop_.rs` 生产代码 | 2635 | ~1300（含测试） |
+| `execute_single_iteration` | 742 行 | 106 行 |
 | 文件数 | 3（loop_ + loop_llm + loop_tools） | 9（+6 新模块） |
-| 代码重复 | 5 处 / ~192 行 | 0 处 |
+| 代码重复 | 5 处 / ~192 行 | D2+D3 已消除（~42 行），D4+D5 待定 |
 | 最大单方法 | 742 行 | ~171 行（compact_history_if_needed） |
 
 ### 各模块行数预估
