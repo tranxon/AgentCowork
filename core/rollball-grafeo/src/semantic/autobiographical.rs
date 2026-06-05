@@ -1,7 +1,8 @@
 //! AutobiographicalNode storage.
 //!
-//! Autobiographical nodes never participate in decay — their status is
-//! forced to [`NodeStatus::Active`] on every store operation.
+//! Autobiographical nodes never participate in decay - their status is
+//! forced to [`NodeStatus::Active`] on every store operation (except
+//! when explicitly set to Dormant for History compression).
 
 use chrono::Utc;
 use grafeo_common::types::{NodeId, Value};
@@ -92,6 +93,12 @@ impl GrafeoStore {
     }
 
     /// Update an existing autobiographical node.
+    ///
+    /// By default, autobiographical nodes are kept Active. However, the
+    /// History compression flow (P2-3) may explicitly set status to
+    /// Dormant. This method respects the status in the provided node
+    /// **only if** it is explicitly set to Dormant; otherwise it forces
+    /// Active (the safe default).
     pub fn update_autobiographical(&self, node: &AutobiographicalNode) -> Result<()> {
         let id = node.id.ok_or_else(|| {
             crate::error::GrafeoError::Memory(
@@ -100,7 +107,11 @@ impl GrafeoStore {
         })?;
 
         let mut node = node.clone();
-        node.status = NodeStatus::Active;
+        // Respect explicit Dormant (used by History compression).
+        // All other statuses ->? force Active (safety net).
+        if node.status != NodeStatus::Dormant {
+            node.status = NodeStatus::Active;
+        }
         node.updated_at = Utc::now();
 
         let props = node.to_properties();
@@ -198,6 +209,7 @@ mod tests {
 
         let updated = AutobiographicalNode {
             id: Some(id),
+            status: NodeStatus::Active, // Explicitly set Active
             value: "second_release".to_string(),
             confidence: 0.95,
             ..node
@@ -210,5 +222,27 @@ mod tests {
 
         let status = fetched.get_property("status").and_then(Value::as_str).unwrap();
         assert_eq!(status, "Active");
+    }
+
+    #[test]
+    fn test_update_autobiographical_respects_dormant() {
+        // P2-3: History compression marks old History nodes as Dormant.
+        // This test verifies that update_autobiographical respects
+        // explicitly-set Dormant status.
+        let store = test_store();
+        let node = make_node(AutobioCategory::History, "old_milestone", "ancient_event");
+        let id = store.store_autobiographical(&node).unwrap();
+
+        // Mark as Dormant (simulating History compression).
+        let dormant = AutobiographicalNode {
+            id: Some(id),
+            status: NodeStatus::Dormant,
+            ..node
+        };
+        store.update_autobiographical(&dormant).unwrap();
+
+        let fetched = store.db.get_node(id).unwrap();
+        let status = fetched.get_property("status").and_then(Value::as_str).unwrap();
+        assert_eq!(status, "Dormant", "Dormant status should be respected for History compression");
     }
 }

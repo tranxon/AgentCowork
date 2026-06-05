@@ -93,6 +93,10 @@ impl super::loop_::AgentLoop {
         if let Some(ref conversation) = self.session.conversation {
             let session_id = conversation.session_id().to_string();
 
+            // P2-2: Auto-generate Relationship nodes at session-end.
+            // Checks if the earliest episode is > 30 days old.
+            self.auto_generate_relationship();
+
             // Determine tail range: everything after the last compaction marker,
             // or full history (skipping leading system messages) if never compacted.
             let tail_start = self

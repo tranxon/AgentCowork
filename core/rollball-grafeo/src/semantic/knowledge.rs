@@ -150,7 +150,7 @@ mod tests {
     }
 
     fn emb(v: f32) -> Vec<f32> {
-        vec![v; crate::types::EMBEDDING_DIM]
+        vec![v; crate::types::DEFAULT_EMBEDDING_DIM]
     }
 
     #[test]

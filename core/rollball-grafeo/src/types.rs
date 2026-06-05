@@ -120,6 +120,8 @@ pub enum KnowledgeSubType {
     Preference,
     /// Relationship between entities.
     Relation,
+    /// Behavioral pattern / procedure ("when X, do Y").
+    Procedure,
 }
 
 impl KnowledgeSubType {
@@ -129,6 +131,7 @@ impl KnowledgeSubType {
             KnowledgeSubType::Fact => "Fact",
             KnowledgeSubType::Preference => "Preference",
             KnowledgeSubType::Relation => "Relation",
+            KnowledgeSubType::Procedure => "Procedure",
         }
     }
 }
@@ -141,6 +144,7 @@ impl std::str::FromStr for KnowledgeSubType {
             "Fact" => Ok(KnowledgeSubType::Fact),
             "Preference" => Ok(KnowledgeSubType::Preference),
             "Relation" => Ok(KnowledgeSubType::Relation),
+            "Procedure" => Ok(KnowledgeSubType::Procedure),
             _ => Err(GrafeoError::Memory(format!(
                 "unknown KnowledgeSubType: {s}"
             ))),
@@ -308,6 +312,13 @@ pub struct ProceduralNode {
     pub fail_count: u32,
     /// Confidence [0.0, 1.0].
     pub confidence: f32,
+    /// How many times this procedure has been activated (retrieved + injected).
+    pub activation_count: u32,
+    /// Which skill this procedure was learned from (if applicable).
+    pub source_skill: Option<String>,
+    /// How this procedure was learned: "user_feedback", "execution_failure",
+    /// "offline_consolidation", "generalization", or "unknown".
+    pub learned_from: String,
     /// Semantic embedding.
     pub embedding: Option<Vec<f32>>,
     /// Lifecycle status.
@@ -561,11 +572,16 @@ impl ProceduralNode {
             ("success_count".to_string(), Value::from(i64::from(self.success_count))),
             ("fail_count".to_string(), Value::from(i64::from(self.fail_count))),
             ("confidence".to_string(), Value::from(f64::from(self.confidence))),
+            ("activation_count".to_string(), Value::from(i64::from(self.activation_count))),
+            ("learned_from".to_string(), Value::from(self.learned_from.as_str())),
             ("status".to_string(), Value::from(self.status.as_str())),
             ("created_at".to_string(), Value::from(dt_to_timestamp(self.created_at))),
             ("updated_at".to_string(), Value::from(dt_to_timestamp(self.updated_at))),
             ("metadata".to_string(), metadata_to_value(&self.metadata)),
         ];
+        if let Some(ref skill) = self.source_skill {
+            props.push(("source_skill".to_string(), Value::from(skill.as_str())));
+        }
         if let Some(ref emb) = self.embedding {
             props.push(("embedding".to_string(), embedding_to_value(Some(emb))));
         }
@@ -573,6 +589,9 @@ impl ProceduralNode {
     }
 
     /// Reconstruct from Grafeo node properties.
+    ///
+    /// Backward-compatible: `activation_count`, `source_skill`, and `learned_from`
+    /// default gracefully when absent (created by older versions).
     pub fn from_properties(id: NodeId, props: &[(String, Value)]) -> Result<Self> {
         let map = prop_map(props);
         Ok(ProceduralNode {
@@ -583,6 +602,19 @@ impl ProceduralNode {
             success_count: get_i64(&map, "success_count")? as u32,
             fail_count: get_i64(&map, "fail_count")? as u32,
             confidence: get_f32(&map, "confidence")?,
+            activation_count: map
+                .get("activation_count")
+                .and_then(|v| v.as_int64())
+                .unwrap_or(0) as u32,
+            source_skill: map
+                .get("source_skill")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string()),
+            learned_from: map
+                .get("learned_from")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
             embedding: value_to_embedding(map.get("embedding").copied()),
             status: get_string(&map, "status")?.parse()?,
             created_at: timestamp_to_dt(
@@ -802,6 +834,9 @@ mod tests {
             success_count: 12,
             fail_count: 1,
             confidence: 0.85,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "unknown".to_string(),
             embedding: Some(test_embedding()),
             status: NodeStatus::Active,
             created_at: test_dt(),
@@ -832,6 +867,9 @@ mod tests {
             success_count: 0,
             fail_count: 0,
             confidence: 0.5,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "unknown".to_string(),
             embedding: None,
             status: NodeStatus::Dormant,
             created_at: test_dt(),
@@ -907,7 +945,7 @@ mod tests {
 
     #[test]
     fn test_knowledge_sub_type_roundtrip() {
-        for variant in [KnowledgeSubType::Fact, KnowledgeSubType::Preference, KnowledgeSubType::Relation] {
+        for variant in [KnowledgeSubType::Fact, KnowledgeSubType::Preference, KnowledgeSubType::Relation, KnowledgeSubType::Procedure] {
             let s = variant.as_str();
             let parsed: KnowledgeSubType = s.parse().unwrap();
             assert_eq!(parsed, variant);

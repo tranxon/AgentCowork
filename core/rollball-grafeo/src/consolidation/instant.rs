@@ -8,10 +8,10 @@ use chrono::Utc;
 use grafeo_common::types::NodeId;
 use rollball_memory::ConflictSignal;
 
-use crate::conflict::{self, FACT_THRESHOLD, PREFERENCE_THRESHOLD, RELATION_THRESHOLD};
+use crate::conflict::{self, FACT_THRESHOLD, PREFERENCE_THRESHOLD, RELATION_THRESHOLD, PROCEDURE_THRESHOLD};
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
-use crate::types::{labels, KnowledgeNode, KnowledgeSubType, NodeStatus};
+use crate::types::{labels, KnowledgeNode, KnowledgeSubType, NodeStatus, ProceduralNode};
 
 // ---------------------------------------------------------------------------
 // Cosine similarity (local copy — semantic/knowledge.rs keeps its own private)
@@ -39,6 +39,19 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f64 {
 /// Cosine-similarity threshold above which two knowledge nodes are
 /// considered duplicates (identical meaning).
 const DEDUP_THRESHOLD: f32 = 0.95;
+
+/// Cosine-similarity threshold above which two procedural nodes are
+/// considered duplicates (same trigger+action). Lower than knowledge
+/// dedup because procedures are more specific and slight wording
+/// variations still indicate the same behavior pattern.
+const PROCEDURE_DEDUP_THRESHOLD: f32 = 0.90;
+
+/// Confidence boost applied when a duplicate procedure reinforces an
+/// existing node (instead of creating a new one).
+const PROCEDURE_CONFIDENCE_BOOST: f32 = 0.05;
+
+/// Maximum confidence for a ProceduralNode (cap after boosting).
+const PROCEDURE_MAX_CONFIDENCE: f32 = 0.98;
 
 /// Confidence threshold above which a node is created directly as Active.
 const DIRECT_ACTIVE_THRESHOLD: f32 = 0.85;
@@ -116,16 +129,26 @@ impl GrafeoStore {
     /// Process a `memory_store` tool call from the LLM.
     ///
     /// Pipeline:
-    /// 1. If embedding is available, check for duplicates (sim > 0.95 → skip).
-    /// 2. If embedding is available, check for conflicts (two-layer heuristic).
-    /// 3. Create node with status = Active if confidence >= 0.85, else Pending.
-    /// 4. If conflicts detected:
-    ///    - All heuristic conflicts are Ambiguous → both Active, mark conflict_group_id.
-    ///    - Phase 3 LLM arbitration reclassifies (Evolution / Correction) later.
+    /// - **Procedure category**: creates a `ProceduralNode` directly (no
+    ///   conflict detection — procedures don't conflict with facts).
+    /// - **Fact / Preference / Relation**: runs the full pipeline:
+    ///   1. If embedding is available, check for duplicates (sim > 0.95 → skip).
+    ///   2. If embedding is available, check for conflicts (two-layer heuristic).
+    ///   3. Create node with status = Active if confidence >= 0.85, else Pending.
+    ///   4. If conflicts detected:
+    ///      - All heuristic conflicts are Ambiguous → both Active, mark conflict_group_id.
+    ///      - Phase 3 LLM arbitration reclassifies (Evolution / Correction) later.
     ///
     /// Returns the created/updated node ID, or `None` if a duplicate was skipped.
     pub fn process_memory_store(&self, input: &MemoryStoreInput) -> Result<Option<ProcessResult>> {
         let confidence = input.confidence.unwrap_or(DEFAULT_CONFIDENCE);
+
+        // --- Procedure path: create ProceduralNode directly ---
+        if matches!(input.sub_type, KnowledgeSubType::Procedure) {
+            return self.process_procedure(input, confidence);
+        }
+
+        // --- Fact / Preference / Relation path ---
 
         // Step 1: Dedup check (only if embedding is available).
         if let Some(ref embedding) = input.embedding
@@ -211,6 +234,110 @@ impl GrafeoStore {
         }))
     }
 
+    /// Process a `memory_store` tool call with `category="procedure"`.
+    ///
+    /// Pipeline:
+    /// 1. If embedding is available, check for duplicates (sim > 0.90).
+    ///    - If duplicate found, boost the existing node's confidence
+    ///      instead of creating a new one (reinforcement).
+    /// 2. No cross-type conflict detection (procedures don't conflict
+    ///    with facts/preferences — they live on a different Label).
+    /// 3. Parse content into (trigger_condition, action_pattern).
+    /// 4. Create ProceduralNode with status based on confidence.
+    fn process_procedure(&self, input: &MemoryStoreInput, confidence: f32) -> Result<Option<ProcessResult>> {
+        // Step 1: Dedup check (only if embedding is available).
+        if let Some(ref embedding) = input.embedding {
+            if let Some(existing_id) = self.find_duplicate_procedure(embedding, PROCEDURE_DEDUP_THRESHOLD)? {
+                // Reinforce the existing node: boost confidence.
+                if let Some(mut existing) = self.get_procedural(existing_id)? {
+                    let _old_confidence = existing.confidence;
+                    existing.confidence = (existing.confidence + PROCEDURE_CONFIDENCE_BOOST)
+                        .min(PROCEDURE_MAX_CONFIDENCE);
+                    existing.updated_at = Utc::now();
+                    self.update_procedural(&existing)?;
+
+                    // Confidence boosted via reinforcement (dedup).
+                    return Ok(Some(ProcessResult {
+                        node_id: existing_id,
+                        conflict_resolutions: Vec::new(),
+                    }));
+                }
+            }
+        }
+
+        // Step 2: Parse content into (trigger_condition, action_pattern).
+        let (trigger, action) = parse_procedure_content(&input.content);
+
+        // Step 3: Determine initial status based on confidence.
+        let status = if confidence >= DIRECT_ACTIVE_THRESHOLD {
+            NodeStatus::Active
+        } else {
+            NodeStatus::Pending
+        };
+
+        // Generate a name from the trigger condition (first few words).
+        let name = trigger
+            .split_whitespace()
+            .take(3)
+            .collect::<Vec<_>>()
+            .join("_")
+            .to_lowercase();
+
+        let node = ProceduralNode {
+            id: None,
+            name,
+            trigger_condition: trigger,
+            action_pattern: action,
+            success_count: 0,
+            fail_count: 0,
+            confidence,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "user_feedback".to_string(),
+            embedding: input.embedding.clone(),
+            status,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+
+        let new_id = self.store_procedural(&node)?;
+
+        Ok(Some(ProcessResult {
+            node_id: new_id,
+            conflict_resolutions: Vec::new(),
+        }))
+    }
+
+    /// Check if a similar procedural node already exists (dedup).
+    ///
+    /// Returns the ID of the most similar existing ProceduralNode if
+    /// cosine similarity > `threshold`, or `None` if no match.
+    fn find_duplicate_procedure(&self, embedding: &[f32], threshold: f32) -> Result<Option<NodeId>> {
+        let graph = self.db.graph_store();
+        let node_ids = graph.nodes_by_label(labels::PROCEDURAL);
+
+        let mut best: Option<(NodeId, f32)> = None;
+
+        for id in node_ids {
+            if let Some(n) = self.db.get_node(id)
+                && let Some(existing_emb) = n
+                    .get_property("embedding")
+                    .and_then(|v| v.as_vector().map(|s| s.to_vec()))
+            {
+                let sim = cosine_similarity(embedding, &existing_emb) as f32;
+                if sim > threshold {
+                    match best {
+                        Some((_best_id, best_sim)) if sim <= best_sim => {}
+                        _ => best = Some((id, sim)),
+                    }
+                }
+            }
+        }
+
+        Ok(best.map(|(id, _)| id))
+    }
+
     /// Check if a similar knowledge node already exists (dedup).
     ///
     /// Returns `true` if embedding cosine similarity > `threshold` with any
@@ -253,6 +380,7 @@ impl GrafeoStore {
             KnowledgeSubType::Fact => FACT_THRESHOLD,
             KnowledgeSubType::Preference => PREFERENCE_THRESHOLD,
             KnowledgeSubType::Relation => RELATION_THRESHOLD,
+            KnowledgeSubType::Procedure => PROCEDURE_THRESHOLD,
         };
 
         let graph = self.db.graph_store();
@@ -301,6 +429,62 @@ impl GrafeoStore {
 
         Ok(candidates)
     }
+}
+
+// ---------------------------------------------------------------------------
+// Procedure content parsing
+// ---------------------------------------------------------------------------
+
+/// Parse natural language content into (trigger_condition, action_pattern).
+///
+/// Heuristic separators (in priority order):
+/// 1. "→" or "->" (arrow)
+/// 2. "when X, do Y" / "when X, Y" / "if X, Y"
+/// 3. Comma-separated imperative: "X, prefer Y"
+///
+/// If no separator is found, the full content becomes both trigger and
+/// action (the runtime will refine via offline consolidation later).
+fn parse_procedure_content(content: &str) -> (String, String) {
+    // Arrow separator: "when X → do Y" or "when X -> do Y"
+    if let Some(pos) = content.find("→").or_else(|| content.find("->")) {
+        let trigger = content[..pos].trim();
+        let action = content[pos + if content.contains("→") { '→'.len_utf8() } else { 2 }..].trim();
+        if !trigger.is_empty() && !action.is_empty() {
+            return (trigger.to_string(), action.to_string());
+        }
+    }
+
+    // "when X, do Y" / "if X, Y" pattern
+    let lower = content.to_lowercase();
+    for prefix in &["when ", "when,", "if ", "whenever "] {
+        if lower.starts_with(prefix) {
+            let rest = &content[prefix.len()..];
+            // Find the comma that separates trigger from action
+            if let Some(comma_pos) = rest.find(',') {
+                let trigger = rest[..comma_pos].trim();
+                let action = rest[comma_pos + 1..].trim()
+                    .trim_start_matches("do ")
+                    .trim_start_matches("then ")
+                    .trim_start_matches("prefer ")
+                    .trim();
+                if !trigger.is_empty() && !action.is_empty() {
+                    return (trigger.to_string(), action.to_string());
+                }
+            }
+        }
+    }
+
+    // Comma separator as last resort: "X, Y"
+    if let Some(comma_pos) = content.find(',') {
+        let trigger = content[..comma_pos].trim();
+        let action = content[comma_pos + 1..].trim();
+        if !trigger.is_empty() && !action.is_empty() {
+            return (trigger.to_string(), action.to_string());
+        }
+    }
+
+    // No separator found — use content as both trigger and action.
+    (content.to_string(), content.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -881,5 +1065,197 @@ mod tests {
         });
         assert!(!has_corrects, "CORRECTS edge should NOT be auto-created");
         assert!(!has_evolution, "EVOLUTION_FROM edge should NOT be auto-created");
+    }
+
+    // =====================================================================
+    // Test 16: Procedure category creates ProceduralNode
+    // =====================================================================
+
+    #[test]
+    fn test_process_memory_store_procedure() {
+        let store = test_store();
+        let input = MemoryStoreInput {
+            content: "when user asks for summary, reply in 3 sentences max".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.9),
+            source_episode_id: None,
+            embedding: None,
+        };
+
+        let result = store.process_memory_store(&input).unwrap();
+        assert!(result.is_some());
+        let result = result.unwrap();
+        assert!(result.conflict_resolutions.is_empty());
+
+        // Verify it was stored as a ProceduralNode.
+        let found = store.find_procedural_by_trigger("summary", 5).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].learned_from, "user_feedback");
+        assert_eq!(found[0].status, NodeStatus::Active); // confidence 0.9 ≥ 0.85
+    }
+
+    // =====================================================================
+    // Test 17: Procedure — low confidence → Pending
+    // =====================================================================
+
+    #[test]
+    fn test_process_memory_store_procedure_low_confidence() {
+        let store = test_store();
+        let input = MemoryStoreInput {
+            content: "user prefers tables over lists".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.6),
+            source_episode_id: None,
+            embedding: None,
+        };
+
+        let result = store.process_memory_store(&input).unwrap();
+        assert!(result.is_some());
+
+        let found = store.find_procedural_by_trigger("tables", 5).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].status, NodeStatus::Pending); // confidence 0.6 < 0.85
+    }
+
+    // =====================================================================
+    // Test 18: parse_procedure_content — arrow separator
+    // =====================================================================
+
+    #[test]
+    fn test_parse_procedure_content_arrow() {
+        let (trigger, action) = parse_procedure_content("when output too long → give concise summary");
+        assert_eq!(trigger, "when output too long");
+        assert_eq!(action, "give concise summary");
+
+        let (trigger, action) = parse_procedure_content("error occurred -> retry once");
+        assert_eq!(trigger, "error occurred");
+        assert_eq!(action, "retry once");
+    }
+
+    // =====================================================================
+    // Test 19: parse_procedure_content — when/if pattern
+    // =====================================================================
+
+    #[test]
+    fn test_parse_procedure_content_when_pattern() {
+        let (trigger, action) = parse_procedure_content("when user asks for summary, do reply concisely");
+        assert_eq!(trigger, "user asks for summary");
+        assert_eq!(action, "reply concisely");
+
+        let (trigger, action) = parse_procedure_content("if network error, retry once");
+        assert_eq!(trigger, "network error");
+        assert_eq!(action, "retry once");
+    }
+
+    // =====================================================================
+    // Test 20: parse_procedure_content — no separator fallback
+    // =====================================================================
+
+    #[test]
+    fn test_parse_procedure_content_no_separator() {
+        let (trigger, action) = parse_procedure_content("user prefers concise output");
+        assert_eq!(trigger, "user prefers concise output");
+        assert_eq!(action, "user prefers concise output");
+    }
+
+    // =====================================================================
+    // Test 21: Procedure dedup — identical embedding → boost, not create
+    // =====================================================================
+
+    #[test]
+    fn test_process_procedure_dedup_boost() {
+        let store = test_store();
+
+        // First procedure — confidence 0.85.
+        let input1 = MemoryStoreInput {
+            content: "when output too long → give concise summary".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.85),
+            source_episode_id: None,
+            embedding: Some(const_emb(1.0)),
+        };
+        let result1 = store.process_memory_store(&input1).unwrap();
+        assert!(result1.is_some());
+        let id1 = result1.unwrap().node_id;
+
+        // Second procedure with same embedding → should boost, not create.
+        let input2 = MemoryStoreInput {
+            content: "when response is lengthy, summarize briefly".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.85),
+            source_episode_id: None,
+            embedding: Some(const_emb(1.0)), // identical
+        };
+        let result2 = store.process_memory_store(&input2).unwrap();
+        assert!(result2.is_some());
+        let id2 = result2.unwrap().node_id;
+
+        // Same node ID — boosted, not created.
+        assert_eq!(id1, id2, "duplicate procedure should return existing ID");
+
+        // Confidence should have been boosted.
+        let node = store.get_procedural(id1).unwrap().unwrap();
+        assert!(
+            node.confidence > 0.85,
+            "confidence should be boosted from 0.85, got {}",
+            node.confidence
+        );
+
+        // Only one procedural node should exist.
+        let graph = store.db.graph_store();
+        let count = graph.nodes_by_label(labels::PROCEDURAL).len();
+        assert_eq!(count, 1, "should have exactly one procedural node");
+    }
+
+    // =====================================================================
+    // Test 22: Procedure dedup — different embedding → create new
+    // =====================================================================
+
+    #[test]
+    fn test_process_procedure_no_dedup_different_embedding() {
+        let store = test_store();
+
+        let input1 = MemoryStoreInput {
+            content: "when output too long → give concise summary".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.85),
+            source_episode_id: None,
+            embedding: Some(const_emb(1.0)),
+        };
+        store.process_memory_store(&input1).unwrap();
+
+        // Different embedding (flip 40 → cos ≈ 0.792, below 0.90 threshold).
+        let input2 = MemoryStoreInput {
+            content: "when network error occurs → retry once".to_string(),
+            sub_type: KnowledgeSubType::Procedure,
+            subject: None,
+            predicate: None,
+            object: None,
+            confidence: Some(0.85),
+            source_episode_id: None,
+            embedding: Some(flipped_emb(40)),
+        };
+        let result2 = store.process_memory_store(&input2).unwrap();
+        assert!(result2.is_some());
+
+        // Two procedural nodes should exist.
+        let graph = store.db.graph_store();
+        let count = graph.nodes_by_label(labels::PROCEDURAL).len();
+        assert_eq!(count, 2, "different procedures should both be stored");
     }
 }

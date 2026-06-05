@@ -17,6 +17,7 @@ use rollball_core::protocol::ModelCapabilitiesInfo;
 use rollball_core::providers::traits::Provider;
 use rollball_core::tools::traits::Tool;
 use rollball_grafeo::grafeo::GrafeoStore;
+use rollball_grafeo::retrieval_metrics::{AlertThresholds, MetricsAggregator, OnlineRetrievalMetrics};
 use rollball_grafeo::types::GrafeoConfig;
 use rollball_grafeo::types::{AutobioCategory, AutobiographicalNode, NodeStatus};
 use tokio::sync::mpsc;
@@ -120,6 +121,10 @@ pub struct AgentCore {
     /// Built from LLM provider registry; shared across all sessions.
     /// Used by [`init_memory_store`] to determine Grafeo vector dimension.
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
+    /// P3-1: Retrieval quality metrics aggregator (shared across sessions).
+    /// Tracks NRR, abstention rate, degradation, and conflict accuracy.
+    /// Wrapped in Mutex for interior mutability from async contexts.
+    pub(crate) metrics_aggregator: std::sync::Mutex<MetricsAggregator>,
 }
 
 impl AgentCore {
@@ -165,6 +170,7 @@ impl AgentCore {
             shell_approval_threshold,
             status_tx: None,
             embedding_provider: None,
+            metrics_aggregator: std::sync::Mutex::new(MetricsAggregator::with_defaults(1.0)),
         }
     }
 
@@ -566,6 +572,12 @@ impl AgentCore {
             shell_approval_threshold: self.shell_approval_threshold.clone(),
             status_tx: None, // set separately by SessionTask
             embedding_provider: self.embedding_provider.clone(),
+            // P3-1: Metrics aggregator is cloned (each session gets its own
+            // snapshot). Cross-session aggregation happens at a higher level
+            // (Desktop App reads logs) or via a shared Arc in future.
+            metrics_aggregator: std::sync::Mutex::new(
+                self.metrics_aggregator.lock().unwrap().clone()
+            ),
         }
     }
 

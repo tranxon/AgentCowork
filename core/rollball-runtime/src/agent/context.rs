@@ -29,6 +29,10 @@ pub struct ContextBuilder {
     /// Retrieved memory context (from Grafeo) for injection into system prompt.
     /// Set by AgentLoop before each build via `set_retrieved_memory()`.
     retrieved_memory: Option<String>,
+    /// P3-4: Ambiguous conflict confirmation hint — when ≥ 3 pending
+    /// ambiguous conflicts exist, this hint guides the Agent to naturally
+    /// ask the user for disambiguation. Injected after retrieved memory.
+    ambiguous_confirmation_hint: Option<String>,
     /// Skill instructions override (for debug patching and runtime config).
     /// Injected into system prompt after identity and before memory sections.
     skill_instructions: Option<String>,
@@ -50,6 +54,7 @@ impl ContextBuilder {
             tool_definitions: None,
             override_model: None,
             retrieved_memory: None,
+            ambiguous_confirmation_hint: None,
             skill_instructions: None,
             todo_context: None,
             counter: TokenCounter::new(),
@@ -271,6 +276,16 @@ impl ContextBuilder {
             tracing::debug!("ContextBuilder retrieved memory context cleared (stale prevention)");
             self.retrieved_memory = None;
         }
+        if self.ambiguous_confirmation_hint.is_some() {
+            self.ambiguous_confirmation_hint = None;
+        }
+    }
+
+    /// P3-4: Set ambiguous conflict confirmation hint for injection into
+    /// the system prompt. When ≥ 3 pending ambiguous conflicts exist,
+    /// this hint guides the Agent to naturally ask the user about them.
+    pub fn set_ambiguous_confirmation_hint(&mut self, hint: String) {
+        self.ambiguous_confirmation_hint = Some(hint);
     }
 
     // ── Section accessors for debug ContextSnapshot ──
@@ -338,6 +353,13 @@ impl ContextBuilder {
         // 2.5 Retrieved memory context from Grafeo (long-term memory)
         if let Some(ref memory) = self.retrieved_memory {
             system_content.push_str(&format!("\n\n## Relevant Memories\n{memory}"));
+        }
+
+        // 2.5b P3-4: Ambiguous conflict confirmation hint
+        // When ≥ 3 pending ambiguous conflicts exist, inject a hint that
+        // guides the Agent to naturally ask the user for disambiguation.
+        if let Some(ref hint) = self.ambiguous_confirmation_hint {
+            system_content.push_str(&format!("\n\n## Memory Conflicts Needing Confirmation\n{hint}"));
         }
 
         // 2.6 Skill instructions (debug patching or runtime config)

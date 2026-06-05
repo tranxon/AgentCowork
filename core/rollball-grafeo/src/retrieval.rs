@@ -356,7 +356,7 @@ impl GrafeoStore {
 mod tests {
     use super::*;
     use crate::index_config::{HnswConfig, validate_embedding_dim};
-    use crate::types::{labels, EMBEDDING_DIM};
+    use crate::types::{labels, DEFAULT_EMBEDDING_DIM};
     use grafeo_common::types::Value;
 
     /// Helper: create an in-memory GrafeoStore for testing.
@@ -366,7 +366,7 @@ mod tests {
 
     /// Helper: generate a test embedding vector of the expected dimension.
     fn test_embedding() -> Vec<f32> {
-        vec![0.1f32; EMBEDDING_DIM]
+        vec![0.1f32; DEFAULT_EMBEDDING_DIM]
     }
 
     /// Helper: store an Episodic node with both content and embedding.
@@ -395,7 +395,7 @@ mod tests {
         assert_eq!(config.m, 16);
         assert_eq!(config.ef_construction, 100);
         assert_eq!(config.ef_search, 64);
-        assert_eq!(config.dim, EMBEDDING_DIM);
+        assert_eq!(config.dim, DEFAULT_EMBEDDING_DIM);
     }
 
     // =====================================================================

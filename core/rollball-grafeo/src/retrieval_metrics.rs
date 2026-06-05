@@ -244,6 +244,16 @@ impl MetricsAggregator {
         Self::new(max_possible_score, AlertThresholds::default())
     }
 
+    /// Get the current max_possible_score used for NRR computation.
+    pub fn max_possible_score(&self) -> f32 {
+        self.max_possible_score
+    }
+
+    /// Update the max_possible_score (e.g., when a higher score is observed).
+    pub fn set_max_possible_score(&mut self, score: f32) {
+        self.max_possible_score = score;
+    }
+
     /// Record a retrieval operation's metrics.
     /// Returns any alerts triggered by this observation.
     pub fn record_retrieval(&mut self, metrics: &OnlineRetrievalMetrics) -> Vec<MetricsAlert> {

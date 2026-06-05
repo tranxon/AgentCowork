@@ -820,7 +820,7 @@ pub fn config_from_hint(hint_type: &str) -> GraphExpandConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::EMBEDDING_DIM;
+    use crate::types::DEFAULT_EMBEDDING_DIM;
     use grafeo_common::types::Value;
 
     /// Helper: create an in-memory GrafeoStore for testing.
@@ -830,7 +830,7 @@ mod tests {
 
     /// Helper: generate a test embedding vector.
     fn test_embedding() -> Vec<f32> {
-        vec![0.1f32; EMBEDDING_DIM]
+        vec![0.1f32; DEFAULT_EMBEDDING_DIM]
     }
 
     /// Helper: store a Knowledge node with embedding.

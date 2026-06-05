@@ -713,6 +713,12 @@ impl AgentLoop {
         // ── ⑧ Persist + emit + append + pre-trim tool results ──
         self.persist_and_emit_tool_results(&deduped_calls, &tool_results);
         self.pre_trim_for_tool_results(&tool_results, current_model);
+
+        // ── ⑧.5 Path B: Record tool failures as ProceduralNodes ──
+        // After persisting results, scan for errors and create
+        // low-confidence ProceduralNodes (execution_failure path).
+        self.record_tool_failures_to_memory(&deduped_calls, &tool_results);
+
         for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
             self.session.history.append(ChatMessage {
                 name: Some(tc.function.name.clone()),

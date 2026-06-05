@@ -317,6 +317,9 @@ impl MemoryStore for GrafeoStore {
             success_count: node.success_count,
             fail_count: node.fail_count,
             confidence: node.confidence,
+            activation_count: node.activation_count,
+            source_skill: node.source_skill.clone(),
+            learned_from: node.learned_from.clone(),
             embedding: node.embedding.clone(),
             status: match node.status {
                 rollball_memory::NodeStatus::Active => GrafeoNodeStatus::Active,

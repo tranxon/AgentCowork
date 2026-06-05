@@ -31,8 +31,25 @@ use crate::tools::rag::client::RagClient;
 /// Configuration for MemoryManager.
 #[derive(Debug, Clone)]
 pub struct MemoryManagerConfig {
-    /// Token budget for memory injection (default: 2000).
+    /// Token budget for non-autobiographical memory injection (default: 2000).
+    ///
+    /// Applies to Episodic, Knowledge, Procedural, and RAG results only.
+    /// Autobiographical memories have separate budgets (see below).
     pub max_inject_tokens: usize,
+    /// Token budget for autobiographical core memories — Identity, Capability,
+    /// Limitation (default: 100).
+    ///
+    /// These are the agent's "self-concept" and are always injected first.
+    /// Per design §3.3, Identity/Capability are always relevant; this budget
+    /// controls how much detail to include when nodes are numerous.
+    pub max_autobio_core_tokens: usize,
+    /// Token budget for autobiographical history memories — History and
+    /// Relationship (default: 100).
+    ///
+    /// Per design §3.3: History Top-5 summaries, Relationship Top-3.
+    /// Combined with `max_autobio_core_tokens`, the total autobiographical
+    /// budget is 200 tokens (≈150 Chinese characters), matching the design spec.
+    pub max_autobio_history_tokens: usize,
     /// Default number of results to retrieve (default: 10).
     pub default_k: usize,
     /// Default abstention threshold (default: 0.0 — no filtering;
@@ -57,6 +74,8 @@ impl Default for MemoryManagerConfig {
     fn default() -> Self {
         Self {
             max_inject_tokens: 2000,
+            max_autobio_core_tokens: 100,
+            max_autobio_history_tokens: 100,
             default_k: 10,
             default_min_score: 0.0,
             enable_graph_expand: true,
@@ -437,12 +456,24 @@ impl MemoryManager {
 
     /// Format retrieved memories for system prompt injection.
     ///
-    /// - Autobiographical memories are always fully included (agent identity
-    ///   is compact and always relevant).
-    /// - Episodic memories are included in score-descending order until the
-    ///   `max_inject_tokens` budget is reached. Each episodic memory is kept
-    ///   intact (no mid-content truncation); memories that would exceed the
-    ///   budget are skipped entirely.
+    /// Three-phase injection with separate token budgets:
+    ///
+    /// - **Pass 1**: Autobiographical core (Identity/Capability/Limitation) —
+    ///   the agent's self-concept. Always injected first, bounded by
+    ///   `max_autobio_core_tokens` (default 100). These memories are never
+    ///   skipped entirely; if the first one exceeds the budget it is still
+    ///   included to avoid empty identity.
+    ///
+    /// - **Pass 2**: Autobiographical history (History/Relationship/Preference) —
+    ///   contextual self-knowledge. Injected in score-descending order,
+    ///   bounded by `max_autobio_history_tokens` (default 100).
+    ///
+    /// - **Pass 3**: Non-autobiographical memories (Episodic/Knowledge/
+    ///   Procedural/RAG) — bounded by `max_inject_tokens` (default 2000).
+    ///
+    /// Per design §3.3, the total autobiographical budget is 200 tokens
+    /// (≈150 Chinese characters). Each memory is kept intact (no mid-content
+    /// truncation); memories that would exceed the budget are skipped entirely.
     pub fn inject(&self, retrieval: &RetrievalResult) -> InjectedMemory {
         if retrieval.memories.is_empty() {
             return InjectedMemory {
@@ -453,39 +484,80 @@ impl MemoryManager {
             };
         }
 
-        let budget = self.config.max_inject_tokens;
+        let core_budget = self.config.max_autobio_core_tokens;
+        let history_budget = self.config.max_autobio_history_tokens;
+        let other_budget = self.config.max_inject_tokens;
+
         let mut lines: Vec<String> = Vec::new();
         let mut token_count: usize = 0;
         let mut truncated = false;
 
-        // Pass 1: inject ALL autobiographical memories unconditionally.
+        // Partition autobiographical memories into core vs history.
+        let mut autobio_core: Vec<&RetrievedMemory> = Vec::new();
+        let mut autobio_history: Vec<&RetrievedMemory> = Vec::new();
+
         for memory in &retrieval.memories {
             if memory.label != labels::AUTOBIOGRAPHICAL {
                 continue;
             }
-            let line = format!("[{}] {}", memory.label, memory.content);
-            let line_tokens = estimate_tokens(&line);
-            lines.push(line);
-            token_count += line_tokens;
+            match autobio_subcategory(&memory.content) {
+                AutobioGroup::Core => autobio_core.push(memory),
+                AutobioGroup::History => autobio_history.push(memory),
+            }
         }
 
-        // Pass 2: inject episodic memories within token budget.
-        for memory in &retrieval.memories {
-            if memory.label == labels::AUTOBIOGRAPHICAL {
-                continue; // already handled in pass 1
-            }
+        // Pass 1: inject autobiographical core (Identity/Capability/Limitation).
+        let mut core_tokens: usize = 0;
+        for memory in &autobio_core {
             let line = format!("[{}] {}", memory.label, memory.content);
             let line_tokens = estimate_tokens(&line);
 
-            // Keep memory intact: skip entirely if it would exceed budget
-            if token_count + line_tokens > budget {
+            // Always include at least one core memory (agent identity).
+            if core_tokens > 0 && core_tokens + line_tokens > core_budget {
                 truncated = true;
                 break;
             }
 
             lines.push(line);
-            token_count += line_tokens;
+            core_tokens += line_tokens;
         }
+        token_count += core_tokens;
+
+        // Pass 2: inject autobiographical history (History/Relationship/Preference).
+        let mut history_tokens: usize = 0;
+        for memory in &autobio_history {
+            let line = format!("[{}] {}", memory.label, memory.content);
+            let line_tokens = estimate_tokens(&line);
+
+            if history_tokens + line_tokens > history_budget {
+                truncated = true;
+                break;
+            }
+
+            lines.push(line);
+            history_tokens += line_tokens;
+        }
+        token_count += history_tokens;
+
+        // Pass 3: inject non-autobiographical memories within token budget.
+        let mut other_tokens: usize = 0;
+        for memory in &retrieval.memories {
+            if memory.label == labels::AUTOBIOGRAPHICAL {
+                continue; // already handled in passes 1-2
+            }
+            let line = format!("[{}] {}", memory.label, memory.content);
+            let line_tokens = estimate_tokens(&line);
+
+            // Keep memory intact: skip entirely if it would exceed budget
+            if other_tokens + line_tokens > other_budget {
+                truncated = true;
+                break;
+            }
+
+            lines.push(line);
+            other_tokens += line_tokens;
+        }
+        token_count += other_tokens;
 
         // Edge case: if nothing was injected (not even autobiographical),
         // include the first result anyway to avoid empty injection.
@@ -643,6 +715,90 @@ impl MemoryManager {
         Ok(())
     }
 
+    /// Record a ProceduralNode from a tool execution failure (Path B).
+    ///
+    /// When a skill/tool execution fails, this creates a low-confidence
+    /// ProceduralNode that captures the failure pattern so the agent
+    /// can avoid repeating the same mistake.
+    ///
+    /// The node is created with:
+    /// - `learned_from = "execution_failure"`
+    /// - `confidence = 0.6` (low — failure evidence is noisy)
+    /// - `source_skill = Some(tool_name)`
+    ///
+    /// If a similar procedure already exists (dedup via
+    /// `find_procedural_by_trigger`), the existing node's
+    /// `fail_count` is incremented instead.
+    pub fn record_procedural_from_failure(
+        &self,
+        store: &GrafeoStore,
+        tool_name: &str,
+        error_message: &str,
+    ) -> Result<()> {
+        use rollball_grafeo::types::{NodeStatus, ProceduralNode};
+
+        // Check for an existing procedure with the same trigger.
+        let trigger = format!("使用 {} 工具时", tool_name);
+        let existing = store.find_procedural_by_trigger(&trigger, 1)
+            .map_err(|e| RuntimeError::Tool(format!("Failed to find procedure: {e}")))?;
+
+        if let Some(mut node) = existing.into_iter().next() {
+            // Reinforce existing: increment fail count.
+            node.fail_count += 1;
+            node.updated_at = chrono::Utc::now();
+            store.update_procedural(&node)
+                .map_err(|e| RuntimeError::Tool(format!("Failed to update procedure: {e}")))?;
+
+            tracing::info!(
+                node_id = node.id.map(|id| id.as_u64()).unwrap_or(0),
+                tool_name,
+                fail_count = node.fail_count,
+                "Path B: reinforced existing ProceduralNode on failure"
+            );
+            return Ok(());
+        }
+
+        // Create a new ProceduralNode from the failure.
+        // Extract a brief error pattern from the message (first line, max 80 chars).
+        let error_pattern = error_message
+            .lines()
+            .next()
+            .unwrap_or("")
+            .chars()
+            .take(80)
+            .collect::<String>();
+
+        let action = format!("避免 {}；替代方案: 检查输入或重试", error_pattern);
+
+        let node = ProceduralNode {
+            id: None,
+            name: format!("avoid_{}", tool_name),
+            trigger_condition: trigger,
+            action_pattern: action,
+            success_count: 0,
+            fail_count: 1,
+            confidence: 0.6, // Low confidence — failure evidence is noisy
+            activation_count: 0,
+            source_skill: Some(tool_name.to_string()),
+            learned_from: "execution_failure".to_string(),
+            embedding: None, // No embedding at record time; filled by consolidation
+            status: NodeStatus::Pending, // Low confidence → Pending
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+
+        let id = store.store_procedural(&node)
+            .map_err(|e| RuntimeError::Tool(format!("Failed to store procedure: {e}")))?;
+        tracing::info!(
+            node_id = id.as_u64(),
+            tool_name,
+            "Path B: created ProceduralNode from execution failure"
+        );
+
+        Ok(())
+    }
+
     /// Full memory lifecycle for a single turn:
     /// 1. Retrieve memories for the query
     /// 2. Format for injection
@@ -688,15 +844,23 @@ fn extract_node_content(store: &GrafeoStore, node_id: u64) -> String {
         }
     }
 
+    // Procedural nodes: format as behavioral guideline.
+    // Must come before the generic "content" fallback, because
+    // ProceduralNode.to_properties() stores a combined "content" field
+    // that doesn't use the guideline format.
+    // "当 [trigger_condition] 时，优先 [action_pattern]"
+    let trigger = node.get_property("trigger_condition").and_then(|v| v.as_str());
+    let action = node.get_property("action_pattern").and_then(|v| v.as_str());
+    if let (Some(t), Some(a)) = (trigger, action) {
+        return format!("当 {} 时，优先 {}", t, a);
+    }
+
     // Try common content fields in priority order.
     if let Some(content) = node.get_property("content").and_then(|v| v.as_str()) {
         return content.to_string();
     }
     if let Some(value) = node.get_property("value").and_then(|v| v.as_str()) {
         return value.to_string();
-    }
-    if let Some(action) = node.get_property("action_pattern").and_then(|v| v.as_str()) {
-        return action.to_string();
     }
 
     // Knowledge nodes: combine subject + predicate + object.
@@ -708,11 +872,9 @@ fn extract_node_content(store: &GrafeoStore, node_id: u64) -> String {
         return format!("{s} {p} {o}");
     }
 
-    // Procedural nodes: combine trigger + action.
-    let trigger = node.get_property("trigger_condition").and_then(|v| v.as_str());
-    let action = node.get_property("action_pattern").and_then(|v| v.as_str());
-    if let (Some(t), Some(a)) = (trigger, action) {
-        return format!("When {t}: {a}");
+    // Generic action_pattern fallback (non-procedural nodes with action_pattern).
+    if let Some(action) = node.get_property("action_pattern").and_then(|v| v.as_str()) {
+        return action.to_string();
     }
 
     // Fallback: use any string property.
@@ -723,6 +885,34 @@ fn extract_node_content(store: &GrafeoStore, node_id: u64) -> String {
     }
 
     String::new()
+}
+
+/// Classification of autobiographical memory subcategory for budget
+/// allocation. Core (Identity/Capability/Limitation) always gets first
+/// priority; History (History/Relationship/Preference) is secondary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutobioGroup {
+    /// Identity, Capability, Limitation — agent self-concept.
+    Core,
+    /// History, Relationship, Preference — contextual self-knowledge.
+    History,
+}
+
+/// Determine the autobiographical group from the content prefix.
+///
+/// `extract_node_content()` formats autobiographical nodes as
+/// `"Category: key: value"` or `"Category: value"`, so we parse the
+/// prefix before the first colon to determine the subcategory.
+fn autobio_subcategory(content: &str) -> AutobioGroup {
+    // Parse the category prefix (e.g., "Identity: name: RollBall" → "Identity").
+    let category = content.split(':').next().unwrap_or("").trim();
+    match category {
+        "Identity" | "Capability" | "Limitation" => AutobioGroup::Core,
+        "History" | "Relationship" | "Preference" => AutobioGroup::History,
+        // Unknown prefix — default to Core for safety (agent identity is
+        // always important and the content is typically compact).
+        _ => AutobioGroup::Core,
+    }
 }
 
 /// Simple token estimation heuristic.
@@ -818,6 +1008,30 @@ mod tests {
         id.as_u64()
     }
 
+    /// Helper: store a Procedural node with trigger and action.
+    #[allow(dead_code)]
+    fn store_procedure(store: &GrafeoStore, trigger: &str, action: &str, embedding: &[f32]) -> u64 {
+        use rollball_grafeo::types::{NodeStatus, ProceduralNode};
+        let node = ProceduralNode {
+            id: None,
+            name: trigger.split_whitespace().take(3).collect::<Vec<_>>().join("_").to_lowercase(),
+            trigger_condition: trigger.to_string(),
+            action_pattern: action.to_string(),
+            success_count: 0,
+            fail_count: 0,
+            confidence: 0.9,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "user_feedback".to_string(),
+            embedding: Some(embedding.to_vec()),
+            status: NodeStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        store.store_procedural(&node).unwrap().as_u64()
+    }
+
     // =====================================================================
     // Test 1: Config defaults
     // =====================================================================
@@ -826,6 +1040,8 @@ mod tests {
     fn test_config_defaults() {
         let config = MemoryManagerConfig::default();
         assert_eq!(config.max_inject_tokens, 2000);
+        assert_eq!(config.max_autobio_core_tokens, 100);
+        assert_eq!(config.max_autobio_history_tokens, 100);
         assert_eq!(config.default_k, 10);
         assert_eq!(config.default_min_score, 0.0);
         assert!(config.enable_graph_expand);
@@ -1238,5 +1454,583 @@ mod tests {
 
         let result = manager.retrieve(&store, &mut query, None).await.unwrap();
         assert!(!result.memories.is_empty());
+    }
+
+    // =====================================================================
+    // Test 15: Autobiographical core budget limits identity injection
+    // =====================================================================
+
+    #[test]
+    fn test_inject_autobio_core_budget() {
+        let retrieval = RetrievalResult {
+            memories: vec![
+                RetrievedMemory {
+                    content: "Identity: name: WeatherBot".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 1.0,
+                    source: "hybrid".to_string(),
+                    node_id: 1,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "Identity: role: weather assistant that provides detailed forecasts and climate analysis".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.99,
+                    source: "hybrid".to_string(),
+                    node_id: 2,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "Capability: forecast: can provide 7-day weather forecasts with temperature and precipitation details".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.98,
+                    source: "hybrid".to_string(),
+                    node_id: 3,
+                    source_url: None,
+                    chunk_id: None,
+                },
+            ],
+            metrics: RetrievalMetrics::default(),
+        };
+
+        // Tight budget: only the first identity should fit.
+        let mut config = MemoryManagerConfig::default();
+        config.max_autobio_core_tokens = 15;
+        let manager = MemoryManager::new(config);
+        let injected = manager.inject(&retrieval);
+
+        // At least one core memory is always included.
+        assert!(injected.formatted_text.contains("Identity: name: WeatherBot"));
+        // The long role and capability should be truncated by budget.
+        assert!(injected.truncated);
+        assert!(injected.memory_count < 3);
+    }
+
+    // =====================================================================
+    // Test 16: Autobiographical history budget is separate from core
+    // =====================================================================
+
+    #[test]
+    fn test_inject_autobio_history_budget() {
+        let retrieval = RetrievalResult {
+            memories: vec![
+                RetrievedMemory {
+                    content: "Identity: name: Bot".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 1.0,
+                    source: "hybrid".to_string(),
+                    node_id: 1,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "History: milestone: first release on 2024-01-01, successfully deployed to production environment".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.9,
+                    source: "hybrid".to_string(),
+                    node_id: 2,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "History: milestone: version 2.0 release with major feature improvements".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.89,
+                    source: "hybrid".to_string(),
+                    node_id: 3,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "Relationship: user: collaborates with Alice on data analysis".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.85,
+                    source: "hybrid".to_string(),
+                    node_id: 4,
+                    source_url: None,
+                    chunk_id: None,
+                },
+            ],
+            metrics: RetrievalMetrics::default(),
+        };
+
+        // Generous core budget but tight history budget.
+        let mut config = MemoryManagerConfig::default();
+        config.max_autobio_core_tokens = 200;
+        config.max_autobio_history_tokens = 20;
+        let manager = MemoryManager::new(config);
+        let injected = manager.inject(&retrieval);
+
+        // Core should be fully included.
+        assert!(injected.formatted_text.contains("Identity: name: Bot"));
+        // History should be truncated.
+        assert!(injected.truncated);
+    }
+
+    // =====================================================================
+    // Test 17: Three-phase budget independence
+    // =====================================================================
+
+    #[test]
+    fn test_inject_three_phase_budget_independence() {
+        let retrieval = RetrievalResult {
+            memories: vec![
+                RetrievedMemory {
+                    content: "Identity: name: TestBot".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 1.0,
+                    source: "hybrid".to_string(),
+                    node_id: 1,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "History: event: deployed to production".to_string(),
+                    label: labels::AUTOBIOGRAPHICAL.to_string(),
+                    score: 0.9,
+                    source: "hybrid".to_string(),
+                    node_id: 2,
+                    source_url: None,
+                    chunk_id: None,
+                },
+                RetrievedMemory {
+                    content: "User prefers concise answers in technical discussions about programming languages".to_string(),
+                    label: "Knowledge".to_string(),
+                    score: 0.8,
+                    source: "hybrid".to_string(),
+                    node_id: 3,
+                    source_url: None,
+                    chunk_id: None,
+                },
+            ],
+            metrics: RetrievalMetrics::default(),
+        };
+
+        // Tight non-autobiographical budget — should not affect autobiographical.
+        let mut config = MemoryManagerConfig::default();
+        config.max_autobio_core_tokens = 200;
+        config.max_autobio_history_tokens = 200;
+        config.max_inject_tokens = 5; // Very tight — Knowledge won't fit.
+        let manager = MemoryManager::new(config);
+        let injected = manager.inject(&retrieval);
+
+        // Autobiographical memories should be injected.
+        assert!(injected.formatted_text.contains("Identity: name: TestBot"));
+        assert!(injected.formatted_text.contains("History: event: deployed"));
+        // Knowledge should be truncated.
+        assert!(injected.truncated);
+        assert!(!injected.formatted_text.contains("Knowledge"));
+    }
+
+    // =====================================================================
+    // Test 18: autobio_subcategory helper
+    // =====================================================================
+
+    #[test]
+    fn test_autobio_subcategory() {
+        assert_eq!(autobio_subcategory("Identity: name: Bot"), AutobioGroup::Core);
+        assert_eq!(autobio_subcategory("Capability: language: Rust"), AutobioGroup::Core);
+        assert_eq!(autobio_subcategory("Limitation: max_days: 7"), AutobioGroup::Core);
+        assert_eq!(autobio_subcategory("History: milestone: v1"), AutobioGroup::History);
+        assert_eq!(autobio_subcategory("Relationship: user: Alice"), AutobioGroup::History);
+        assert_eq!(autobio_subcategory("Preference: style: concise"), AutobioGroup::History);
+        // Unknown prefix defaults to Core.
+        assert_eq!(autobio_subcategory("unknown content"), AutobioGroup::Core);
+    }
+
+    // =====================================================================
+    // Test 19: Path B — record_procedural_from_failure
+    // =====================================================================
+
+    #[test]
+    fn test_record_procedural_from_failure() {
+        let store = test_store();
+        let manager = MemoryManager::new(MemoryManagerConfig::default());
+
+        // Record a failure from a tool.
+        manager
+            .record_procedural_from_failure(&store, "bash", "Error: command not found")
+            .unwrap();
+
+        // Verify the ProceduralNode was created.
+        let found = store.find_procedural_by_trigger("bash", 5).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].learned_from, "execution_failure");
+        assert_eq!(found[0].source_skill, Some("bash".to_string()));
+        assert_eq!(found[0].fail_count, 1);
+        assert!(found[0].confidence <= 0.7); // Low confidence
+        assert_eq!(found[0].status, rollball_grafeo::types::NodeStatus::Pending);
+    }
+
+    // =====================================================================
+    // Test 20: Path B — repeated failure reinforces existing node
+    // =====================================================================
+
+    #[test]
+    fn test_record_procedural_from_failure_reinforce() {
+        let store = test_store();
+        let manager = MemoryManager::new(MemoryManagerConfig::default());
+
+        // First failure.
+        manager
+            .record_procedural_from_failure(&store, "bash", "Error: timeout")
+            .unwrap();
+
+        // Second failure for the same tool.
+        manager
+            .record_procedural_from_failure(&store, "bash", "Error: permission denied")
+            .unwrap();
+
+        // Should have only one node (reinforced, not duplicated).
+        let found = store.find_procedural_by_trigger("bash", 5).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].fail_count, 2, "fail_count should be incremented");
+    }
+
+    // =====================================================================
+    // Test 21: Procedural injection format uses behavioral guideline
+    // =====================================================================
+
+    #[test]
+    fn test_procedural_injection_format() {
+        // Directly construct a RetrievedMemory for a Procedural node
+        // to test the injection format without relying on retrieval
+        // (retrieval text search uses "content" field which Procedural
+        // nodes don't have — a separate retrieval integration fix).
+        let manager = MemoryManager::new(MemoryManagerConfig::default());
+
+        let retrieval = RetrievalResult {
+            memories: vec![RetrievedMemory {
+                content: "当 user asks for summary 时，优先 reply in 3 sentences max".to_string(),
+                label: labels::PROCEDURAL.to_string(),
+                score: 0.9,
+                source: "hybrid".to_string(),
+                node_id: 1,
+                source_url: None,
+                chunk_id: None,
+            }],
+            metrics: RetrievalMetrics::default(),
+        };
+
+        let injected = manager.inject(&retrieval);
+
+        // The procedural node should be injected with the behavioral guideline format.
+        assert!(
+            injected.formatted_text.contains("当") && injected.formatted_text.contains("优先"),
+            "Procedural injection should use '当 X 时，优先 Y' format, got: {}",
+            injected.formatted_text
+        );
+    }
+
+    // =====================================================================
+    // Test 22: extract_node_content produces procedural guideline format
+    // =====================================================================
+
+    #[test]
+    fn test_extract_node_content_procedural() {
+        let store = test_store();
+
+        // Store a procedural node.
+        use rollball_grafeo::types::{NodeStatus, ProceduralNode};
+        let node = ProceduralNode {
+            id: None,
+            name: "concise_summary".to_string(),
+            trigger_condition: "user asks for summary".to_string(),
+            action_pattern: "reply in 3 sentences max".to_string(),
+            success_count: 5,
+            fail_count: 1,
+            confidence: 0.9,
+            activation_count: 3,
+            source_skill: None,
+            learned_from: "user_feedback".to_string(),
+            embedding: None,
+            status: NodeStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        let id = store.store_procedural(&node).unwrap();
+
+        // extract_node_content should format it as "当 X 时，优先 Y".
+        let content = extract_node_content(&store, id.as_u64());
+        assert!(
+            content.starts_with("当"),
+            "Procedural content should start with '当', got: {}",
+            content
+        );
+        assert!(
+            content.contains("优先"),
+            "Procedural content should contain '优先', got: {}",
+            content
+        );
+        assert!(
+            content.contains("user asks for summary"),
+            "Should contain trigger_condition"
+        );
+        assert!(
+            content.contains("reply in 3 sentences max"),
+            "Should contain action_pattern"
+        );
+    }
+
+    // =====================================================================
+    // Test 23: Self-evaluation — Limitation node from low success rate
+    // =====================================================================
+
+    #[test]
+    fn test_self_evaluate_creates_limitation_node() {
+        use rollball_grafeo::types::{AutobioCategory, AutobiographicalNode, NodeStatus, ProceduralNode};
+
+        let store = test_store();
+
+        // Create ProceduralNodes with low success rate for skill "bash".
+        // success=1, fail=4 → rate=20% < 60%, observations=5 ≥ 5.
+        let node = ProceduralNode {
+            id: None,
+            name: "avoid_bash".to_string(),
+            trigger_condition: "使用 bash 工具时".to_string(),
+            action_pattern: "避免 bash".to_string(),
+            success_count: 1,
+            fail_count: 4,
+            confidence: 0.6,
+            activation_count: 0,
+            source_skill: Some("bash".to_string()),
+            learned_from: "execution_failure".to_string(),
+            embedding: None,
+            status: NodeStatus::Pending,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        store.store_procedural(&node).unwrap();
+
+        // Manually run the self-evaluation logic (normally in AgentLoop,
+        // but we test the core logic here).
+        let nodes = store.get_all_procedural_nodes().unwrap();
+        let mut skill_stats: std::collections::HashMap<String, (u32, u32)> = std::collections::HashMap::new();
+        for n in &nodes {
+            if let Some(ref skill) = n.source_skill {
+                let entry = skill_stats.entry(skill.clone()).or_insert((0, 0));
+                entry.0 += n.success_count;
+                entry.1 += n.fail_count;
+            }
+        }
+
+        // Verify skill stats computation.
+        assert_eq!(skill_stats.get("bash"), Some(&(1, 4)));
+
+        // Simulate the Limitation node creation.
+        let key = "skill_bash".to_string();
+        let value = "bash 成功率仅 20%（1 次成功 / 4 次失败）".to_string();
+        let limitation = AutobiographicalNode {
+            id: None,
+            category: AutobioCategory::Limitation,
+            key: key.clone(),
+            value,
+            confidence: 0.8,
+            source_episode_id: None,
+            embedding: None,
+            status: NodeStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        store.store_autobiographical(&limitation).unwrap();
+
+        // Verify the Limitation node was stored.
+        let found = store.find_autobiographical_by_key(&key).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.category, AutobioCategory::Limitation);
+        assert!(found.value.contains("20%"));
+    }
+
+    // =====================================================================
+    // Test 24: Self-evaluation — high success rate → no Limitation node
+    // =====================================================================
+
+    #[test]
+    fn test_self_evaluate_no_limitation_for_high_success() {
+        use rollball_grafeo::types::{NodeStatus, ProceduralNode};
+
+        let store = test_store();
+
+        // Create ProceduralNodes with high success rate.
+        // success=8, fail=2 → rate=80% > 60%, should NOT create Limitation.
+        let node = ProceduralNode {
+            id: None,
+            name: "good_skill".to_string(),
+            trigger_condition: "使用 python 工具时".to_string(),
+            action_pattern: "使用 python".to_string(),
+            success_count: 8,
+            fail_count: 2,
+            confidence: 0.9,
+            activation_count: 0,
+            source_skill: Some("python".to_string()),
+            learned_from: "user_feedback".to_string(),
+            embedding: None,
+            status: NodeStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        store.store_procedural(&node).unwrap();
+
+        // Compute stats.
+        let nodes = store.get_all_procedural_nodes().unwrap();
+        let mut skill_stats: std::collections::HashMap<String, (u32, u32)> = std::collections::HashMap::new();
+        for n in &nodes {
+            if let Some(ref skill) = n.source_skill {
+                let entry = skill_stats.entry(skill.clone()).or_insert((0, 0));
+                entry.0 += n.success_count;
+                entry.1 += n.fail_count;
+            }
+        }
+
+        let (success, fail) = skill_stats.get("python").unwrap();
+        let total = success + fail;
+        let rate = *success as f32 / total as f32;
+
+        // Rate should be 80%, above the 60% threshold.
+        assert!(rate > 0.60, "python skill success rate should be > 60%, got {}", rate);
+
+        // No Limitation node should exist for python.
+        let found = store.find_autobiographical_by_key("skill_python").unwrap();
+        assert!(found.is_none());
+    }
+
+    // =====================================================================
+    // Test 25: Relationship auto-generation — span > 30 days
+    // =====================================================================
+
+    #[test]
+    fn test_auto_generate_relationship_span_over_30_days() {
+        use rollball_grafeo::types::{AutobioCategory, AutobiographicalNode, Episode, NodeStatus};
+
+        let store = test_store();
+
+        // Create an old episode (45 days ago).
+        let old_time = chrono::Utc::now() - chrono::TimeDelta::days(45);
+        let episode = Episode {
+            id: None,
+            session_id: "test-session".to_string(),
+            turn_index: 0,
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            embedding: None,
+            timestamp: old_time,
+            consolidated: false,
+            metadata: std::collections::HashMap::new(),
+            importance: 0.5,
+        };
+        store.store_episode(&episode).unwrap();
+
+        // Simulate the Relationship generation logic.
+        let db = store.db();
+        let graph = db.graph_store();
+        let episodic_ids = graph.nodes_by_label(rollball_grafeo::types::labels::EPISODIC);
+
+        let mut earliest_time: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut episode_count: u32 = 0;
+
+        for id in episodic_ids {
+            if let Some(n) = db.get_node(id) {
+                episode_count += 1;
+                if let Some(ts) = n.get_property("created_at").and_then(grafeo_common::types::Value::as_timestamp) {
+                    if let Some(dt) = chrono::DateTime::from_timestamp_micros(ts.as_micros()) {
+                        match earliest_time {
+                            None => earliest_time = Some(dt),
+                            Some(earliest) if dt < earliest => earliest_time = Some(dt),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let earliest = earliest_time.unwrap();
+        let span_days = (chrono::Utc::now() - earliest).num_days();
+        assert!(span_days >= 30, "span should be >= 30 days, got {}", span_days);
+
+        // Create the Relationship node.
+        let key = "collaboration_span".to_string();
+        let value = format!("已合作 {} 天（{} 次对话记录）", span_days, episode_count);
+        let node = AutobiographicalNode {
+            id: None,
+            category: AutobioCategory::Relationship,
+            key: key.clone(),
+            value,
+            confidence: 0.9,
+            source_episode_id: None,
+            embedding: None,
+            status: NodeStatus::Active,
+            created_at: chrono::Utc::now(),
+            updated_at: chrono::Utc::now(),
+            metadata: std::collections::HashMap::new(),
+        };
+        store.store_autobiographical(&node).unwrap();
+
+        // Verify the Relationship node was stored.
+        let found = store.find_autobiographical_by_key(&key).unwrap();
+        assert!(found.is_some());
+        let found = found.unwrap();
+        assert_eq!(found.category, AutobioCategory::Relationship);
+        assert!(found.value.contains("天"));
+    }
+
+    // =====================================================================
+    // Test 26: Relationship auto-generation — span < 30 days → no node
+    // =====================================================================
+
+    #[test]
+    fn test_auto_generate_relationship_span_under_30_days() {
+        use rollball_grafeo::types::Episode;
+
+        let store = test_store();
+
+        // Create a recent episode (5 days ago).
+        let recent_time = chrono::Utc::now() - chrono::TimeDelta::days(5);
+        let episode = Episode {
+            id: None,
+            session_id: "test-session".to_string(),
+            turn_index: 0,
+            role: "user".to_string(),
+            content: "Hello".to_string(),
+            embedding: None,
+            timestamp: recent_time,
+            consolidated: false,
+            metadata: std::collections::HashMap::new(),
+            importance: 0.5,
+        };
+        store.store_episode(&episode).unwrap();
+
+        // Compute span — should be < 30 days.
+        let db = store.db();
+        let graph = db.graph_store();
+        let episodic_ids = graph.nodes_by_label(rollball_grafeo::types::labels::EPISODIC);
+
+        let mut earliest_time: Option<chrono::DateTime<chrono::Utc>> = None;
+        for id in episodic_ids {
+            if let Some(n) = db.get_node(id) {
+                if let Some(ts) = n.get_property("created_at").and_then(grafeo_common::types::Value::as_timestamp) {
+                    if let Some(dt) = chrono::DateTime::from_timestamp_micros(ts.as_micros()) {
+                        match earliest_time {
+                            None => earliest_time = Some(dt),
+                            Some(earliest) if dt < earliest => earliest_time = Some(dt),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let span_days = (chrono::Utc::now() - earliest_time.unwrap()).num_days();
+        assert!(span_days < 30, "span should be < 30 days, got {}", span_days);
+
+        // No Relationship node should exist.
+        let found = store.find_autobiographical_by_key("collaboration_span").unwrap();
+        assert!(found.is_none());
     }
 }

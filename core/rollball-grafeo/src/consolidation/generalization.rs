@@ -484,7 +484,7 @@ impl GrafeoStore {
         &self,
         episodes: &[(String, String, String)],
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &dyn Fn(&str) -> Vec<f32>,
+        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
         min_observations: usize,
     ) -> Result<GeneralizationResult> {
         let config = GeneralizationConfig {
@@ -500,7 +500,7 @@ impl GrafeoStore {
         &self,
         episodes: &[(String, String, String)],
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &dyn Fn(&str) -> Vec<f32>,
+        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
         config: &GeneralizationConfig,
     ) -> Result<GeneralizationResult> {
         let patterns = if let Some(llm) = llm {
@@ -568,6 +568,9 @@ impl GrafeoStore {
                         success_count: pattern.observation_count as u32,
                         fail_count: 0,
                         confidence: pattern.confidence,
+                        activation_count: 0,
+                        source_skill: None,
+                        learned_from: "generalization".to_string(),
                         embedding: Some(embedding),
                         status: if pattern.confidence >= 0.8 {
                             NodeStatus::Active
@@ -605,7 +608,7 @@ impl GrafeoStore {
     pub async fn run_generalization(
         &self,
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: &dyn Fn(&str) -> Vec<f32>,
+        embedding_fn: &(dyn Fn(&str) -> Vec<f32> + Send + Sync),
         config: &GeneralizationConfig,
     ) -> Result<GeneralizationResult> {
         let episodes = self.scan_episodes_for_pattern_extraction(config.max_episodes_scan)?;
@@ -1040,6 +1043,9 @@ mod tests {
             success_count: 3,
             fail_count: 0,
             confidence: 0.8,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "generalization".to_string(),
             embedding: Some(test_embedding_fn("weather")),
             status: NodeStatus::Active,
             created_at: Utc::now(),
@@ -1089,6 +1095,9 @@ mod tests {
             success_count: 3,
             fail_count: 0,
             confidence: 0.75,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "generalization".to_string(),
             embedding: Some(test_embedding_fn("weather")),
             status: NodeStatus::Pending,
             created_at: Utc::now(),
@@ -1205,6 +1214,9 @@ mod tests {
             success_count: 5,
             fail_count: 0,
             confidence: 0.8,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "unknown".to_string(),
             embedding: None,
             status: NodeStatus::Active,
             created_at: Utc::now(),
@@ -1229,6 +1241,9 @@ mod tests {
             success_count: 5,
             fail_count: 0,
             confidence: 0.8,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "unknown".to_string(),
             embedding: None,
             status: NodeStatus::Active,
             created_at: Utc::now(),

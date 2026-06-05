@@ -17,6 +17,7 @@ use crate::types::NodeStatus;
 pub const FACT_THRESHOLD: f32 = 0.85;
 pub const PREFERENCE_THRESHOLD: f32 = 0.80;
 pub const RELATION_THRESHOLD: f32 = 0.90;
+pub const PROCEDURE_THRESHOLD: f32 = 0.85;
 
 /// Default temporal conflict window in hours.
 pub const TEMPORAL_WINDOW_HOURS: u64 = 24;

@@ -6,6 +6,17 @@
 //! - Memory store initialization
 //! - Long-term memory retrieval and context injection
 //! - Document entry persistence to conversation JSONL
+//! - Tool failure → ProceduralNode recording (Path B)
+//! - Self-evaluation → Autobiographical Limitation nodes (P2-1)
+//! - Relationship auto-generation at session-end (P2-2)
+//! - MetricsAggregator wiring + alert logging (P3-1, P3-2)
+//! - Ambiguous conflict confirmation hint injection (P3-4)
+
+use std::collections::HashMap;
+
+use rollball_core::providers::traits::ToolCall;
+use rollball_grafeo::judge::{should_sample, JudgeConfig};
+use rollball_grafeo::retrieval_metrics::{MetricsAlertType, OnlineRetrievalMetrics};
 
 use crate::agent::context::ContextBuilder;
 
@@ -84,6 +95,90 @@ impl super::loop_::AgentLoop {
                     .collect();
 
                 let metrics = retrieval.metrics.clone();
+
+                // P3-1: Feed retrieval metrics into MetricsAggregator.
+                // Convert rollball-memory::RetrievalMetrics →
+                // rollball-grafeo::OnlineRetrievalMetrics.
+                let online_metrics = OnlineRetrievalMetrics {
+                    result_count: metrics.result_count,
+                    avg_score: metrics.avg_score,
+                    max_score: metrics.max_score,
+                    abstention_triggered: metrics.abstention_triggered,
+                    retrieval_level: metrics.retrieval_level,
+                    graph_expand_nodes: metrics.graph_expand_nodes,
+                    hint_type: match metrics.hint_type {
+                        rollball_memory::HintType::Semantic => {
+                            rollball_grafeo::retrieval_metrics::HintType::Semantic
+                        }
+                        rollball_memory::HintType::Factual => {
+                            rollball_grafeo::retrieval_metrics::HintType::FullText
+                        }
+                        rollball_memory::HintType::Relational => {
+                            rollball_grafeo::retrieval_metrics::HintType::Hybrid
+                        }
+                        rollball_memory::HintType::Identity => {
+                            rollball_grafeo::retrieval_metrics::HintType::GraphExpand
+                        }
+                    },
+                };
+
+                let alerts = {
+                    let mut agg = self.core.metrics_aggregator.lock().unwrap();
+                    // Update max_possible_score if we have a better reference.
+                    // RRF hybrid scores are typically 0.01–0.05, so use a
+                    // sensible default of 1.0 unless we observe higher.
+                    if online_metrics.max_score > agg.max_possible_score() {
+                        agg.set_max_possible_score(online_metrics.max_score);
+                    }
+                    agg.record_retrieval(&online_metrics)
+                };
+
+                // P3-2: Log alerts via tracing::warn! so Desktop App can
+                // subscribe via the log stream.
+                for alert in &alerts {
+                    match alert.alert_type {
+                        MetricsAlertType::LowNrr => {
+                            tracing::warn!(
+                                nrr = alert.value,
+                                threshold = alert.threshold,
+                                "Memory alert: consistently low NRR — check embedding model or index"
+                            );
+                        }
+                        MetricsAlertType::HighAbstentionRate => {
+                            tracing::warn!(
+                                rate = alert.value,
+                                threshold = alert.threshold,
+                                "Memory alert: high abstention rate — consider lowering min_score"
+                            );
+                        }
+                        MetricsAlertType::LowAbstentionRate => {
+                            tracing::warn!(
+                                rate = alert.value,
+                                threshold = alert.threshold,
+                                "Memory alert: very low abstention rate — min_score may be too low"
+                            );
+                        }
+                        MetricsAlertType::LowConflictAccuracy => {
+                            tracing::warn!(
+                                accuracy = alert.value,
+                                threshold = alert.threshold,
+                                "Memory alert: conflict resolution accuracy below threshold"
+                            );
+                        }
+                        MetricsAlertType::HighDegradationRate => {
+                            tracing::warn!(
+                                rate = alert.value,
+                                threshold = alert.threshold,
+                                "Memory alert: high degradation rate — retrieval quality declining"
+                            );
+                        }
+                    }
+                }
+
+                // Activate ProceduralNodes: increment activation_count for
+                // retrieved procedures whose trigger matches the query context.
+                self.activate_procedural_nodes(store, &retrieval.memories);
+
                 let injected = manager.inject(&retrieval);
                 if !injected.formatted_text.is_empty() {
                     tracing::info!(
@@ -94,6 +189,61 @@ impl super::loop_::AgentLoop {
                     );
                     context_builder.set_retrieved_memory(injected.formatted_text);
                 }
+
+                // P3-4: Check for ambiguous memory conflicts that need
+                // user confirmation. If ≥ 3 pending conflicts, inject a
+                // hint into the next turn's context to guide the Agent to
+                // naturally ask the user for disambiguation.
+                if let Ok(true) = store.should_trigger_confirmation() {
+                    if let Ok(Some(hint)) = store.generate_confirmation_hint() {
+                        tracing::info!(
+                            "Injecting ambiguous conflict confirmation hint into context"
+                        );
+                        context_builder.set_ambiguous_confirmation_hint(hint);
+                    }
+                }
+
+                // P3-3: Sample and evaluate retrieval quality via LLM Judge.
+                // Uses deterministic sampling (10% of retrievals) and evaluates
+                // only the top-3 results using the cheapest model.
+                {
+                    let judge_config = JudgeConfig::default();
+                    let query_hash = {
+                        use std::hash::{Hash, Hasher};
+                        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                        query.query_text.hash(&mut hasher);
+                        hasher.finish()
+                    };
+                    if should_sample(&judge_config, query_hash) {
+                        let result_texts: Vec<String> = retrieval
+                            .memories
+                            .iter()
+                            .take(judge_config.top_k)
+                            .map(|m| m.content.clone())
+                            .collect();
+
+                        // Spawn a background evaluation — don't block the
+                        // retrieval pipeline. Result is logged, not returned.
+                        let provider = self.core.provider.clone();
+                        let model = judge_config.model.clone();
+                        let query_text = query.query_text.clone();
+                        tokio::spawn(async move {
+                            let result = crate::memory::evaluate_retrieval_llm(
+                                provider.as_ref(),
+                                &JudgeConfig { model, ..judge_config },
+                                &query_text,
+                                &result_texts,
+                            )
+                            .await;
+                            tracing::info!(
+                                score = result.relevance_score,
+                                reason = %result.reason,
+                                "P3-3: LLM Judge evaluated retrieval quality"
+                            );
+                        });
+                    }
+                }
+
                 memory_ids
             }
             Err(e) => {
@@ -127,6 +277,398 @@ impl super::loop_::AgentLoop {
                     "path": doc.get("abs_path"),
                 });
                 conversation.append_message("system", &content, Some(metadata));
+            }
+        }
+    }
+
+    /// Record tool execution failures as ProceduralNodes (Path B).
+    ///
+    /// Scans the tool results for errors and creates low-confidence
+    /// ProceduralNodes via `MemoryManager::record_procedural_from_failure()`.
+    /// This is a best-effort operation — failures are logged but never
+    /// block the main agent loop.
+    ///
+    /// Only records failures for known tools (not "Unknown tool" errors,
+    /// which indicate a registry issue, not a skill failure).
+    pub(crate) fn record_tool_failures_to_memory(
+        &self,
+        tool_calls: &[ToolCall],
+        tool_results: &[String],
+    ) {
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return,
+        };
+
+        let manager = self.core.init_memory_manager();
+
+        for (tc, result) in tool_calls.iter().zip(tool_results.iter()) {
+            // Detect tool failure from the result string.
+            // Failure patterns: "Error:", "Tool execution error:"
+            // Skip "Unknown tool:" errors (registry issue, not skill failure).
+            let is_error = result.starts_with("Error:")
+                || result.starts_with("Tool execution error:");
+            let is_unknown = result.starts_with("Unknown tool:");
+
+            if is_error && !is_unknown {
+                if let Err(e) = manager.record_procedural_from_failure(
+                    store,
+                    &tc.function.name,
+                    result,
+                ) {
+                    tracing::debug!(
+                        tool_name = %tc.function.name,
+                        error = %e,
+                        "Failed to record ProceduralNode from tool failure (non-fatal)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Activate ProceduralNodes that were retrieved and matched the context.
+    ///
+    /// For each retrieved memory with label "Procedural", increments the
+    /// `activation_count` in the Grafeo store. This tracks how often a
+    /// procedure is actually used, which feeds into self-evaluation (P2-1)
+    /// and confidence boosting.
+    fn activate_procedural_nodes(
+        &self,
+        store: &rollball_grafeo::grafeo::GrafeoStore,
+        memories: &[crate::memory::manager::RetrievedMemory],
+    ) {
+        use rollball_grafeo::types::labels;
+
+        for memory in memories {
+            if memory.label != labels::PROCEDURAL || memory.node_id == 0 {
+                continue;
+            }
+
+            let node_id = grafeo_common::types::NodeId::new(memory.node_id);
+            if let Some(mut node) = store.get_procedural(node_id).ok().flatten() {
+                node.activation_count = node.activation_count.saturating_add(1);
+                node.updated_at = chrono::Utc::now();
+                if let Err(e) = store.update_procedural(&node) {
+                    tracing::debug!(
+                        node_id = memory.node_id,
+                        error = %e,
+                        "Failed to increment activation_count (non-fatal)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Run experience generalization after a successful compaction (Path C).
+    ///
+    /// Triggers rule-based pattern detection from unconsolidated episodes.
+    /// If enough episodes exist (> min_observations, default 3), patterns
+    /// are extracted and stored as ProceduralNodes with
+    /// `learned_from = "generalization"`.
+    ///
+    /// This is a best-effort operation — failures are logged but never
+    /// block the main agent loop. LLM-driven pattern discovery is
+    /// deferred until a `TripleExtractorLlm` adapter is implemented.
+    pub(crate) async fn run_generalization_if_possible(&self) {
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return,
+        };
+
+        use rollball_grafeo::consolidation::generalization::GeneralizationConfig;
+
+        let config = GeneralizationConfig {
+            min_observations: 3,
+            max_episodes_scan: 100,
+            confidence_boost: 0.05,
+            max_confidence: 0.98,
+            use_llm: false, // No LLM adapter yet; rule-based only
+        };
+
+        // Dummy embedding function — returns a zero vector.
+        // Full embeddings will be filled during the next consolidation cycle.
+        // Using a function pointer (fn) instead of a closure to satisfy
+        // Send + Sync requirements for the async generalization call.
+        fn zero_embedding(_text: &str) -> Vec<f32> {
+            vec![0.0f32; rollball_grafeo::types::DEFAULT_EMBEDDING_DIM]
+        }
+
+        match store.run_generalization(None, &zero_embedding, &config).await {
+            Ok(result) => {
+                if result.nodes_created > 0 || result.nodes_boosted > 0 {
+                    tracing::info!(
+                        patterns = result.patterns.len(),
+                        nodes_created = result.nodes_created,
+                        nodes_boosted = result.nodes_boosted,
+                        deduplicated = result.patterns_deduplicated,
+                        "Path C: generalization completed after compaction"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "Generalization failed (non-fatal)"
+                );
+            }
+        }
+
+        // P2-3: Compress History autobiographical nodes if > 10.
+        match store.compress_history_nodes(10) {
+            Ok(compressed) => {
+                if compressed > 0 {
+                    tracing::info!(
+                        compressed,
+                        "History compression: marked old History nodes as Dormant"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    error = %e,
+                    "History compression failed (non-fatal)"
+                );
+            }
+        }
+    }
+
+    /// Self-evaluate skill performance and create Limitation nodes (P2-1).
+    ///
+    /// Scans all ProceduralNodes, groups them by `source_skill`, and
+    /// calculates the success rate for each skill. If a skill's success
+    /// rate falls below 60% with at least 5 total observations
+    /// (success + fail), an `AutobiographicalNode` with
+    /// `category: Limitation` is created or updated.
+    ///
+    /// Called after generalization (Path C) during the compaction flow.
+    /// This is a best-effort operation — failures are logged but never
+    /// block the main agent loop.
+    pub(crate) fn self_evaluate_skill_performance(&self) {
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return,
+        };
+
+        use rollball_grafeo::types::{AutobioCategory, AutobiographicalNode, NodeStatus};
+
+        // Gather all procedural nodes and compute per-skill success rates.
+        let nodes = match store.get_all_procedural_nodes() {
+            Ok(n) => n,
+            Err(e) => {
+                tracing::debug!(error = %e, "Failed to get procedural nodes for self-evaluation");
+                return;
+            }
+        };
+
+        // Group by source_skill, accumulating success/fail counts.
+        let mut skill_stats: HashMap<String, (u32, u32)> = HashMap::new();
+        for node in &nodes {
+            if let Some(ref skill) = node.source_skill {
+                let entry = skill_stats.entry(skill.clone()).or_insert((0, 0));
+                entry.0 += node.success_count;
+                entry.1 += node.fail_count;
+            }
+        }
+
+        let min_observations: u32 = 5;
+        let max_success_rate: f32 = 0.60; // below this → Limitation
+
+        for (skill, (success, fail)) in skill_stats {
+            let total = success + fail;
+            if total < min_observations {
+                continue;
+            }
+
+            let success_rate = success as f32 / total as f32;
+            if success_rate >= max_success_rate {
+                continue;
+            }
+
+            // Create or update a Limitation node for this skill.
+            let key = format!("skill_{}", skill.to_lowercase());
+            let value = format!(
+                "{} 成功率仅 {:.0}%（{} 次成功 / {} 次失败）",
+                skill,
+                success_rate * 100.0,
+                success,
+                fail
+            );
+
+            // Check if a Limitation node already exists for this skill.
+            match store.find_autobiographical_by_key(&key) {
+                Ok(Some(mut existing)) => {
+                    // Update the existing node with new stats.
+                    existing.value = value;
+                    existing.updated_at = chrono::Utc::now();
+                    if let Err(e) = store.update_autobiographical(&existing) {
+                        tracing::debug!(
+                            key = %key,
+                            error = %e,
+                            "Failed to update Limitation node (non-fatal)"
+                        );
+                    } else {
+                        tracing::info!(
+                            skill = %skill,
+                            success_rate = success_rate,
+                            "Updated existing Limitation node for skill"
+                        );
+                    }
+                }
+                Ok(None) => {
+                    // Create a new Limitation node.
+                    let node = AutobiographicalNode {
+                        id: None,
+                        category: AutobioCategory::Limitation,
+                        key,
+                        value,
+                        confidence: 0.8,
+                        source_episode_id: None,
+                        embedding: None,
+                        status: NodeStatus::Active,
+                        created_at: chrono::Utc::now(),
+                        updated_at: chrono::Utc::now(),
+                        metadata: HashMap::new(),
+                    };
+                    if let Err(e) = store.store_autobiographical(&node) {
+                        tracing::debug!(
+                            skill = %skill,
+                            error = %e,
+                            "Failed to store Limitation node (non-fatal)"
+                        );
+                    } else {
+                        tracing::info!(
+                            skill = %skill,
+                            success_rate = success_rate,
+                            observations = total,
+                            "Created Limitation node for low-performing skill"
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        key = %key,
+                        error = %e,
+                        "Failed to query Limitation node (non-fatal)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Auto-generate Relationship nodes at session-end (P2-2).
+    ///
+    /// Per ADR-P2-004: checks if the earliest episode in Grafeo is more
+    /// than 30 days old, indicating a long-standing collaboration. If so,
+    /// creates or updates an `AutobiographicalNode { category: Relationship }`.
+    ///
+    /// Since RollBall doesn't have explicit user identity, we use a
+    /// generic key "collaboration_span" to track the overall partnership
+    /// duration. In the future, when user identity is available, this
+    /// can be extended to per-user relationship tracking.
+    ///
+    /// This is a best-effort operation — failures are logged but never
+    /// block the session close flow.
+    pub(crate) fn auto_generate_relationship(&self) {
+        let store = match self.core.memory_store() {
+            Some(s) => s,
+            None => return,
+        };
+
+        use grafeo_common::types::Value;
+        use rollball_grafeo::types::{labels, AutobioCategory, AutobiographicalNode, NodeStatus};
+
+        // Find the earliest episode in the Grafeo store.
+        let db = store.db();
+        let graph = db.graph_store();
+        let episodic_ids = graph.nodes_by_label(labels::EPISODIC);
+
+        let mut earliest_time: Option<chrono::DateTime<chrono::Utc>> = None;
+        let mut episode_count: u32 = 0;
+
+        for id in episodic_ids {
+            if let Some(n) = db.get_node(id) {
+                episode_count += 1;
+                if let Some(ts) = n.get_property("created_at").and_then(Value::as_timestamp) {
+                    if let Some(dt) = chrono::DateTime::from_timestamp_micros(ts.as_micros()) {
+                        match earliest_time {
+                            None => earliest_time = Some(dt),
+                            Some(earliest) if dt < earliest => earliest_time = Some(dt),
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        }
+
+        let earliest = match earliest_time {
+            Some(t) => t,
+            None => return, // No episodes → nothing to track
+        };
+
+        let now = chrono::Utc::now();
+        let span_days = (now - earliest).num_days();
+
+        // Only create/update Relationship if collaboration spans > 30 days.
+        let min_days: i64 = 30;
+        if span_days < min_days {
+            return;
+        }
+
+        let key = "collaboration_span".to_string();
+        let value = format!("已合作 {} 天（{} 次对话记录）", span_days, episode_count);
+
+        // Check if a Relationship node already exists.
+        match store.find_autobiographical_by_key(&key) {
+            Ok(Some(mut existing)) => {
+                existing.value = value;
+                existing.updated_at = now;
+                if let Err(e) = store.update_autobiographical(&existing) {
+                    tracing::debug!(
+                        key = %key,
+                        error = %e,
+                        "Failed to update Relationship node (non-fatal)"
+                    );
+                } else {
+                    tracing::info!(
+                        span_days,
+                        episode_count,
+                        "Updated Relationship node for long-standing collaboration"
+                    );
+                }
+            }
+            Ok(None) => {
+                let node = AutobiographicalNode {
+                    id: None,
+                    category: AutobioCategory::Relationship,
+                    key,
+                    value,
+                    confidence: 0.9,
+                    source_episode_id: None,
+                    embedding: None,
+                    status: NodeStatus::Active,
+                    created_at: now,
+                    updated_at: now,
+                    metadata: HashMap::new(),
+                };
+                if let Err(e) = store.store_autobiographical(&node) {
+                    tracing::debug!(
+                        error = %e,
+                        "Failed to store Relationship node (non-fatal)"
+                    );
+                } else {
+                    tracing::info!(
+                        span_days,
+                        episode_count,
+                        "Created Relationship node for long-standing collaboration"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    key = %key,
+                    error = %e,
+                    "Failed to query Relationship node (non-fatal)"
+                );
             }
         }
     }

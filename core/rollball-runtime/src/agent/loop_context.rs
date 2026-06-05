@@ -240,6 +240,16 @@ impl AgentLoop {
                     // Mark session as compacted (zero new messages since compaction)
                     self.session.is_compacted = true;
 
+                    // Path C: Run generalization after successful compaction.
+                    // Scans unconsolidated episodes for behavior patterns and
+                    // creates/boosts ProceduralNodes (rule-based only, no LLM).
+                    self.run_generalization_if_possible().await;
+
+                    // P2-1: Self-evaluate skill performance after generalization.
+                    // Checks ProceduralNode success/fail rates and creates
+                    // Limitation autobiographical nodes for low-performing skills.
+                    self.self_evaluate_skill_performance();
+
                     // Recompute usage after compaction for stage 3 check
                     let new_tokens = self.session.history.token_count();
                     let new_usage = if budget > 0 {

@@ -53,6 +53,29 @@ impl GrafeoStore {
         Ok(results)
     }
 
+    /// Get a procedural node by ID.
+    ///
+    /// Returns `None` if the node doesn't exist or is not a Procedural node.
+    pub fn get_procedural(&self, id: NodeId) -> Result<Option<ProceduralNode>> {
+        let node = match self.db.get_node(id) {
+            Some(n) => n,
+            None => return Ok(None),
+        };
+
+        // Verify it's actually a Procedural node.
+        let graph = self.db.graph_store();
+        if !graph.nodes_by_label(labels::PROCEDURAL).contains(&id) {
+            return Ok(None);
+        }
+
+        let props: Vec<(String, Value)> = node
+            .properties_as_btree()
+            .into_iter()
+            .map(|(k, v)| (k.as_str().to_string(), v))
+            .collect();
+        Ok(Some(ProceduralNode::from_properties(id, &props)?))
+    }
+
     /// Update an existing procedural node (e.g. increment success/fail counts).
     pub fn update_procedural(&self, node: &ProceduralNode) -> Result<()> {
         let id = node.id.ok_or_else(|| {
@@ -93,6 +116,9 @@ mod tests {
             success_count: 5,
             fail_count: 1,
             confidence: 0.85,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "user_feedback".to_string(),
             embedding: None,
             status: NodeStatus::Active,
             created_at: test_dt(),
@@ -116,6 +142,9 @@ mod tests {
             success_count: 10,
             fail_count: 0,
             confidence: 0.9,
+            activation_count: 3,
+            source_skill: None,
+            learned_from: "user_feedback".to_string(),
             embedding: None,
             status: NodeStatus::Active,
             created_at: test_dt(),
@@ -143,6 +172,9 @@ mod tests {
             success_count: 3,
             fail_count: 2,
             confidence: 0.7,
+            activation_count: 0,
+            source_skill: None,
+            learned_from: "execution_failure".to_string(),
             embedding: None,
             status: NodeStatus::Active,
             created_at: test_dt(),

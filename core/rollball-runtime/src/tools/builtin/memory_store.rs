@@ -40,22 +40,23 @@ impl MemoryStoreTool {
     fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "memory_store".to_string(),
-            description: "Store a fact, preference, relationship, or note in long-term memory for later recall. \
+            description: "Store a fact, preference, relationship, or behavioral pattern in long-term memory for later recall. \
                 Describe what you want to remember in natural language in 'content'. \
                 Choose 'category': 'fact' for objective truths, 'preference' for user tastes/habits, \
-                'relation' for entity relationships. Estimate your confidence in this knowledge (0.0-1.0). \
+                'relation' for entity relationships, 'procedure' for behavioral patterns (when X happens, do Y). \
+                Estimate your confidence in this knowledge (0.0-1.0). \
                 Optionally provide keywords to help retrieval.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "content": {
                         "type": "string",
-                        "description": "Natural language description of what to remember (e.g. 'User lives in Beijing', 'User prefers dark mode over light mode')"
+                        "description": "Natural language description of what to remember (e.g. 'User lives in Beijing', 'User prefers dark mode over light mode', 'When user asks for summary, reply in 3 sentences max')"
                     },
                     "category": {
                         "type": "string",
-                        "enum": ["fact", "preference", "relation"],
-                        "description": "Type of knowledge: 'fact' (objective truth), 'preference' (user taste/habit), 'relation' (entity relationship)"
+                        "enum": ["fact", "preference", "relation", "procedure"],
+                        "description": "Type of knowledge: 'fact' (objective truth), 'preference' (user taste/habit), 'relation' (entity relationship), 'procedure' (behavioral pattern: when X, do Y)"
                     },
                     "confidence": {
                         "type": "number",
@@ -79,6 +80,7 @@ fn parse_category(s: &str) -> Option<KnowledgeSubType> {
         "fact" => Some(KnowledgeSubType::Fact),
         "preference" => Some(KnowledgeSubType::Preference),
         "relation" => Some(KnowledgeSubType::Relation),
+        "procedure" => Some(KnowledgeSubType::Procedure),
         _ => None,
     }
 }
@@ -111,7 +113,7 @@ impl Tool for MemoryStoreTool {
                     ok: false,
                     content: String::new(),
                     error: Some(
-                        "Missing required parameter 'category'. Must be 'fact', 'preference', or 'relation'."
+                        "Missing required parameter 'category'. Must be 'fact', 'preference', 'relation', or 'procedure'."
                             .to_string(),
                     ),
                     token_usage: None,
@@ -126,7 +128,7 @@ impl Tool for MemoryStoreTool {
                     ok: false,
                     content: String::new(),
                     error: Some(format!(
-                        "Invalid category '{}'. Must be 'fact', 'preference', or 'relation'.",
+                        "Invalid category '{}'. Must be 'fact', 'preference', 'relation', or 'procedure'.",
                         category_str
                     )),
                     token_usage: None,
@@ -384,5 +386,36 @@ mod tests {
             .unwrap();
         assert!(result.ok);
         assert!(result.content.contains("0.00"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_procedure() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "When user asks for summary, reply concisely",
+                "category": "procedure",
+                "confidence": 0.9
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("Procedure"));
+        assert!(result.content.contains("reply concisely"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_store_procedure_low_confidence() {
+        let tool = MemoryStoreTool::new("com.test.agent", None);
+        let result = tool
+            .execute(serde_json::json!({
+                "content": "User might prefer tables",
+                "category": "procedure",
+                "confidence": 0.5
+            }))
+            .await
+            .unwrap();
+        assert!(result.ok);
+        assert!(result.content.contains("Procedure"));
     }
 }

@@ -446,6 +446,16 @@ pub struct ProceduralNode {
     pub fail_count: u32,
     /// Confidence [0.0, 1.0].
     pub confidence: f32,
+    /// How many times this procedure has been activated (retrieved + injected).
+    #[serde(default)]
+    pub activation_count: u32,
+    /// Which skill this procedure was learned from (if applicable).
+    #[serde(default)]
+    pub source_skill: Option<String>,
+    /// How this procedure was learned: "user_feedback", "execution_failure",
+    /// "offline_consolidation", "generalization", or "unknown".
+    #[serde(default = "default_learned_from")]
+    pub learned_from: String,
     /// Semantic embedding.
     pub embedding: Option<Vec<f32>>,
     /// Lifecycle status.
@@ -456,6 +466,10 @@ pub struct ProceduralNode {
     pub updated_at: DateTime<Utc>,
     /// Optional metadata.
     pub metadata: HashMap<String, serde_json::Value>,
+}
+
+fn default_learned_from() -> String {
+    "unknown".to_string()
 }
 
 /// Autobiographical memory node — self-knowledge.

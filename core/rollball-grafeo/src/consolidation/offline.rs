@@ -10,7 +10,7 @@ use crate::consolidation::generalization::GeneralizationConfig;
 use crate::consolidation::triple_extraction::TripleExtractorLlm;
 use crate::error::Result;
 use crate::grafeo::GrafeoStore;
-use crate::types::{labels, KnowledgeNode, NodeStatus};
+use crate::types::{labels, AutobioCategory, AutobiographicalNode, KnowledgeNode, NodeStatus};
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -53,6 +53,8 @@ pub struct OfflineConsolidationResult {
     pub procedural_created: usize,
     /// Number of existing ProceduralNodes boosted by generalization.
     pub procedural_boosted: usize,
+    /// Number of History nodes compressed into summaries.
+    pub history_compressed: usize,
 }
 
 // ---------------------------------------------------------------------------
@@ -73,7 +75,7 @@ impl GrafeoStore {
         &self,
         config: &OfflineConsolidationConfig,
         llm: Option<&dyn TripleExtractorLlm>,
-        embedding_fn: Option<&dyn Fn(&str) -> Vec<f32>>,
+        embedding_fn: Option<&(dyn Fn(&str) -> Vec<f32> + Send + Sync)>,
         gen_config: Option<&GeneralizationConfig>,
     ) -> Result<OfflineConsolidationResult> {
         // Step 1: Standard offline consolidation (upgrade/downgrade Pending nodes)
@@ -88,6 +90,9 @@ impl GrafeoStore {
             result.procedural_created = gen_result.nodes_created;
             result.procedural_boosted = gen_result.nodes_boosted;
         }
+
+        // Step 3: Compress History nodes if there are too many (> 10).
+        result.history_compressed = self.compress_history_nodes(10)?;
 
         Ok(result)
     }
@@ -192,6 +197,86 @@ impl GrafeoStore {
 
         Ok(pending)
     }
+
+    /// Compress History autobiographical nodes when they exceed a threshold.
+    ///
+    /// When there are more than `max_history_nodes` (default 10) History
+    /// nodes, this method groups them by month and creates summary nodes.
+    /// The original History nodes are marked Dormant (not deleted).
+    ///
+    /// This is a rule-based compression (no LLM). Phase 3 will add
+    /// LLM-based summarization for richer compression.
+    ///
+    /// Returns the number of History nodes compressed (marked Dormant).
+    pub fn compress_history_nodes(&self, max_history_nodes: usize) -> Result<usize> {
+        // Find all History autobiographical nodes.
+        let history_nodes = self.find_autobiographical_by_category(AutobioCategory::History)?;
+
+        if history_nodes.len() <= max_history_nodes {
+            return Ok(0); // Nothing to compress
+        }
+
+        // Group by month (YYYY-MM format).
+        let mut monthly: std::collections::BTreeMap<String, Vec<AutobiographicalNode>> =
+            std::collections::BTreeMap::new();
+
+        for node in &history_nodes {
+            let month_key = node.created_at.format("%Y-%m").to_string();
+            monthly.entry(month_key).or_default().push(node.clone());
+        }
+
+        let mut compressed = 0usize;
+
+        for (month, nodes) in monthly {
+            if nodes.len() <= 1 {
+                // Single node in a month — keep it Active.
+                continue;
+            }
+
+            // Create a summary node for this month.
+            let summary_value = nodes
+                .iter()
+                .map(|n| n.value.as_str())
+                .collect::<Vec<_>>()
+                .join("；");
+
+            // Truncate to 200 chars to avoid bloat.
+            let truncated = if summary_value.len() > 200 {
+                format!("{}…", &summary_value[..200])
+            } else {
+                summary_value
+            };
+
+            let summary_key = format!("history_summary_{}", month);
+            let summary_node = AutobiographicalNode {
+                id: None,
+                category: AutobioCategory::History,
+                key: summary_key,
+                value: truncated,
+                confidence: 0.9,
+                source_episode_id: None,
+                embedding: None,
+                status: NodeStatus::Active,
+                created_at: nodes[0].created_at,
+                updated_at: Utc::now(),
+                metadata: std::collections::HashMap::new(),
+            };
+
+            self.store_autobiographical(&summary_node)?;
+
+            // Mark original nodes as Dormant.
+            for mut node in nodes {
+                if node.id.is_some() {
+                    node.status = NodeStatus::Dormant;
+                    node.updated_at = Utc::now();
+                    self.update_autobiographical(&node)?;
+                    compressed += 1;
+                }
+            }
+        }
+
+        Ok(compressed)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +286,7 @@ impl GrafeoStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{KnowledgeSubType, DEFAULT_EMBEDDING_DIM};
+    use crate::types::{AutobioCategory, AutobiographicalNode, KnowledgeSubType, DEFAULT_EMBEDDING_DIM};
 
     fn test_store() -> GrafeoStore {
         GrafeoStore::new_in_memory().unwrap()
@@ -423,5 +508,76 @@ mod tests {
         assert_eq!(result.kept_pending, 1);
         assert_eq!(result.upgraded, 0);
         assert_eq!(result.marked_dormant, 0);
+    }
+
+    // =====================================================================
+    // Test: compress_history_nodes — no compression when ≤ 10 nodes
+    // =====================================================================
+
+    #[test]
+    fn test_compress_history_nodes_no_compression_needed() {
+        let store = test_store();
+
+        // Create 5 History nodes (below threshold).
+        for i in 0..5 {
+            let node = AutobiographicalNode {
+                id: None,
+                category: AutobioCategory::History,
+                key: format!("milestone_{}", i),
+                value: format!("Event {}", i),
+                confidence: 0.9,
+                source_episode_id: None,
+                embedding: None,
+                status: NodeStatus::Active,
+                created_at: Utc::now(),
+                updated_at: Utc::now(),
+                metadata: std::collections::HashMap::new(),
+            };
+            store.store_autobiographical(&node).unwrap();
+        }
+
+        let compressed = store.compress_history_nodes(10).unwrap();
+        assert_eq!(compressed, 0, "no compression should happen with ≤ 10 nodes");
+    }
+
+    // =====================================================================
+    // Test: compress_history_nodes — compresses when > 10 nodes
+    // =====================================================================
+
+    #[test]
+    fn test_compress_history_nodes_compresses_over_threshold() {
+        let store = test_store();
+
+        // Create 12 History nodes in the same month.
+        // Since there are > 10 and > 1 in a month, they should be compressed.
+        let base_time = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        for i in 0..12 {
+            let node = AutobiographicalNode {
+                id: None,
+                category: AutobioCategory::History,
+                key: format!("milestone_{}", i),
+                value: format!("Event {}", i),
+                confidence: 0.9,
+                source_episode_id: None,
+                embedding: None,
+                status: NodeStatus::Active,
+                created_at: base_time + TimeDelta::days(i),
+                updated_at: base_time + TimeDelta::days(i),
+                metadata: std::collections::HashMap::new(),
+            };
+            store.store_autobiographical(&node).unwrap();
+        }
+
+        let compressed = store.compress_history_nodes(10).unwrap();
+        assert!(compressed > 0, "should compress some History nodes");
+
+        // Verify: some original nodes should be Dormant now.
+        let history = store.find_autobiographical_by_category(AutobioCategory::History).unwrap();
+        let dormant_count = history.iter().filter(|n| n.status == NodeStatus::Dormant).count();
+        assert!(dormant_count > 0, "some original nodes should be Dormant");
+
+        // Verify: a summary node should exist.
+        let summary = store.find_autobiographical_by_key("history_summary_2023-11").unwrap();
+        assert!(summary.is_some(), "a summary node should be created for the month");
     }
 }
