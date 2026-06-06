@@ -87,7 +87,7 @@ export function FileEditorPanel({ width }: { width: number }) {
 
     return (
         <div
-            className="flex flex-col border-l border-zinc-200 bg-zinc-50 dark:border-zinc-800 dark:bg-zinc-900"
+            className="flex flex-col border-l border-zinc-200 bg-white dark:border-zinc-800 dark:bg-zinc-900"
             style={{ width }}
         >
             {/* Tab bar */}
