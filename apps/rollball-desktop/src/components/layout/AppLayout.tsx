@@ -55,6 +55,12 @@ export function AppLayout() {
   // Refs to track latest panel widths for proportional window-resize scaling
   const fileWidthValueRef = useRef(fileWidth);
   fileWidthValueRef.current = fileWidth;
+  const sidebarWidthRef = useRef(sidebarWidth);
+  sidebarWidthRef.current = sidebarWidth;
+  const rightWidthRef = useRef(rightWidth);
+  rightWidthRef.current = rightWidth;
+  const resultsCollapsedRef = useRef(resultsCollapsed);
+  resultsCollapsedRef.current = resultsCollapsed;
 
   // Auto-size file panel to half available area on first open
   useEffect(() => {
@@ -129,22 +135,30 @@ export function AppLayout() {
   // Scale file panel proportionally when window size changes significantly (maximize/restore).
   // Sidebar and right panel keep their absolute widths; only session & file panels scale.
   // Small manual edge-drags (<5%) are ignored to avoid jitter.
-  const prevWindowWidthRef = useRef(window.innerWidth);
+  const NAV_WIDTH = 48;
+  const prevAvailableWidthRef = useRef(window.innerWidth - sidebarWidth - (resultsCollapsed ? 0 : rightWidth) - NAV_WIDTH);
   useEffect(() => {
     const handleWindowResize = () => {
       // Don't scale during manual panel resize
       if (isResizingFile.current) return;
 
       const newWindowWidth = window.innerWidth;
-      const ratio = newWindowWidth / prevWindowWidthRef.current;
+      const constantWidths = sidebarWidthRef.current + (resultsCollapsedRef.current ? 0 : rightWidthRef.current) + NAV_WIDTH;
+      const newAvailable = newWindowWidth - constantWidths;
+      const prevAvailable = prevAvailableWidthRef.current;
 
-      // Only scale when window size changes significantly (>5%)
+      // Guard against zero or negative available space
+      if (prevAvailable <= 0 || newAvailable <= 0) return;
+
+      const ratio = newAvailable / prevAvailable;
+
+      // Only scale when available space changes significantly (>5%)
       if (Math.abs(ratio - 1) < 0.05) return;
 
-      prevWindowWidthRef.current = newWindowWidth;
+      prevAvailableWidthRef.current = newAvailable;
 
-      // Only scale the file panel; ChatPanel is flex-1 and adjusts automatically.
-      // Keep the same proportion of file vs session within the available space.
+      // Scale the file panel by the available-space ratio; ChatPanel (flex-1) gets the rest.
+      // This preserves the same proportion of file vs session within the available space.
       const hasFiles = useFileEditorStore.getState().openFiles.length > 0;
       if (hasFiles) {
         const newFile = Math.min(Math.max(Math.round(fileWidthValueRef.current * ratio), MIN_FILE_WIDTH), MAX_FILE_WIDTH);

@@ -17,6 +17,7 @@ pub mod error;
 pub mod cron;
 pub mod http;
 pub mod grpc;
+pub mod lsp;
 pub mod resource_cache;
 
 /// Type alias for the tracing reload handle used to dynamically change log levels.

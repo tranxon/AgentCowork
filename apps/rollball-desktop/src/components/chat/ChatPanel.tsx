@@ -16,7 +16,7 @@ import { needsApiKey, keyPlaceholder } from "../../lib/providers";
 import { fetchProviderModels, fetchProviders } from "../../lib/gateway-api";
 import { emitAgentConfigRefresh } from "../../lib/refresh";
 import { syncAgentUI } from "../../lib/agent-start";
-import { toolbarButton, toolbarButtonActive } from "../../lib/ui-styles";
+import { toolbarButton } from "../../lib/ui-styles";
 import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Cpu, Loader, Pencil, Paperclip, Image, Brain } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -50,6 +50,7 @@ import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
 import { UserAvatar } from "../common/UserAvatar";
 import { AgentAvatar } from "../common/AgentAvatar";
 import { DocumentChip } from "./DocumentChip";
+import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 
 // Module-level: persists across ChatPanel mount/unmount cycles
 // so nav-back (Settings→Chat) doesn't trigger full reinit
@@ -129,6 +130,7 @@ export function ChatPanel() {
       setTodosCollapsed(true);
     }
   }, [todos]);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const prevScrollHeightRef = useRef<number>(0);
@@ -1253,10 +1255,10 @@ export function ChatPanel() {
             }}
           />
 
-          {/* Bottom toolbar */}
-          <div className="flex items-center justify-between px-3 pb-2">
+          {/* Bottom toolbar — @container for responsive button text collapse */}
+          <div className="@container/tb flex items-center justify-between px-3 pb-2 min-w-[260px]">
             {/* Left: feature buttons */}
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 min-w-0">
               {/* Model switcher — only enabled when agent is running */}
               {availableModels.length > 1 && selectedAgent?.running && (
                 <ModelMenu
@@ -2411,31 +2413,24 @@ function ModelMenu({
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
-  return (
-    <div ref={ref} className="relative inline-block">
-      {/* Trigger button */}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={cn(
-          toolbarButton,
-          open && toolbarButtonActive,
-        )}
-      >
-        <Cpu size={14} />
-        <span>
-          {(() => {
-            if (!currentModel || !currentModel.includes('/')) return currentModel ?? "Model";
-            const parts = currentModel.split('/');
-            const prefix = parts[0];
-            const modelName = parts.slice(1).join('/');
-            // Only strip if model name is longer than prefix (avoid stripping model/provider)
-            return modelName.length > prefix.length ? modelName : currentModel;
-          })()}
-        </span>
-        <ChevronDown className="h-3 w-3 text-zinc-400" />
-      </button>
+  const modelDisplayName = (() => {
+    if (!currentModel || !currentModel.includes('/')) return currentModel ?? "Model";
+    const parts = currentModel.split('/');
+    const prefix = parts[0];
+    const modelName = parts.slice(1).join('/');
+    return modelName.length > prefix.length ? modelName : currentModel;
+  })();
 
+  return (
+    <ToolbarDropdownTrigger
+      icon={<Cpu size={14} />}
+      label={modelDisplayName}
+      collapseClass="tb-model-text"
+      tipClass="tb-model-tip"
+      open={open}
+      onToggle={() => setOpen(!open)}
+      wrapperRef={ref}
+    >
       {/* Popup menu */}
       {open && (
         <div
@@ -2517,7 +2512,7 @@ function ModelMenu({
           window.dispatchEvent(new Event('models-added'));
         }}
       />
-    </div>
+    </ToolbarDropdownTrigger>
   );
 }
 

@@ -14,11 +14,10 @@ interface FlatNode {
 interface FileTreeProps {
     agentId: string;
     workspaceId: string;
-    searchQuery: string;
     onFileDoubleClick?: (entry: TreeEntry, relPath: string) => void;
 }
 
-export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick }: FileTreeProps) {
+export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreeProps) {
     const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set([""]));
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const treeCache = useWorkspaceStore((s) => s.treeCache);
@@ -54,13 +53,6 @@ export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick 
             for (const entry of entries) {
                 const childRelPath = relPath ? `${relPath}/${entry.name}` : entry.name;
 
-                // Filter by search query
-                if (searchQuery) {
-                    const matches = entry.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        (entry.type === "directory" && hasMatchingDescendant(ck, childRelPath, searchQuery, treeCache));
-                    if (!matches) continue;
-                }
-
                 result.push({ entry, depth, relPath: childRelPath });
 
                 if (entry.type === "directory" && expandedPaths.has(childRelPath)) {
@@ -71,7 +63,7 @@ export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick 
 
         walk("", 0);
         return result;
-    }, [ck, treeCache, expandedPaths, searchQuery]);
+    }, [ck, treeCache, expandedPaths]);
 
     const handleToggle = useCallback(
         (relPath: string) => {
@@ -106,7 +98,7 @@ export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick 
     });
 
     // Empty state
-    if (flatNodes.length === 0 && !searchQuery) {
+    if (flatNodes.length === 0) {
         const rootEntries = treeCache[`${ck}:`];
         if (!rootEntries) {
             return (
@@ -122,14 +114,6 @@ export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick 
                 </div>
             );
         }
-    }
-
-    if (flatNodes.length === 0 && searchQuery) {
-        return (
-            <div className="flex items-center justify-center py-8 text-xs text-zinc-400">
-                No matching files
-            </div>
-        );
     }
 
     return (
@@ -177,26 +161,4 @@ export function FileTree({ agentId, workspaceId, searchQuery, onFileDoubleClick 
             </div>
         </div>
     );
-}
-
-/** Check if any descendant of a directory matches the search query */
-function hasMatchingDescendant(
-    ck: string,
-    relPath: string,
-    query: string,
-    treeCache: Record<string, TreeEntry[]>,
-    depth = 0,
-): boolean {
-    if (depth > 5) return false;
-    const entries = treeCache[`${ck}:${relPath}`];
-    if (!entries) return false;
-
-    for (const entry of entries) {
-        if (entry.name.toLowerCase().includes(query.toLowerCase())) return true;
-        if (entry.type === "directory") {
-            const childPath = relPath ? `${relPath}/${entry.name}` : entry.name;
-            if (hasMatchingDescendant(ck, childPath, query, treeCache, depth + 1)) return true;
-        }
-    }
-    return false;
 }

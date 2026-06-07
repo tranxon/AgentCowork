@@ -1457,6 +1457,14 @@ function handleMessageEvent(
     case "ack":
       break;
 
+    case "stop_received":
+      // Gateway acknowledges that the stop request was received and
+      // forwarded to the Runtime.  This is NOT a state transition —
+      // the Runtime may still be streaming.  The real "stopped" event
+      // arrives later via the bridge channel after the Runtime actually
+      // processes the interrupt.
+      break;
+
     case "reasoning_started":
       if (sid) {
         set((state) => updateSessionState(state, agentId, sid, { isReasoning: true, isCompacting: false }));

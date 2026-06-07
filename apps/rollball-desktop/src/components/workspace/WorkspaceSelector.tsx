@@ -6,9 +6,10 @@ import { useChatStore } from "../../stores/chatStore";
 import { useTranslation } from "../../i18n/useTranslation";
 import type { WorkspaceDir } from "../../stores/workspaceStore";
 import { useToast } from "../common/ToastProvider";
-import { ChevronDown, FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } from "lucide-react";
+import { FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } from "lucide-react";
 import * as dialog from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
+import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 
 export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "up" | "down" }) {
   const { t } = useTranslation();
@@ -133,37 +134,28 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
     (w.alias && w.alias.toLowerCase().includes(searchQuery.toLowerCase())),
   );
 
+  const currentWsName = currentWsId === "__agent_home__"
+    ? "Agent Home"
+    : currentWsId
+      ? (() => {
+        const w = workspaces.find((ws) => ws.id === currentWsId);
+        if (!w) return "Workspace";
+        const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
+        return name.length > 24 ? name.slice(0, 24) + "..." : name;
+      })()
+      : "Workspace";
+
   return (
     <>
-      {/* Trigger button */}
-      <div ref={ref} className="relative inline-block">
-        <button
-          type="button"
-          onClick={() => {
-            setOpen(!open);
-          }}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors",
-            "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200",
-            open && "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100",
-          )}
-        >
-          <FolderOpen size={14} />
-          <span className="max-w-[120px] truncate">
-            {currentWsId === "__agent_home__"
-              ? "Agent Home"
-              : currentWsId
-                ? (() => {
-                  const w = workspaces.find((ws) => ws.id === currentWsId);
-                  if (!w) return "Workspace";
-                  const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
-                  return name.length > 24 ? name.slice(0, 24) + "..." : name;
-                })()
-                : "Workspace"}
-          </span>
-          <ChevronDown className="h-3 w-3 text-zinc-400" />
-        </button>
-
+      <ToolbarDropdownTrigger
+        icon={<FolderOpen size={14} />}
+        label={currentWsName}
+        collapseClass="tb-ws-text"
+        tipClass="tb-ws-tip"
+        open={open}
+        onToggle={() => setOpen(!open)}
+        wrapperRef={ref}
+      >
         {/* Dropdown menu */}
         {open && (
           <div className={cn(
@@ -317,7 +309,7 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
             </button>
           </div>
         )}
-      </div>
+      </ToolbarDropdownTrigger>
     </>
   );
 }

@@ -630,8 +630,17 @@ async fn handle_ws_text(
         }
 
         if pushed_ok {
+            // Acknowledge receipt of the stop request — but do NOT claim the
+            // agent has already stopped.  The Runtime's actual Stopped event
+            // (routed via chunk channel → bridge) carries the real state
+            // transition.  Using "stopped" here was premature: it caused the
+            // frontend to clear streamingMessageId while sessionStatus still
+            // reported "streaming" (which IS the truth — the Runtime hasn't
+            // processed the interrupt yet), leaving the UI in an inconsistent
+            // state where sending stayed true and the user couldn't send a new
+            // message until session_state_changed{idle} arrived.
             let ack = serde_json::json!({
-                "type": "stopped",
+                "type": "stop_received",
                 "agentId": agent_id,
             });
             let _ = socket.send(Message::Text(ack.to_string().into())).await;

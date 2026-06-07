@@ -509,7 +509,16 @@ pub async fn list_tree(
         }
     };
 
-    let root_str = canonical_root.to_string_lossy().replace('\\', "/");
+    // Strip the Windows extended-length path prefix (\\?\) that canonicalize()
+    // produces on Windows. This prefix is not valid in file URIs and breaks
+    // LSP document URIs (e.g. "file:////?/C:/..." instead of "file:///C:/...").
+    let canonical_str = canonical_root.to_string_lossy();
+    let stripped = if canonical_str.starts_with(r"\\?\") {
+        &canonical_str[4..]
+    } else {
+        canonical_str.as_ref()
+    };
+    let root_str = stripped.replace('\\', "/");
     let mut dirs: Vec<TreeEntry> = Vec::new();
     let mut files: Vec<TreeEntry> = Vec::new();
 

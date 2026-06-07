@@ -77,6 +77,8 @@ interface FileEditorState {
 
     /** Open a file (or activate if already open). Fetches content from Gateway. */
     openFile: (agentId: string, workspaceId: string, relPath: string) => Promise<void>;
+    /** Open a file with pre-loaded content (skips Gateway fetch). Used by LSP cross-file navigation. */
+    openFileWithContent: (agentId: string, workspaceId: string, relPath: string, content: string, language: string) => void;
     /** Close a file tab. Returns false if dirty (caller should confirm first). */
     closeFile: (fileId: string, force?: boolean) => boolean;
     /** Set the active (focused) file */
@@ -174,6 +176,36 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
                 ),
             }));
         }
+    },
+
+    openFileWithContent: (agentId: string, workspaceId: string, relPath: string, content: string, language: string) => {
+        const fileId = `${agentId}:${workspaceId}:${relPath}`;
+        const existing = get().openFiles.find((f) => f.id === fileId);
+        if (existing) {
+            // Already open, just activate
+            set({ activeFileId: fileId });
+            return;
+        }
+
+        const fileName = relPath.split("/").pop() || relPath;
+        const newFile: OpenFile = {
+            id: fileId,
+            agentId,
+            workspaceId,
+            relPath,
+            fileName,
+            content,
+            originalContent: content,
+            loading: false, // Already have content, no need to fetch
+            saving: false,
+            language,
+            dirty: false,
+        };
+
+        set((state) => ({
+            openFiles: [...state.openFiles, newFile],
+            activeFileId: fileId,
+        }));
     },
 
     closeFile: (fileId: string, force?: boolean) => {

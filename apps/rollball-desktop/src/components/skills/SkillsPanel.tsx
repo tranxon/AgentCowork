@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Wrench, ChevronDown, FolderPlus, Check, Loader2, AlertCircle, X } from "lucide-react";
+import { Wrench, FolderPlus, Check, Loader2, AlertCircle, X } from "lucide-react";
 import { cn } from "../../lib/utils";
+import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 import { useSkillStore } from "../../stores/skillStore";
 import { useAgentStore } from "../../stores/agentStore";
 
@@ -108,27 +109,19 @@ export function SkillsPanel() {
   };
 
   const skillCount = skills.length;
+  const skillsLabel = skillCount > 0 ? `${skillCount} Skills` : "Skills";
 
   return (
     <>
-      <div ref={ref} className="relative inline-block">
-        {/* Trigger button */}
-        <button
-          type="button"
-          onClick={() => setOpen(!open)}
-          className={cn(
-            "inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs transition-colors",
-            "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200",
-            open && "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100",
-          )}
-        >
-          <Wrench size={14} />
-          <span className="max-w-[80px] truncate">
-            {skillCount > 0 ? `${skillCount} Skills` : "Skills"}
-          </span>
-          <ChevronDown className="h-3 w-3 text-zinc-400" />
-        </button>
-
+      <ToolbarDropdownTrigger
+        icon={<Wrench size={14} />}
+        label={skillsLabel}
+        collapseClass="tb-sk-text"
+        tipClass="tb-sk-tip"
+        open={open}
+        onToggle={() => setOpen(!open)}
+        wrapperRef={ref}
+      >
         {/* Dropdown menu */}
         {open && (
           <div className="absolute bottom-full left-0 mb-1 w-60 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800" style={{ zIndex: 100 }}>
@@ -198,7 +191,7 @@ export function SkillsPanel() {
             </button>
           </div>
         )}
-      </div>
+      </ToolbarDropdownTrigger>
 
       {/* Import Dialog */}
       {importDialogOpen && (
