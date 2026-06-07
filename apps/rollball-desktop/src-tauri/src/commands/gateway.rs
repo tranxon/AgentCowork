@@ -13,30 +13,47 @@ use tauri::Manager;
 /// Start the local Gateway process.
 ///
 /// Finds the `rollball-gateway` binary in the same directory as the current
-/// executable, spawns it as a child process, and waits up to 15 seconds for
+/// executable, spawns it as a child process, and waits up to 10 seconds for
 /// its health endpoint to become available.
 #[tauri::command]
 pub async fn start_local_gateway(
     state: tauri::State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    // Check if already running
+    spawn_gateway(&state, &app_handle).await?;
+    wait_for_gateway_ready().await
+}
+
+/// Spawn the Gateway process without waiting for readiness.
+/// Used by both `start_local_gateway` command and Rust-side early startup.
+pub async fn spawn_gateway(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+) -> Result<(), String> {
+    tracing::info!("[BOOT] spawn_gateway entered");
+
+    // Check if already running (tracked by our process handle)
     {
         let proc = state.gateway_process.lock().await;
         if let Some(ref child) = *proc {
-            // Check if the existing child is still alive
             if child_output_is_alive(child) {
-                // Already running — just verify health and return
-                drop(proc);
-                return wait_for_gateway_ready().await;
+                tracing::info!("[BOOT] Gateway already running, skipping spawn");
+                return Ok(());
             }
         }
     }
 
+    // Kill any stale Gateway process left from a previous run.
+    // When Ctrl+C kills the Desktop App, the Gateway child process is orphaned
+    // and keeps holding port 19876. We must kill it before spawning a new one.
+    tracing::info!("[BOOT] Checking for stale Gateway processes...");
+    kill_stale_gateway_process();
+    tracing::info!("[BOOT] Stale Gateway cleanup done");
+
     // Find gateway binary next to current executable
     let gateway_bin = find_gateway_binary(app_handle.clone())?;
 
-    tracing::info!("Starting local Gateway: {}", gateway_bin.display());
+    tracing::info!("[BOOT] Starting local Gateway: {}", gateway_bin.display());
 
     // Spawn the gateway process
     let child = Command::new(&gateway_bin)
@@ -45,14 +62,15 @@ pub async fn start_local_gateway(
         .spawn()
         .map_err(|e| format!("Failed to spawn Gateway process: {}", e))?;
 
+    tracing::info!("[BOOT] Gateway process spawned, pid: {:?}", child.id());
+
     // Store the child handle
     {
         let mut proc = state.gateway_process.lock().await;
         *proc = Some(child);
     }
 
-    // Wait for Gateway to be ready (up to 15s)
-    wait_for_gateway_ready().await
+    Ok(())
 }
 
 /// Stop the locally running Gateway process.
@@ -90,7 +108,7 @@ pub async fn get_local_gateway_status(
 // ── Helper functions ────────────────────────────────────────────────────
 
 /// Find the Gateway binary next to the current executable.
-fn find_gateway_binary(app_handle: tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+pub fn find_gateway_binary(app_handle: tauri::AppHandle) -> Result<std::path::PathBuf, String> {
     // In development, Gateway binary lives next to current_exe in target/release/ or target/debug/.
     // In production (bundled), it's extracted next to the Desktop app.
     let exe_dir = std::env::current_exe()
@@ -157,25 +175,25 @@ fn find_gateway_binary(app_handle: tauri::AppHandle) -> Result<std::path::PathBu
 /// Wait for Gateway health endpoint to become ready.
 async fn wait_for_gateway_ready() -> Result<(), String> {
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(3))
+        .timeout(Duration::from_secs(2))
         .build()
         .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
 
     let health_url = format!("{}/health", defaults::GATEWAY_HTTP_URL);
 
-    // Poll for up to 15 seconds (30 * 500ms)
-    for i in 0..30 {
+    // Poll for up to 10 seconds (34 * 300ms)
+    for i in 0..34 {
         if client.get(&health_url).send().await.is_ok() {
             tracing::info!("Local Gateway is ready");
             return Ok(());
         }
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if i % 6 == 0 {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        if i % 5 == 0 {
             tracing::debug!("Waiting for Gateway to be ready...");
         }
     }
 
-    Err("Gateway did not become ready within 15 seconds".to_string())
+    Err("Gateway did not become ready within 10 seconds".to_string())
 }
 
 /// Check if a child process output indicates it is alive.
@@ -185,4 +203,51 @@ fn child_output_is_alive(child: &std::process::Child) -> bool {
     // original PID. For our purposes, we treat a non-zero PID as
     // "was successfully spawned".
     child.id() > 0
+}
+
+/// Kill any stale Gateway process left from a previous Desktop App run.
+///
+/// When the Desktop App is killed (e.g., Ctrl+C in dev mode), the Gateway
+/// child process is orphaned and keeps listening on port 19876. A new
+/// Gateway instance cannot bind that port, causing startup to hang.
+///
+/// This function finds and kills any `rollball-gateway` process that is
+/// NOT our tracked child (i.e., a leftover from a previous run).
+pub fn kill_stale_gateway_process_pub() {
+    kill_stale_gateway_process();
+}
+
+fn kill_stale_gateway_process() {
+    #[cfg(target_os = "windows")]
+    {
+        // Use `taskkill` to find and kill rollball-gateway processes.
+        // /FI "PID ne <ours>" is not reliable here since we don't track
+        // the old PID. Instead, just kill all rollball-gateway processes
+        // — our own child won't exist yet at this point in the flow.
+        let output = std::process::Command::new("taskkill")
+            .args(["/F", "/IM", "rollball-gateway.exe"])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("Killed stale Gateway process from previous run");
+            }
+            _ => {
+                // No stale process found — this is the normal case
+            }
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let output = std::process::Command::new("pkill")
+            .args(["-f", "rollball-gateway"])
+            .output();
+        match output {
+            Ok(o) if o.status.success() => {
+                tracing::info!("Killed stale Gateway process from previous run");
+            }
+            _ => {
+                // No stale process found
+            }
+        }
+    }
 }

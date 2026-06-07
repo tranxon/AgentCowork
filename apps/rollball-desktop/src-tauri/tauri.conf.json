@@ -26,15 +26,7 @@
         "decorations": false,
         "transparent": true,
         "center": true,
-        "visible": false,
-        "windowEffects": {
-          "effects": [
-            "acrylic",
-            "blur",
-            "mica"
-          ],
-          "radius": 12
-        }
+        "visible": false
       }
     ]
   },

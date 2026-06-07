@@ -70,7 +70,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
     if (!agent?.activeSessionId) return EMPTY_MESSAGES;
     return agent.sessionStates[agent.activeSessionId]?.messages ?? EMPTY_MESSAGES;
   });
-  const [activeTab, setActiveTab] = useState<PanelTab>(isDebugMode ? "debug" : "status");
+  const [activeTab, setActiveTab] = useState<PanelTab>(isDebugMode ? "debug" : "workspace");
 
   // ── Debug store (always called, conditionally used) ──────────────
   const {
@@ -213,6 +213,12 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
       <div className="border-b border-zinc-200 pt-px dark:border-zinc-800">
         <div className="flex items-center px-3 pt-1">
           <div className="flex gap-0">
+            <TabButton
+              active={activeTab === "workspace"}
+              onClick={() => setActiveTab("workspace")}
+            >
+              {t("resultsPanel.workspace")}
+            </TabButton>
             {isDebugMode && (
               <TabButton
                 active={activeTab === "debug"}
@@ -257,12 +263,6 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart }: Resu
                 {t("resultsPanel.setup")}
               </TabButton>
             )}
-            <TabButton
-              active={activeTab === "workspace"}
-              onClick={() => setActiveTab("workspace")}
-            >
-              {t("resultsPanel.workspace")}
-            </TabButton>
           </div>
         </div>
       </div>

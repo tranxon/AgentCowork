@@ -1,5 +1,5 @@
 import { memo, useCallback } from "react";
-import { ChevronRight, Folder, FolderOpen } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { getFileIcon } from "./fileIcons";
 import type { TreeEntry } from "../../../stores/workspaceStore";
@@ -29,9 +29,8 @@ export const FileTreeNode = memo(function FileTreeNode({
 }: FileTreeNodeProps) {
   const isDir = entry.type === "directory";
   const fileIcon = isDir ? null : getFileIcon(entry.name);
-  const Icon = isDir ? (isExpanded ? FolderOpen : Folder) : fileIcon!.icon;
   const isDevicon = !isDir && fileIcon?.isDevicon;
-  const iconColor = isDir ? "text-zinc-500 dark:text-zinc-400" : fileIcon!.color;
+  const iconColor = fileIcon?.color ?? "";
 
   const handleClick = useCallback(() => {
     if (isDir) {
@@ -58,26 +57,27 @@ export const FileTreeNode = memo(function FileTreeNode({
       onDoubleClick={handleDoubleClick}
       title={relPath}
     >
-      {/* Expand/collapse chevron */}
+      {/* Chevron — rotates for expanded dirs, invisible for files */}
       <span className="flex h-4 w-4 shrink-0 items-center justify-center">
-        {isDir ? (
-          <ChevronRight
-            className={cn(
-              "h-3.5 w-3.5 text-zinc-400 transition-transform duration-150",
-              isExpanded && "rotate-90",
-            )}
-          />
-        ) : null}
+        <ChevronRight
+          className={cn(
+            "h-3.5 w-3.5 text-zinc-400 transition-transform duration-150",
+            isDir && isExpanded && "rotate-90",
+            !isDir && "invisible",
+          )}
+        />
       </span>
 
-      {/* Icon */}
-      <Icon
-        className={cn(
-          "h-3.5 w-3.5 shrink-0",
-          !isDevicon && iconColor,
-        )}
-        style={!isDevicon && iconColor.startsWith("#") ? { color: iconColor } : undefined}
-      />
+      {/* File icon — only for files */}
+      {!isDir && fileIcon && (
+        <fileIcon.icon
+          className={cn(
+            "h-3.5 w-3.5 shrink-0",
+            !isDevicon && iconColor,
+          )}
+          style={!isDevicon && iconColor.startsWith("#") ? { color: iconColor } : undefined}
+        />
+      )}
 
       {/* Name */}
       <span className="ml-1 truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>

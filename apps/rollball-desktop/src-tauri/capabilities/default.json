@@ -1,13 +1,17 @@
 {
   "identifier": "main-capability",
   "description": "Main capability for the main window",
-  "windows": ["main"],
+  "windows": [
+    "main"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-minimize",
     "core:window:allow-maximize",
     "core:window:allow-close",
     "core:window:allow-toggle-maximize",
+    "core:window:allow-show",
+    "core:window:allow-set-effects",
     "shell:allow-open",
     "dialog:allow-open",
     "dialog:allow-save",

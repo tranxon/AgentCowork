@@ -16,7 +16,6 @@ export function WorkspaceExplorer() {
     const selectedAgent = agents.find((a) => a.agent_id === selectedAgentId);
     const invalidateTreeCache = useWorkspaceStore((s) => s.invalidateTreeCache);
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
-    const treeRoots = useWorkspaceStore((s) => s.treeRoots);
     const sessionWorkspaceMap = useWorkspaceStore((s) => s.sessionWorkspaceMap);
     const openFile = useFileEditorStore((s) => s.openFile);
 
@@ -50,20 +49,11 @@ export function WorkspaceExplorer() {
         );
     }
 
-    const rootKey = selectedAgentId ? `${selectedAgentId}:${currentWorkspaceId}` : undefined;
-    const rootPath = rootKey ? treeRoots[rootKey] : undefined;
-    const rootName = rootPath
-        ? rootPath.split(/[\\/]/).filter(Boolean).pop() || rootPath
-        : t("workspace.explorer.loading");
-
     return (
         <div className="flex flex-1 flex-col overflow-hidden">
             {/* Workspace selector + root name */}
             <div className="flex items-center gap-1.5 border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-800">
                 <WorkspaceSelector dropDirection="down" />
-                <span className="truncate text-[10px] text-zinc-400" title={rootPath}>
-                    {rootName}
-                </span>
                 <button
                     onClick={handleRefresh}
                     className="ml-auto rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"

@@ -71,6 +71,44 @@ pub fn run() {
                 let _ = main_window.show();
             });
 
+            // Spawn Gateway in a dedicated OS thread — completely independent of
+            // both the main thread and the tokio runtime. This ensures Gateway
+            // starts immediately regardless of WebView2 or async scheduler state.
+            {
+                let app_handle_for_gateway = app.handle().clone();
+                std::thread::spawn(move || {
+                    // Kill stale processes from previous runs
+                    commands::gateway::kill_stale_gateway_process_pub();
+
+                    // Find gateway binary
+                    let Ok(gateway_bin) = commands::gateway::find_gateway_binary(app_handle_for_gateway.clone()) else {
+                        tracing::warn!("[BOOT] Gateway binary not found");
+                        return;
+                    };
+
+                    match std::process::Command::new(&gateway_bin)
+                        .env("ROLLBALL_GATEWAY_DAEMON", "true")
+                        .env("ROLLBALL_GATEWAY_LOG_LEVEL", "info")
+                        .spawn()
+                    {
+                        Ok(child) => {
+                            let pid = child.id();
+                            tracing::info!("[BOOT] Gateway process spawned, pid: {:?}", pid);
+                            // Store child handle in AppState via tokio
+                            let ah = app_handle_for_gateway;
+                            tauri::async_runtime::spawn(async move {
+                                let state = ah.state::<AppState>();
+                                let mut proc = state.gateway_process.lock().await;
+                                *proc = Some(child);
+                            });
+                        }
+                        Err(e) => {
+                            tracing::warn!("[BOOT] Failed to spawn Gateway: {}", e);
+                        }
+                    }
+                });
+            }
+
             // Auto-install bundled System Agent on first launch
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
@@ -113,18 +151,18 @@ pub fn run() {
 async fn auto_install_system_agent(app: &tauri::AppHandle) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use tokio::time::{sleep, Duration};
 
-    // Wait for Gateway to be ready (max 30 seconds)
+    // Wait for Gateway to be ready (max 15 seconds)
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(3))
         .build()?;
     let gateway_url = rollball_core::defaults::GATEWAY_HTTP_URL;
 
-    for i in 0..60 {
+    for i in 0..30 {
         if client.get(format!("{}/health", gateway_url)).send().await.is_ok() {
             break;
         }
         sleep(Duration::from_millis(500)).await;
-        if i % 10 == 0 {
+        if i % 6 == 0 {
             tracing::debug!("Waiting for Gateway to be ready...");
         }
     }

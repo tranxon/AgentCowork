@@ -13,7 +13,7 @@ import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { SettingsPage } from "../settings/SettingsPage";
 import { HarnessPage } from "../harness/HarnessPage";
 import { useChatStore } from "../../stores/chatStore";
-import { getGatewayUrl, getGatewayMode } from "../../lib/config";
+import { getGatewayUrl } from "../../lib/config";
 
 /** Settings tab type — keep in sync with SettingsPage */
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
@@ -50,9 +50,27 @@ export function AppLayout() {
     return stored ? Math.min(Math.max(parseInt(stored, 10), MIN_FILE_WIDTH), MAX_FILE_WIDTH) : DEFAULT_FILE_WIDTH;
   });
   const hasOpenFiles = useFileEditorStore((s) => s.openFiles.length > 0);
+  const fileWidthInitialized = useRef(false);
+
+  // Auto-size file panel to half available area on first open
+  useEffect(() => {
+    if (hasOpenFiles && !fileWidthInitialized.current) {
+      fileWidthInitialized.current = true;
+      const stored = localStorage.getItem(FILE_WIDTH_KEY);
+      if (!stored) {
+        const navWidth = 48;
+        const available = window.innerWidth - sidebarWidth - rightWidth - navWidth;
+        const halfWidth = Math.min(Math.max(Math.round(available / 2), MIN_FILE_WIDTH), MAX_FILE_WIDTH);
+        setFileWidth(halfWidth);
+      }
+    }
+    if (!hasOpenFiles) {
+      fileWidthInitialized.current = false;
+    }
+  }, [hasOpenFiles, sidebarWidth, rightWidth]);
+
   const gatewayStatus = useGatewayStore((s) => s.status);
   const checkHealth = useGatewayStore((s) => s.checkHealth);
-  const startLocalGateway = useGatewayStore((s) => s.startLocalGateway);
   // Determine if selected agent is in debug mode
   const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
   const agents = useAgentStore((s) => s.agents);
@@ -71,25 +89,17 @@ export function AppLayout() {
   const startWidthFile = useRef(DEFAULT_FILE_WIDTH);
   const currentWidthRefFile = useRef(DEFAULT_FILE_WIDTH);
 
-  // Check Gateway health on mount and periodically.
-  // In local mode, attempt auto-start; in remote mode, just check.
+  // Periodically check Gateway health to detect disconnections.
+  // Gateway is spawned by Rust at exe startup — no need to start it here.
   useEffect(() => {
-    const mode = getGatewayMode();
-    if (mode === "local") {
-      startLocalGateway().catch(() => {
-        // Gateway binary may not exist yet (dev scenario); fall back to health check
-        checkHealth();
-      });
-    } else {
-      checkHealth();
-    }
+    checkHealth();
     const interval = setInterval(() => {
       if (useGatewayStore.getState().status !== "connected") {
         checkHealth();
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [checkHealth, startLocalGateway]);
+  }, [checkHealth]);
 
   // Detect wake from sleep via visibility change and reconnect
   useEffect(() => {

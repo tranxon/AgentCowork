@@ -112,8 +112,8 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
 
         const init = async () => {
             if (gatewayMode === "local") {
-                setStatusText("Starting local Gateway...");
-                await startLocalGateway();
+                // Gateway is already spawned by Rust at exe startup — just poll for readiness
+                setStatusText("Waiting for Gateway...");
             } else {
                 setStatusText("Connecting to Gateway...");
             }
