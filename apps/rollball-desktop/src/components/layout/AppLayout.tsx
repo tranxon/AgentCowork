@@ -52,22 +52,27 @@ export function AppLayout() {
   const hasOpenFiles = useFileEditorStore((s) => s.openFiles.length > 0);
   const fileWidthInitialized = useRef(false);
 
+  // Refs to track latest panel widths for proportional window-resize scaling
+  const fileWidthValueRef = useRef(fileWidth);
+  fileWidthValueRef.current = fileWidth;
+
   // Auto-size file panel to half available area on first open
   useEffect(() => {
     if (hasOpenFiles && !fileWidthInitialized.current) {
       fileWidthInitialized.current = true;
-      const stored = localStorage.getItem(FILE_WIDTH_KEY);
-      if (!stored) {
-        const navWidth = 48;
-        const available = window.innerWidth - sidebarWidth - rightWidth - navWidth;
-        const halfWidth = Math.min(Math.max(Math.round(available / 2), MIN_FILE_WIDTH), MAX_FILE_WIDTH);
-        setFileWidth(halfWidth);
-      }
+      const navWidth = 48;
+      const actualRightWidth = resultsCollapsed ? 0 : rightWidth;
+      const available = window.innerWidth - sidebarWidth - actualRightWidth - navWidth;
+      const halfWidth = Math.min(Math.max(Math.round(available / 2), MIN_FILE_WIDTH), MAX_FILE_WIDTH);
+      // Always recalculate on first open to respect current window size,
+      // preventing the stored width from obscuring the session panel
+      setFileWidth(halfWidth);
+      localStorage.setItem(FILE_WIDTH_KEY, String(halfWidth));
     }
     if (!hasOpenFiles) {
       fileWidthInitialized.current = false;
     }
-  }, [hasOpenFiles, sidebarWidth, rightWidth]);
+  }, [hasOpenFiles, sidebarWidth, rightWidth, resultsCollapsed]);
 
   const gatewayStatus = useGatewayStore((s) => s.status);
   const checkHealth = useGatewayStore((s) => s.checkHealth);
@@ -120,6 +125,37 @@ export function AppLayout() {
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [checkHealth]);
+
+  // Scale file panel proportionally when window size changes significantly (maximize/restore).
+  // Sidebar and right panel keep their absolute widths; only session & file panels scale.
+  // Small manual edge-drags (<5%) are ignored to avoid jitter.
+  const prevWindowWidthRef = useRef(window.innerWidth);
+  useEffect(() => {
+    const handleWindowResize = () => {
+      // Don't scale during manual panel resize
+      if (isResizingFile.current) return;
+
+      const newWindowWidth = window.innerWidth;
+      const ratio = newWindowWidth / prevWindowWidthRef.current;
+
+      // Only scale when window size changes significantly (>5%)
+      if (Math.abs(ratio - 1) < 0.05) return;
+
+      prevWindowWidthRef.current = newWindowWidth;
+
+      // Only scale the file panel; ChatPanel is flex-1 and adjusts automatically.
+      // Keep the same proportion of file vs session within the available space.
+      const hasFiles = useFileEditorStore.getState().openFiles.length > 0;
+      if (hasFiles) {
+        const newFile = Math.min(Math.max(Math.round(fileWidthValueRef.current * ratio), MIN_FILE_WIDTH), MAX_FILE_WIDTH);
+        setFileWidth(newFile);
+        localStorage.setItem(FILE_WIDTH_KEY, String(newFile));
+      }
+    };
+
+    window.addEventListener("resize", handleWindowResize);
+    return () => window.removeEventListener("resize", handleWindowResize);
+  }, []);
 
   const toggleResults = useCallback(() => {
     setResultsCollapsed((prev) => !prev);
@@ -191,11 +227,13 @@ export function AppLayout() {
     document.addEventListener("mouseup", handleMouseUpRight);
   }, [handleMouseMoveRight, handleMouseUpRight, rightWidth]);
 
-  // File panel resize handlers
+  // File panel resize handlers — dynamic max width to keep ChatPanel visible
+  const maxFileWidthRef = useRef(MAX_FILE_WIDTH);
+
   const handleMouseMoveFile = useCallback((e: MouseEvent) => {
     if (!isResizingFile.current) return;
     const delta = e.clientX - startXFile.current;
-    const newWidth = Math.min(Math.max(startWidthFile.current - delta, MIN_FILE_WIDTH), MAX_FILE_WIDTH);
+    const newWidth = Math.min(Math.max(startWidthFile.current - delta, MIN_FILE_WIDTH), maxFileWidthRef.current);
     currentWidthRefFile.current = newWidth;
     setFileWidth(newWidth);
   }, []);
@@ -213,9 +251,15 @@ export function AppLayout() {
     startXFile.current = e.clientX;
     startWidthFile.current = fileWidth;
     currentWidthRefFile.current = fileWidth;
+    // Calculate dynamic max to ensure ChatPanel retains at least 200px
+    const minChatWidth = 200;
+    const navWidth = 48;
+    const actualRightWidth = resultsCollapsed ? 0 : rightWidth;
+    const dynamicMax = Math.max(window.innerWidth - sidebarWidth - actualRightWidth - navWidth - minChatWidth, MIN_FILE_WIDTH);
+    maxFileWidthRef.current = Math.min(MAX_FILE_WIDTH, dynamicMax);
     document.addEventListener("mousemove", handleMouseMoveFile);
     document.addEventListener("mouseup", handleMouseUpFile);
-  }, [handleMouseMoveFile, handleMouseUpFile, fileWidth]);
+  }, [handleMouseMoveFile, handleMouseUpFile, fileWidth, sidebarWidth, rightWidth, resultsCollapsed]);
 
   return (
     <div className="flex h-full w-full flex-col">

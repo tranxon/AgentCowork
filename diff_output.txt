@@ -1,0 +1,1426 @@
+diff --git a/core/Cargo.toml b/core/Cargo.toml
+index 834753e6..99c09976 100644
+--- a/core/Cargo.toml
++++ b/core/Cargo.toml
+@@ -9,6 +9,7 @@ members = [
+     "rollball-vault",
+     "rollball-sign",
+     "rollball-tool-sdk",
++    "rollball-embed",
+ ]
+ resolver = "2"
+ 
+@@ -135,10 +136,28 @@ wasmtime = "29"
+ wasmtime-wasi = "29"
+ 
+ # gRPC
+- tonic = "0.12"
+- prost = "0.13"
+- tonic-build = "0.12"
+- protoc-bin-vendored = "3"
++tonic = "0.12"
++prost = "0.13"
++tonic-build = "0.12"
++protoc-bin-vendored = "3"
++
++# ONNX Runtime — use download-binaries to statically link ORT.
++# Platform notes:
++#   Windows: Requires MSVC v144+ (14.40+) for the prebuilt ORT 1.24.2 libraries.
++#   Linux:   Requires glibc 2.27+ (Ubuntu 18.04+), gcc/g++ toolchain.
++#   macOS:   Requires macOS 12+ (Monterey), Xcode command-line tools.
++# For GPU acceleration, enable per-platform features in rollball-embed:
++#   --features directml (Windows) | cuda (Linux) | coreml (macOS)
++ort = { version = "2.0.0-rc.10", features = ["download-binaries"] }
++
++# Tokenizer (HuggingFace)
++tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
++
++# Signal handling (graceful shutdown)
++signal-hook = "0.3"
++
++# Numerical arrays (for ONNX tensor construction)
++ndarray = "0.17"
+ 
+ # Internal crate references
+ rollball-core = { path = "rollball-core" }
+@@ -149,3 +168,4 @@ rollball-runtime = { path = "rollball-runtime" }
+ rollball-gateway = { path = "rollball-gateway" }
+ rollball-vault = { path = "rollball-vault" }
+ rollball-sign = { path = "rollball-sign" }
++rollball-embed = { path = "rollball-embed" }
+diff --git a/core/rollball-core/src/proto_bridge.rs b/core/rollball-core/src/proto_bridge.rs
+index 4f4b2738..6f36a286 100644
+--- a/core/rollball-core/src/proto_bridge.rs
++++ b/core/rollball-core/src/proto_bridge.rs
+@@ -518,8 +518,12 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
+                 search_key_vault,
+                 user_identity,
+                 user_profile_version,
++                embed_endpoint,
++                embed_model_id,
++                embed_dimension,
+             } => {
+-                let _ = (provider_list, provider_list_version, mcp_list, mcp_list_version);
++                let _ = (provider_list, provider_list_version, mcp_list, mcp_list_version,
++                         embed_endpoint, embed_model_id, embed_dimension);
+                 // AgentHelloResult now carries structured resource lists with version-driven diff sync.
+                 // gRPC bridge serializes these as JSON strings for backward compat with proto.
+                 let pl_json = provider_list.as_ref().map(|pl| serde_json::to_string(pl).unwrap_or_default());
+@@ -756,6 +760,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
+                 model,
+                 provider,
+                 search_config_json,
++                embed_config_json,
+             } => {
+                 let mcp_servers_set = mcp_servers.is_some();
+                 let active_tools_set = active_tools.is_some();
+@@ -784,6 +789,7 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
+                         mcp_servers_set,
+                         active_tools_set,
+                         system_prompt_set,
++                        embed_config_json: embed_config_json.clone(),
+                     },
+                 ))
+             }
+@@ -848,6 +854,17 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
+                     },
+                 ))
+             }
++            // EmbeddingConfigUpdate — no proto message defined.
++            // This variant is only used in direct IPC (non-gRPC) scenarios.
++            // For gRPC delivery, the Gateway uses RuntimeConfigUpdate.embed_config_json
++            // instead, which has proper proto representation.
++            // Mapping to UsageReportAck here is safe because the gRPC path
++            // never generates this variant.
++            protocol::GatewayResponse::EmbeddingConfigUpdate { .. } => {
++                Some(proto::server_message::Payload::UsageReportAck(
++                    proto::UsageReportAck {},
++                ))
++            }
+         };
+ 
+         proto::ServerMessage {
+diff --git a/core/rollball-core/src/protocol.rs b/core/rollball-core/src/protocol.rs
+index 0b9f32e9..1bff0991 100644
+--- a/core/rollball-core/src/protocol.rs
++++ b/core/rollball-core/src/protocol.rs
+@@ -293,6 +293,79 @@ pub struct AgentSearchConfig {
+     pub providers: Vec<AgentSearchProvider>,
+ }
+ 
++/// ── Embedding Model types ──
++
++/// Pooling strategy for embedding models.
++#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
++#[serde(rename_all = "snake_case")]
++pub enum PoolingStrategy {
++    /// Use [CLS] token output (BGE models).
++    Cls,
++    /// Mean pooling over token embeddings weighted by attention_mask (MiniLM).
++    Mean,
++    /// Use last token output (causal LMs).
++    LastToken,
++}
++
++impl Default for PoolingStrategy {
++    fn default() -> Self {
++        Self::Cls
++    }
++}
++
++/// Embedding model entry in embedding_models.json.
++///
++/// Describes a downloadable embedding model with ONNX runtime metadata.
++/// Shared between Gateway, rollball-embed, and Desktop App.
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct EmbeddingModelEntry {
++    /// Model identifier (e.g. "bge-small-zh-v1.5")
++    pub id: String,
++    /// Display name (e.g. "BGE Small Chinese")
++    pub name: String,
++    /// Human-readable description
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub description: Option<String>,
++    /// Embedding vector dimension
++    pub dimension: usize,
++    /// Maximum input token length
++    pub max_tokens: usize,
++    /// Download size in MB
++    pub size_mb: u64,
++    /// Supported language codes (e.g. ["zh", "en"])
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub languages: Vec<String>,
++    /// HuggingFace repository (e.g. "onnx-community/bge-small-zh-v1.5-ONNX")
++    pub hf_repo: String,
++    /// Pooling strategy for this model
++    #[serde(default)]
++    pub pooling_strategy: PoolingStrategy,
++    /// Path within the HF repo to the ONNX model file (e.g. "onnx/model.onnx")
++    pub onnx_file: String,
++    /// Path within the HF repo to the tokenizer (e.g. "tokenizer.json")
++    pub tokenizer_file: String,
++    /// ONNX model variants (e.g. {"fp32": "onnx/model.onnx", "fp16": "onnx/model_fp16.onnx"})
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub onnx_variants: Option<std::collections::HashMap<String, String>>,
++    /// Whether the model is bundled with the installation
++    #[serde(default)]
++    pub bundled: bool,
++    /// Whether this is the recommended default model
++    #[serde(default)]
++    pub recommended: bool,
++}
++
++/// Versioned embedding model list persisted to disk.
++///
++/// Follows the same pattern as ProviderListFile, McpListFile, SearchListFile.
++#[derive(Debug, Clone, Serialize, Deserialize)]
++pub struct EmbeddingModelsFile {
++    /// Monotonic version counter — bumped on every change
++    pub version: u64,
++    /// All known embedding model entries
++    pub models: Vec<EmbeddingModelEntry>,
++}
++
+ /// ── User Identity types ──
+ 
+ /// A single user's identity profile.
+@@ -638,6 +711,22 @@ pub enum GatewayResponse {
+         /// Gateway's current user profile list version
+         #[serde(default)]
+         user_profile_version: u64,
++
++        // ── Embedding Service ──
++        /// Embedding service endpoint URL for ONNX local inference.
++        /// Runtime uses this as the primary embedding provider.
++        /// Example: "http://127.0.0.1:18080/v1"
++        /// None when the embedding service is not running.
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        embed_endpoint: Option<String>,
++        /// Active embedding model ID (e.g. "bge-small-zh-v1.5").
++        /// None when the embedding service is not running.
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        embed_model_id: Option<String>,
++        /// Embedding dimension of the active model (e.g. 512).
++        /// None when the embedding service is not running.
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        embed_dimension: Option<usize>,
+     },
+     /// API key release result
+     KeyReleaseResult {
+@@ -917,6 +1006,11 @@ pub enum GatewayResponse {
+         /// Some("") means no search providers active.
+         #[serde(default, skip_serializing_if = "Option::is_none")]
+         search_config_json: Option<String>,
++        /// Embedding config override (JSON-serialized EmbeddingConfigUpdate fields).
++        /// When Some, the Runtime rebuilds its FallbackEmbeddingProvider chain.
++        /// Format: {"embed_endpoint":"http://127.0.0.1:18080/v1","embed_model_id":"bge-small-zh-v1.5","embed_dimension":512}
++        #[serde(default, skip_serializing_if = "Option::is_none")]
++        embed_config_json: Option<String>,
+     },
+     /// Query config request (Gateway → Runtime)
+     ///
+@@ -947,6 +1041,19 @@ pub enum GatewayResponse {
+         /// Debug WebSocket port (allocated by Gateway)
+         debug_port: u32,
+     },
++    /// Embedding configuration update (Gateway → Runtime, push).
++    ///
++    /// Pushed when the user switches the active embedding model via
++    /// Gateway HTTP API. The Runtime rebuilds its FallbackEmbeddingProvider
++    /// chain with the new ONNX provider as the first entry.
++    EmbeddingConfigUpdate {
++        /// Embedding service endpoint URL (e.g. "http://127.0.0.1:18080/v1")
++        embed_endpoint: String,
++        /// Active embedding model ID (e.g. "bge-small-zh-v1.5")
++        embed_model_id: String,
++        /// Embedding dimension of the active model (e.g. 512)
++        embed_dimension: usize,
++    },
+ }
+ 
+ /// MCP server configuration definition (transport-agnostic, shared between Gateway and Runtime).
+diff --git a/core/rollball-gateway/src/ipc/global_push.rs b/core/rollball-gateway/src/ipc/global_push.rs
+index 0fbdf02d..c534c78d 100644
+--- a/core/rollball-gateway/src/ipc/global_push.rs
++++ b/core/rollball-gateway/src/ipc/global_push.rs
+@@ -292,6 +292,7 @@ impl GlobalResourcePusher {
+                         model: None,
+                         provider: None,
+                         search_config_json: None,
++                        embed_config_json: None,
+                     })
+                     .await;
+                 if ok {
+@@ -358,4 +359,98 @@ impl GlobalResourcePusher {
+             }
+         }
+     }
++
++    // ── Embedding config ────────────────────────────────────────────────
++
++    /// Push embedding configuration update to all running agents after a
++    /// model switch. The Runtime rebuilds its FallbackEmbeddingProvider
++    /// chain with the new ONNX provider as the first entry.
++    ///
++    /// Uses `RuntimeConfigUpdate.embed_config_json` instead of the deprecated
++    /// `EmbeddingConfigUpdate` variant, because the latter has no proto
++    /// representation and would be lost over the gRPC bridge.
++    #[tracing::instrument(skip(self), name = "push_embedding_config")]
++    pub async fn push_embedding_config(&self) {
++        let grpc_session_mgr = match &self.grpc_session_mgr {
++            Some(mgr) => mgr.clone(),
++            None => {
++                tracing::warn!("No gRPC session manager, skipping embedding config push");
++                return;
++            }
++        };
++
++        let agent_ids: Vec<String> = {
++            let gw = self.gateway_state.read().await;
++            gw.running_agents.keys().cloned().collect()
++        };
++
++        if agent_ids.is_empty() {
++            return;
++        }
++
++        // Read current embedding config from GatewayState
++        let (embed_endpoint, embed_model_id, embed_dimension) = {
++            let gw = self.gateway_state.read().await;
++            match &gw.embed_process {
++                Some(eps) => {
++                    let endpoint = format!("http://127.0.0.1:{}/v1", eps.port);
++                    let model_id = eps.active_model_id.clone().unwrap_or_default();
++                    let dimension = eps.active_dimension.unwrap_or(0);
++                    (endpoint, model_id, dimension)
++                }
++                None => {
++                    tracing::warn!("Embedding service not running, skipping push");
++                    return;
++                }
++            }
++        };
++
++        // Serialize as JSON for the embed_config_json field
++        let embed_config_json = serde_json::json!({
++            "embed_endpoint": embed_endpoint,
++            "embed_model_id": embed_model_id,
++            "embed_dimension": embed_dimension,
++        }).to_string();
++
++        let mut pushed = 0u32;
++        let mut failed = 0u32;
++
++        for agent_id in agent_ids {
++            let mgr = grpc_session_mgr.lock().await;
++            if let Some((_conn_id, session)) = mgr.find_by_agent_id(&agent_id) {
++                let ok = session
++                    .push_message(GatewayResponse::RuntimeConfigUpdate {
++                        max_output_tokens: None,
++                        max_iterations: None,
++                        temperature: None,
++                        system_prompt_override: None,
++                        active_tools: None,
++                        shell_approval_threshold: None,
++                        mcp_servers: None,
++                        model: None,
++                        provider: None,
++                        search_config_json: None,
++                        embed_config_json: Some(embed_config_json.clone()),
++                    })
++                    .await;
++
++                if ok {
++                    tracing::info!(
++                        agent = %agent_id,
++                        model_id = %embed_model_id,
++                        dimension = embed_dimension,
++                        "Pushed embedding config to agent via RuntimeConfigUpdate"
++                    );
++                    pushed += 1;
++                } else {
++                    tracing::warn!(agent = %agent_id, "Embedding config push failed (channel closed)");
++                    failed += 1;
++                }
++            }
++        }
++
++        if pushed > 0 || failed > 0 {
++            tracing::info!(pushed, failed, "Embedding config push complete");
++        }
++    }
+ }
+diff --git a/core/rollball-gateway/src/resource_cache.rs b/core/rollball-gateway/src/resource_cache.rs
+index 8f36b14a..a14a8037 100644
+--- a/core/rollball-gateway/src/resource_cache.rs
++++ b/core/rollball-gateway/src/resource_cache.rs
+@@ -23,18 +23,20 @@ use std::path::Path;
+ use rollball_core::protocol::{
+     McpKeyEntry, McpListItem, ProviderListItem, ProviderModelEntry,
+     SearchKeyEntry, SearchProviderListItem, UserProfileListFile,
++    EmbeddingModelsFile,
+ };
+ 
+ /// In-memory resource cache loaded at Gateway startup.
+ ///
+-/// Provider, MCP, Search, and User Profile lists are versioned; keys are
+-/// always delivered in full and are NOT stored here (built on-the-fly from Vault).
++/// Provider, MCP, Search, User Profile, and Embedding Model lists are versioned;
++/// keys are always delivered in full and are NOT stored here (built on-the-fly from Vault).
+ #[derive(Debug, Clone)]
+ pub struct ResourceCache {
+     pub provider_list: ProviderListFile,
+     pub mcp_list: McpListFile,
+     pub search_list: SearchListFile,
+     pub user_profile_list: UserProfileListFile,
++    pub embedding_models: EmbeddingModelsFile,
+ }
+ 
+ /// Versioned provider list persisted to disk.
+@@ -76,6 +78,10 @@ fn user_profile_list_path(data_dir: &Path) -> std::path::PathBuf {
+     data_dir.join("user_profiles.json")
+ }
+ 
++fn embedding_models_path(data_dir: &Path) -> std::path::PathBuf {
++    data_dir.join("embedding_models.json")
++}
++
+ // ── Loading ────────────────────────────────────────────────────────────
+ 
+ /// Load the resource cache from disk at Gateway startup.
+@@ -86,6 +92,7 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
+     let mcp_list = load_mcp_list(data_dir);
+     let search_list = load_search_list(data_dir);
+     let user_profile_list = load_user_profile_list(data_dir);
++    let embedding_models = load_embedding_models(data_dir);
+     tracing::info!(
+         provider_count = provider_list.providers.len(),
+         provider_version = provider_list.version,
+@@ -95,6 +102,8 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
+         search_version = search_list.version,
+         user_profile_count = user_profile_list.users.len(),
+         user_profile_version = user_profile_list.version,
++        embedding_model_count = embedding_models.models.len(),
++        embedding_models_version = embedding_models.version,
+         "Resource cache loaded"
+     );
+     ResourceCache {
+@@ -102,6 +111,7 @@ pub fn load_resource_cache(data_dir: &Path) -> ResourceCache {
+         mcp_list,
+         search_list,
+         user_profile_list,
++        embedding_models,
+     }
+ }
+ 
+@@ -221,6 +231,35 @@ fn load_user_profile_list(data_dir: &Path) -> UserProfileListFile {
+     }
+ }
+ 
++fn load_embedding_models(data_dir: &Path) -> EmbeddingModelsFile {
++    let path = embedding_models_path(data_dir);
++    match std::fs::read_to_string(&path) {
++        Ok(raw) => match serde_json::from_str(&raw) {
++            Ok(list) => list,
++            Err(e) => {
++                tracing::warn!(
++                    path = %path.display(),
++                    error = %e,
++                    "Failed to parse embedding_models.json, using empty list"
++                );
++                EmbeddingModelsFile { version: 0, models: Vec::new() }
++            }
++        },
++        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
++            tracing::info!("embedding_models.json not found, initializing empty");
++            EmbeddingModelsFile { version: 0, models: Vec::new() }
++        }
++        Err(e) => {
++            tracing::warn!(
++                path = %path.display(),
++                error = %e,
++                "Failed to read embedding_models.json, using empty list"
++            );
++            EmbeddingModelsFile { version: 0, models: Vec::new() }
++        }
++    }
++}
++
+ // ── Saving ─────────────────────────────────────────────────────────────
+ 
+ /// Save the provider list to disk.
+@@ -279,6 +318,20 @@ pub fn save_user_profile_list(data_dir: &Path, list: &UserProfileListFile) -> Re
+     Ok(())
+ }
+ 
++/// Save the embedding models list to disk.
++pub fn save_embedding_models(data_dir: &Path, list: &EmbeddingModelsFile) -> Result<(), String> {
++    let json = serde_json::to_string_pretty(list)
++        .map_err(|e| format!("Failed to serialize embedding models: {}", e))?;
++    std::fs::write(embedding_models_path(data_dir), &json)
++        .map_err(|e| format!("Failed to write embedding_models.json: {}", e))?;
++    tracing::info!(
++        version = list.version,
++        count = list.models.len(),
++        "Embedding models saved"
++    );
++    Ok(())
++}
++
+ // ── Building ───────────────────────────────────────────────────────────
+ 
+ /// Rebuild provider_list.json from all Vault provider entries + models.dev data.
+@@ -619,6 +672,7 @@ impl Default for ResourceCache {
+             mcp_list: McpListFile::default(),
+             search_list: SearchListFile::default(),
+             user_profile_list: UserProfileListFile { version: 0, users: Vec::new() },
++            embedding_models: EmbeddingModelsFile { version: 0, models: Vec::new() },
+         }
+     }
+ }
+diff --git a/core/rollball-grafeo/src/consolidation/offline.rs b/core/rollball-grafeo/src/consolidation/offline.rs
+index f4e9843e..b44b2988 100644
+--- a/core/rollball-grafeo/src/consolidation/offline.rs
++++ b/core/rollball-grafeo/src/consolidation/offline.rs
+@@ -3,11 +3,14 @@
+ //! Phase 2 implements a simple age-and-evidence upgrade strategy.
+ //! Phase 3 adds full LLM-based re-evaluation and generalization.
+ 
+-use chrono::{TimeDelta, Utc};
++use std::sync::Arc;
++
++use chrono::{DateTime, TimeDelta, Utc};
+ use grafeo_common::types::Value;
+ 
++use crate::consolidation::conflict_llm::{LlmConflictType, classify_conflict};
+ use crate::consolidation::generalization::GeneralizationConfig;
+-use crate::consolidation::triple_extraction::TripleExtractorLlm;
++use crate::consolidation::triple_extraction::{ExtractedTriple, TripleExtractorLlm};
+ use crate::error::Result;
+ use crate::grafeo::GrafeoStore;
+ use crate::types::{labels, AutobioCategory, AutobiographicalNode, KnowledgeNode, NodeStatus};
+@@ -40,6 +43,19 @@ impl Default for OfflineConsolidationConfig {
+ // Result
+ // ---------------------------------------------------------------------------
+ 
++/// Result of LLM conflict resolution during offline consolidation.
++#[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
++pub struct ConflictResolutionResult {
++    /// Total conflicts resolved.
++    pub resolved: usize,
++    /// Conflicts classified as Evolution (old → Dormant).
++    pub evolution: usize,
++    /// Conflicts classified as Correction (old → Dormant).
++    pub correction: usize,
++    /// Conflicts classified as Ambiguous (both kept).
++    pub ambiguous: usize,
++}
++
+ /// Result of an offline consolidation run.
+ #[derive(Debug, Default, Clone, serde::Serialize, serde::Deserialize)]
+ pub struct OfflineConsolidationResult {
+@@ -55,6 +71,18 @@ pub struct OfflineConsolidationResult {
+     pub procedural_boosted: usize,
+     /// Number of History nodes compressed into summaries.
+     pub history_compressed: usize,
++    /// Number of triples extracted from unconsolidated episodes.
++    pub triples_extracted: usize,
++    /// Number of conflicts resolved by LLM arbitration.
++    pub conflicts_resolved: usize,
++    /// Number of conflicts classified as Evolution (old → Dormant, new → Active).
++    pub conflicts_evolution: usize,
++    /// Number of conflicts classified as Correction (old → Dormant, new → Active).
++    pub conflicts_correction: usize,
++    /// Number of conflicts classified as Ambiguous (both kept, user confirmation needed).
++    pub conflicts_ambiguous: usize,
++    /// Number of episodic nodes cleaned up (transitioned to Dormant by §2 rules).
++    pub episodic_cleaned: usize,
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -62,27 +90,73 @@ pub struct OfflineConsolidationResult {
+ // ---------------------------------------------------------------------------
+ 
+ impl GrafeoStore {
+-    /// Run offline consolidation on pending nodes, including generalization.
++    /// Run offline consolidation on pending nodes, including full Phase 3 pipeline.
+     ///
+-    /// Phase 3 enhancement: after upgrading/downgrading pending KnowledgeNodes,
+-    /// runs experience generalization to extract ProceduralNodes from
+-    /// unconsolidated episodes (step ④ in the design doc).
++    /// Pipeline steps:
++    /// 1. Standard offline consolidation (upgrade/downgrade Pending nodes)
++    /// 2. Triple extraction from unconsolidated episodes (if LLM available)
++    /// 3. Conflict resolution via LLM arbitration (if LLM available)
++    /// 4. Experience generalization to extract ProceduralNodes
++    /// 5. Compress History nodes if too many
++    /// 6. Auto-generate Relationship nodes for long-term users
++    /// 7. Auto-generate Limitation nodes from low success-rate skills
+     ///
+-    /// The generalization step requires an embedding function. If `None` is
+-    /// provided, generalization is skipped.
++    /// Note: this method does not use `tracing` — the grafeo crate
++    /// intentionally avoids that dependency. The caller (runtime)
++    /// logs the returned `OfflineConsolidationResult` fields instead.
+     #[allow(clippy::type_complexity)]
+     pub async fn run_offline_consolidation_with_generalization(
+         &self,
+         config: &OfflineConsolidationConfig,
+         llm: Option<&dyn TripleExtractorLlm>,
+-        embedding_fn: Option<&(dyn Fn(&str) -> Vec<f32> + Send + Sync)>,
++        embedding_fn: Option<Arc<dyn Fn(&str) -> Vec<f32> + Send + Sync>>,
+         gen_config: Option<&GeneralizationConfig>,
+     ) -> Result<OfflineConsolidationResult> {
+         // Step 1: Standard offline consolidation (upgrade/downgrade Pending nodes)
+         let mut result = self.run_offline_consolidation(config)?;
+ 
+-        // Step 2: Experience generalization (if embedding function provided)
+-        if let Some(emb_fn) = embedding_fn {
++        // Step 2: Triple extraction from unconsolidated episodes (if LLM available).
++        if let Some(llm_ref) = llm {
++            if let Some(ref emb_fn) = embedding_fn {
++                let episode_contents = self.get_unconsolidated_episode_contents(config.batch_size)?;
++                if !episode_contents.is_empty() {
++                    match self.extract_triples(&episode_contents, llm_ref, emb_fn).await {
++                        Ok(extraction_result) => {
++                            result.triples_extracted = extraction_result.triples.len();
++
++                            // T4.5: Apply knowledge updates for triples where
++                            // (subject, predicate) matches but object differs.
++                            // This marks the old node as Dormant before the new
++                            // triple is stored.
++                            if !extraction_result.triples.is_empty() {
++                                let updated = self.apply_knowledge_updates(&extraction_result.triples)?;
++                                // Track: updated nodes are not "new" triples,
++                                // they replace existing ones.
++                                let _ = updated;
++                            }
++
++                            // Step 3: Resolve conflicts between extracted and existing knowledge.
++                            if extraction_result.deduplicated > 0 {
++                                let conflict_result = self
++                                    .resolve_conflicts_with_llm(llm_ref)
++                                    .await?;
++                                result.conflicts_resolved = conflict_result.resolved;
++                                result.conflicts_evolution = conflict_result.evolution;
++                                result.conflicts_correction = conflict_result.correction;
++                                result.conflicts_ambiguous = conflict_result.ambiguous;
++                            }
++                        }
++                        Err(_) => {
++                            // Triple extraction failed — continue with remaining steps.
++                            // Error is captured in result.triples_extracted remaining 0.
++                        }
++                    }
++                }
++            }
++        }
++
++        // Step 4: Experience generalization (if embedding function provided)
++        if let Some(ref emb_fn) = embedding_fn {
+             let gen_config = gen_config.cloned().unwrap_or_default();
+             let gen_result = self
+                 .run_generalization(llm, emb_fn, &gen_config)
+@@ -91,9 +165,23 @@ impl GrafeoStore {
+             result.procedural_boosted = gen_result.nodes_boosted;
+         }
+ 
+-        // Step 3: Compress History nodes if there are too many (> 10).
++        // Step 5: Compress History nodes if there are too many (> 10).
+         result.history_compressed = self.compress_history_nodes(10)?;
+ 
++        // Step 6: Auto-generate Relationship nodes for long-term users.
++        // Per design §3.3: collaboration > 30 days → Relationship node.
++        let _ = self.auto_generate_relationship_nodes()?;
++
++        // Step 7: Auto-generate Limitation nodes from low success-rate skills.
++        // Per design §3.3: skill success rate < 60% with >= 5 observations → Limitation node.
++        let _ = self.auto_generate_limitation_nodes()?;
++
++        // Step 8: Run episodic forgetting scan.
++        // Per design §2: consolidated episodes > 7 days old are candidates for
++        // decay → Dormant. Unconsolidated > 14 days with importance < 0.3 → Dormant.
++        // Unconsolidated > 14 days with importance >= 0.3 → keep and trigger offline consolidation.
++        result.episodic_cleaned = self.run_episodic_cleanup()?;
++
+         Ok(result)
+     }
+ 
+@@ -277,6 +365,386 @@ impl GrafeoStore {
+ 
+         Ok(compressed)
+     }
++
++    /// Get episode content from unconsolidated episodic nodes.
++    ///
++    /// Returns (episode_id, content) pairs for episodes that have not yet
++    /// been consolidated (consolidated == false).
++    pub fn get_unconsolidated_episode_contents(
++        &self,
++        limit: usize,
++    ) -> Result<Vec<(String, String)>> {
++        let graph = self.db.graph_store();
++        let node_ids = graph.nodes_by_label(labels::EPISODIC);
++
++        let mut episodes = Vec::new();
++
++        for id in node_ids {
++            if episodes.len() >= limit {
++                break;
++            }
++
++            if let Some(n) = self.db.get_node(id) {
++                // Check consolidated flag — skip already-consolidated.
++                let is_consolidated = n
++                    .get_property("consolidated")
++                    .and_then(Value::as_bool)
++                    .unwrap_or(false);
++
++                if is_consolidated {
++                    continue;
++                }
++
++                // Extract content.
++                let content = n
++                    .get_property("content")
++                    .and_then(Value::as_str)
++                    .unwrap_or("")
++                    .to_string();
++
++                if content.is_empty() {
++                    continue;
++                }
++
++                let episode_id = format!("{}", id.as_u64());
++                episodes.push((episode_id, content));
++            }
++        }
++
++        Ok(episodes)
++    }
++
++    /// Resolve knowledge conflicts using LLM arbitration.
++    ///
++    /// Finds pairs of knowledge nodes with the same (subject, predicate)
++    /// but different (object), then classifies each conflict as
++    /// Evolution, Correction, or Ambiguous using LLM.
++    async fn resolve_conflicts_with_llm(
++        &self,
++        llm: &dyn TripleExtractorLlm,
++    ) -> Result<ConflictResolutionResult> {
++        let active = self.get_all_active_knowledge()?;
++
++        // Group by (subject, predicate) to find conflicts.
++        let mut groups: std::collections::HashMap<(String, String), Vec<&KnowledgeNode>> =
++            std::collections::HashMap::new();
++        for node in &active {
++            let key = (
++                node.subject.to_lowercase(),
++                node.predicate.to_lowercase(),
++            );
++            groups.entry(key).or_default().push(node);
++        }
++
++        let mut result = ConflictResolutionResult::default();
++
++        // Process groups with 2+ nodes (potential conflicts).
++        for nodes in groups.values() {
++            if nodes.len() < 2 {
++                continue;
++            }
++
++            // Compare each pair (only the first two to limit LLM calls).
++            let old = &nodes[0];
++            let new = &nodes[1];
++
++            // Only resolve if objects differ.
++            if old.object.eq_ignore_ascii_case(&new.object) {
++                continue;
++            }
++
++            match classify_conflict(
++                &old.subject,
++                &old.predicate,
++                &old.object,
++                &new.subject,
++                &new.predicate,
++                &new.object,
++                None, // No evidence context available in offline mode
++                llm,
++            )
++            .await
++            {
++                Ok(classification) => {
++                    result.resolved += 1;
++                    match classification.conflict_type {
++                        LlmConflictType::Evolution => {
++                            // Old value is outdated — mark Dormant, new stays Active.
++                            let mut old_node = (*old).clone();
++                            old_node.status = NodeStatus::Dormant;
++                            old_node.updated_at = Utc::now();
++                            self.update_knowledge(&old_node)?;
++                            result.evolution += 1;
++                        }
++                        LlmConflictType::Correction => {
++                            // Old value was wrong — mark Dormant, new stays Active.
++                            let mut old_node = (*old).clone();
++                            old_node.status = NodeStatus::Dormant;
++                            old_node.updated_at = Utc::now();
++                            self.update_knowledge(&old_node)?;
++                            result.correction += 1;
++                        }
++                        LlmConflictType::Ambiguous => {
++                            // Both could be true — keep both, mark for user confirmation.
++                            // The Ambiguous system handles user confirmation hints separately.
++                            result.ambiguous += 1;
++                        }
++                    }
++                }
++                Err(_) => {
++                    // LLM conflict classification failed — keep both values.
++                    result.ambiguous += 1;
++                }
++            }
++        }
++
++        Ok(result)
++    }
++
++    /// Auto-generate Relationship autobiographical nodes.
++    ///
++    /// Per design §3.3: if the user has collaborated with the agent for
++    /// more than 30 days (based on earliest episodic record), create a
++    /// Relationship node. Idempotent — skips if one already exists.
++    fn auto_generate_relationship_nodes(&self) -> Result<usize> {
++        // Check idempotency — skip if Relationship nodes already exist.
++        let existing = self.find_autobiographical_by_category(AutobioCategory::Relationship)?;
++        if !existing.is_empty() {
++            return Ok(0);
++        }
++
++        // Find the earliest episodic node.
++        let graph = self.db.graph_store();
++        let node_ids = graph.nodes_by_label(labels::EPISODIC);
++
++        let mut earliest_time: Option<chrono::DateTime<Utc>> = None;
++        let mut episode_count: u32 = 0;
++
++        for id in node_ids {
++            if let Some(n) = self.db.get_node(id) {
++                episode_count += 1;
++                if let Some(ts) = n.get_property("created_at").and_then(Value::as_timestamp) {
++                    if let Some(dt) = chrono::DateTime::from_timestamp_micros(ts.as_micros()) {
++                        match earliest_time {
++                            None => earliest_time = Some(dt),
++                            Some(earliest) if dt < earliest => earliest_time = Some(dt),
++                            _ => {}
++                        }
++                    }
++                }
++            }
++        }
++
++        let Some(earliest) = earliest_time else {
++            return Ok(0);
++        };
++
++        let span_days = (Utc::now() - earliest).num_days();
++        if span_days < 30 {
++            return Ok(0);
++        }
++
++        let key = "collaboration_span".to_string();
++        let value = format!("已合作 {} 天（{} 次对话记录）", span_days, episode_count);
++        let node = AutobiographicalNode {
++            id: None,
++            category: AutobioCategory::Relationship,
++            key,
++            value,
++            confidence: 0.9,
++            source_episode_id: None,
++            embedding: None,
++            status: NodeStatus::Active,
++            created_at: Utc::now(),
++            updated_at: Utc::now(),
++            metadata: std::collections::HashMap::new(),
++        };
++        self.store_autobiographical(&node)?;
++        Ok(1)
++    }
++
++    /// Auto-generate Limitation autobiographical nodes.
++    ///
++    /// Per design §3.3: if a skill's ProceduralNodes indicate a success
++    /// rate below 60% with >= 5 total observations, create a Limitation node.
++    /// Idempotent — skips if one already exists for the skill.
++    fn auto_generate_limitation_nodes(&self) -> Result<usize> {
++        let procedures = self.get_all_procedural_nodes()?;
++
++        // Aggregate success/fail counts by source_skill.
++        let mut skill_stats: std::collections::HashMap<String, (u32, u32)> =
++            std::collections::HashMap::new();
++        for node in &procedures {
++            if let Some(ref skill) = node.source_skill {
++                let entry = skill_stats.entry(skill.clone()).or_insert((0, 0));
++                entry.0 += node.success_count;
++                entry.1 += node.fail_count;
++            }
++        }
++
++        let mut created = 0;
++        for (skill, (success, fail)) in skill_stats {
++            let total = success + fail;
++            if total < 5 {
++                continue; // Not enough observations.
++            }
++            let rate = success as f32 / total as f32;
++            if rate >= 0.60 {
++                continue; // Success rate is acceptable.
++            }
++
++            // Check idempotency — skip if Limitation node already exists.
++            let key = format!("skill_{}", skill);
++            if self.find_autobiographical_by_key(&key)?.is_some() {
++                continue;
++            }
++
++            let rate_pct = (rate * 100.0) as u32;
++            let value = format!(
++                "{} 成功率仅 {}%（{} 次成功 / {} 次失败）",
++                skill, rate_pct, success, fail
++            );
++            let node = AutobiographicalNode {
++                id: None,
++                category: AutobioCategory::Limitation,
++                key: key.clone(),
++                value,
++                confidence: 0.8,
++                source_episode_id: None,
++                embedding: None,
++                status: NodeStatus::Active,
++                created_at: Utc::now(),
++                updated_at: Utc::now(),
++                metadata: std::collections::HashMap::new(),
++            };
++            self.store_autobiographical(&node)?;
++            created += 1;
++        }
++
++        Ok(created)
++    }
++
++    /// Run episodic memory cleanup based on design §2 forgetting rules.
++    ///
++    /// Unlike the general `run_decay_scan()` which uses the multiplicative
++    /// decay formula on all labels, this method applies episodic-specific
++    /// rules with explicit consolidated/unconsolidated distinction:
++    ///
++    /// - **Consolidated** episodes older than 7 days → Dormant
++    ///   (knowledge already extracted; episode is redundant)
++    /// - **Unconsolidated** episodes older than 14 days with importance < 0.3 → Dormant
++    ///   (low-value and stale; unlikely to yield useful knowledge)
++    /// - **Unconsolidated** episodes older than 14 days with importance >= 0.3 → keep Active
++    ///   (high-value but missed consolidation; will be picked up next cycle)
++    /// - **Unconsolidated** episodes older than 14 days with importance >= 0.3 → mark
++    ///   `needs_consolidation = true` in metadata so the next consolidation cycle
++    ///   prioritizes them.
++    ///
++    /// Returns the number of episodic nodes transitioned to Dormant.
++    fn run_episodic_cleanup(&self) -> Result<usize> {
++        let now = Utc::now();
++        let mut transitioned = 0usize;
++
++        let graph = self.db.graph_store();
++        let node_ids = graph.nodes_by_label(labels::EPISODIC);
++
++        for node_id in node_ids {
++            if let Some(node) = self.db.get_node(node_id) {
++                // Skip non-Active nodes.
++                if let Some(Value::String(s)) = node.properties.get(&"status".into()) {
++                    if s.as_str() != NodeStatus::Active.as_str() {
++                        continue;
++                    }
++                }
++
++                // Read consolidated flag.
++                let is_consolidated = node
++                    .get_property("consolidated")
++                    .and_then(Value::as_bool)
++                    .unwrap_or(false);
++
++                // Read importance (default 0.5 if not set).
++                let importance = node
++                    .get_property("importance")
++                    .and_then(|v| v.as_float64())
++                    .unwrap_or(0.5) as f32;
++
++                // Compute age in days.
++                let created_at = node
++                    .get_property("created_at")
++                    .and_then(|v| v.as_timestamp());
++                let age_days = created_at
++                    .and_then(|ts| {
++                        DateTime::from_timestamp_micros(ts.as_micros())
++                            .map(|dt| (now - dt).num_days())
++                    })
++                    .unwrap_or(0);
++
++                // Apply design §2 rules.
++                let should_dormant = if is_consolidated && age_days > 7 {
++                    // Consolidated + > 7 days → Dormant.
++                    true
++                } else if !is_consolidated && age_days > 14 {
++                    if importance < 0.3 {
++                        // Unconsolidated + > 14 days + low importance → Dormant.
++                        true
++                    } else {
++                        // Unconsolidated + > 14 days + high importance → keep Active,
++                        // but mark for priority consolidation.
++                        self.db.set_node_property(
++                            node_id,
++                            "needs_consolidation",
++                            Value::from(true),
++                        );
++                        false
++                    }
++                } else {
++                    false
++                };
++
++                if should_dormant {
++                    self.transition_to_dormant(node_id)?;
++                    transitioned += 1;
++                }
++            }
++        }
++
++        Ok(transitioned)
++    }
++
++    /// Enhanced Fact semantic deduplication.
++    ///
++    /// Beyond the existing `has_potential_conflict()` which checks
++    /// (subject, predicate) exact match, this method also handles:
++    /// - Same (subject, predicate) with different object → knowledge update
++    ///   (replace old with new, mark old as Dormant) instead of creating duplicate
++    ///
++    /// This is called during triple extraction when dedup is detected.
++    /// Returns the number of old nodes marked Dormant due to knowledge updates.
++    pub fn apply_knowledge_updates(&self, new_triples: &[ExtractedTriple]) -> Result<usize> {
++        let existing = self.get_all_active_knowledge()?;
++        let mut updated = 0;
++
++        for triple in new_triples {
++            // Find nodes with matching subject+predicate but different object.
++            for node in &existing {
++                if node.subject.eq_ignore_ascii_case(&triple.subject)
++                    && node.predicate.eq_ignore_ascii_case(&triple.predicate)
++                    && !node.object.eq_ignore_ascii_case(&triple.object)
++                {
++                    // Knowledge update: mark old as Dormant, new will be stored
++                    // by the caller (extract_triples) as Active.
++                    let mut old = node.clone();
++                    old.status = NodeStatus::Dormant;
++                    old.updated_at = Utc::now();
++                    self.update_knowledge(&old)?;
++                    updated += 1;
++                }
++            }
++        }
++
++        Ok(updated)
++    }
+ }
+ 
+ // ---------------------------------------------------------------------------
+diff --git a/core/rollball-runtime/src/embedding/mod.rs b/core/rollball-runtime/src/embedding/mod.rs
+index f92d283f..fecacc3a 100644
+--- a/core/rollball-runtime/src/embedding/mod.rs
++++ b/core/rollball-runtime/src/embedding/mod.rs
+@@ -2,10 +2,13 @@
+ //!
+ //! Provides embedding generation with:
+ //! - Remote: OpenAI-compatible API (text-embedding-3-small, etc.)
++//! - Ollama: local embedding via Ollama's `/api/embed`
++//! - ONNX: local embedding via rollball-embed (OpenAI-compatible API)
+ //! - Extensible via [`EmbeddingProvider`] trait for custom/local backends
+ //!
+-//! Fallback chain: primary (e.g., Ollama local) → remote API → text_search only.
+-//! Remote fallback triggers after 200ms timeout or 2 consecutive failures.
++//! Fallback chain: ONNX local (500ms) → Ollama (200ms) → Remote API (no timeout).
++//! Each provider has its own timeout and consecutive failure tracking.
++//! After exceeding the failure threshold, a provider is temporarily skipped.
+ 
+ pub mod ollama;
+ pub mod remote;
+@@ -74,163 +77,284 @@ impl Default for EmbeddingConfig {
+     }
+ }
+ 
+-/// Embedding provider with automatic fallback
++// ── Provider entry (for the providers chain) ────────────────────────────
++
++/// Entry in the provider fallback chain.
++///
++/// Each provider has its own timeout and consecutive failure counter.
++/// After exceeding `failure_threshold` consecutive failures, the provider
++/// is temporarily skipped until a subsequent success resets the counter.
++struct ProviderEntry {
++    provider: Box<dyn EmbeddingProvider>,
++    /// Per-provider timeout in milliseconds.
++    timeout_ms: u64,
++    /// Consecutive failure counter (atomic for thread safety).
++    consecutive_failures: std::sync::atomic::AtomicU32,
++}
++
++impl ProviderEntry {
++    fn new(provider: Box<dyn EmbeddingProvider>, timeout_ms: u64) -> Self {
++        Self {
++            provider,
++            timeout_ms,
++            consecutive_failures: std::sync::atomic::AtomicU32::new(0),
++        }
++    }
++
++    fn is_degraded(&self, threshold: u32) -> bool {
++        self.consecutive_failures.load(std::sync::atomic::Ordering::Relaxed) >= threshold
++    }
++
++    fn record_failure(&self, threshold: u32) {
++        let failures = self.consecutive_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
++        if failures == threshold {
++            tracing::warn!(
++                provider = self.provider.name(),
++                failures,
++                threshold,
++                "Embedding provider exceeded failure threshold, temporarily skipping"
++            );
++        }
++    }
++
++    fn record_success(&self) {
++        self.consecutive_failures.store(0, std::sync::atomic::Ordering::Relaxed);
++    }
++}
++
++// ── FallbackEmbeddingProvider ───────────────────────────────────────────
++
++/// Embedding provider with automatic fallback through a chain of providers.
++///
++/// # Provider Chain
++///
++/// The providers are tried in order. For each provider:
++/// 1. If it has exceeded `failure_threshold` consecutive failures, skip it.
++/// 2. Otherwise, attempt embedding with its per-provider timeout.
++/// 3. On success, reset its failure counter and return the result.
++/// 4. On failure/timeout, increment its failure counter and try the next provider.
++///
++/// If all providers fail, return the last error.
++///
++/// # Backward Compatibility
++///
++/// The `new(primary, fallback, config)` constructor still works, creating a
++/// two-entry providers chain. The new `with_providers()` constructor allows
++/// building longer chains (e.g., ONNX → Ollama → Remote).
+ pub struct FallbackEmbeddingProvider {
+-    /// Primary provider (usually local)
+-    primary: Option<Box<dyn EmbeddingProvider>>,
+-    /// Fallback provider (usually remote)
+-    fallback: Box<dyn EmbeddingProvider>,
++    /// Ordered provider chain. Try each in sequence until one succeeds.
++    providers: Vec<ProviderEntry>,
+     /// Configuration
+     config: EmbeddingConfig,
+-    /// Consecutive failure count for primary provider
+-    primary_failures: std::sync::atomic::AtomicU32,
+ }
+ 
+ impl FallbackEmbeddingProvider {
+-    /// Create a new fallback embedding provider
++    /// Create a new fallback embedding provider with the classic two-layer pattern.
++    ///
++    /// This is backward-compatible with the previous API.
++    /// Internally converts to a providers chain with two entries.
+     pub fn new(
+         primary: Option<Box<dyn EmbeddingProvider>>,
+         fallback: Box<dyn EmbeddingProvider>,
+         config: EmbeddingConfig,
+     ) -> Self {
+-        Self {
+-            primary,
+-            fallback,
+-            config,
+-            primary_failures: std::sync::atomic::AtomicU32::new(0),
+-        }
+-    }
+-
+-    /// Create with only a remote fallback (no local provider)
+-    pub fn remote_only(fallback: Box<dyn EmbeddingProvider>) -> Self {
+-        Self::new(None, fallback, EmbeddingConfig::default())
+-    }
++        let mut providers = Vec::new();
+ 
+-    /// Record a primary provider failure
+-    fn record_primary_failure(&self) {
+-        let failures = self.primary_failures.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+-        if failures >= self.config.failure_threshold {
+-            tracing::warn!(
+-                failures,
+-                threshold = self.config.failure_threshold,
+-                "Primary embedding provider exceeded failure threshold, switching to fallback"
+-            );
++        if let Some(primary) = primary {
++            providers.push(ProviderEntry::new(primary, config.timeout_ms));
+         }
++        providers.push(ProviderEntry::new(fallback, 5000)); // Remote: 5s timeout
++
++        Self { providers, config }
+     }
+ 
+-    /// Record a primary provider success (reset failure counter)
+-    fn record_primary_success(&self) {
+-        self.primary_failures.store(0, std::sync::atomic::Ordering::Relaxed);
++    /// Create with a full providers chain.
++    ///
++    /// Each `(provider, timeout_ms)` tuple defines one entry in the chain.
++    /// Providers are tried in the order given.
++    ///
++    /// # Example
++    ///
++    /// ```ignore
++    /// let fallback = FallbackEmbeddingProvider::with_providers(
++    ///     vec![
++    ///         (Box::new(onnx_provider), 500),     // ONNX local: 500ms timeout
++    ///         (Box::new(ollama_provider), 200),    // Ollama: 200ms timeout
++    ///         (Box::new(remote_provider), 5000),   // Remote API: 5s timeout
++    ///     ],
++    ///     EmbeddingConfig::default(),
++    /// );
++    /// ```
++    pub fn with_providers(
++        providers: Vec<(Box<dyn EmbeddingProvider>, u64)>,
++        config: EmbeddingConfig,
++    ) -> Self {
++        let providers = providers
++            .into_iter()
++            .map(|(provider, timeout_ms)| ProviderEntry::new(provider, timeout_ms))
++            .collect();
++        Self { providers, config }
+     }
+ 
+-    /// Check if primary provider should be skipped due to failures
+-    fn should_skip_primary(&self) -> bool {
+-        self.primary_failures.load(std::sync::atomic::Ordering::Relaxed) >= self.config.failure_threshold
++    /// Create with only a remote fallback (no local provider).
++    pub fn remote_only(fallback: Box<dyn EmbeddingProvider>) -> Self {
++        Self::new(None, fallback, EmbeddingConfig::default())
+     }
+ }
+ 
+ #[async_trait]
+ impl EmbeddingProvider for FallbackEmbeddingProvider {
+     fn name(&self) -> &str {
+-        if self.primary.is_some() && !self.should_skip_primary() {
+-            "fallback(primary=local)"
+-        } else {
+-            "fallback(primary=remote)"
++        // Return the name of the first non-degraded provider
++        for entry in &self.providers {
++            if !entry.is_degraded(self.config.failure_threshold) {
++                return entry.provider.name();
++            }
+         }
++        // All degraded — return the last provider's name
++        self.providers
++            .last()
++            .map(|e| e.provider.name())
++            .unwrap_or("fallback(empty)")
+     }
+ 
+     async fn embed(&self, text: &str) -> Result<Vec<f32>, EmbeddingError> {
+-        // Try primary provider first
+-        if let Some(ref primary) = self.primary
+-            && !self.should_skip_primary()
+-        {
++        let mut last_error = EmbeddingError::Unavailable("All embedding providers failed".to_string());
++
++        for entry in &self.providers {
++            // Skip degraded providers
++            if entry.is_degraded(self.config.failure_threshold) {
++                continue;
++            }
++
+             match tokio::time::timeout(
+-                std::time::Duration::from_millis(self.config.timeout_ms),
+-                primary.embed(text),
++                std::time::Duration::from_millis(entry.timeout_ms),
++                entry.provider.embed(text),
+             )
+             .await
+             {
+                 Ok(Ok(embedding)) => {
+-                    self.record_primary_success();
++                    entry.record_success();
+                     return Ok(embedding);
+                 }
+                 Ok(Err(e)) => {
+-                    tracing::warn!(error = %e, "Primary embedding provider failed");
+-                    self.record_primary_failure();
++                    tracing::warn!(
++                        provider = entry.provider.name(),
++                        error = %e,
++                        "Embedding provider failed"
++                    );
++                    entry.record_failure(self.config.failure_threshold);
++                    last_error = e;
+                 }
+                 Err(_) => {
+-                    tracing::warn!(timeout_ms = self.config.timeout_ms, "Primary embedding provider timed out");
+-                    self.record_primary_failure();
++                    tracing::warn!(
++                        provider = entry.provider.name(),
++                        timeout_ms = entry.timeout_ms,
++                        "Embedding provider timed out"
++                    );
++                    entry.record_failure(self.config.failure_threshold);
++                    last_error = EmbeddingError::Timeout(entry.timeout_ms);
+                 }
+             }
+         }
+ 
+-        // Fallback to remote provider
+-        self.fallback.embed(text).await.map_err(|e| {
+-            tracing::error!(error = %e, "Fallback embedding provider also failed");
+-            e
+-        })
++        tracing::error!(error = %last_error, "All embedding providers failed");
++        Err(last_error)
+     }
+ 
+     async fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, EmbeddingError> {
+-        // Process in batches
++        if texts.is_empty() {
++            return Ok(Vec::new());
++        }
++
+         let mut all_embeddings = Vec::with_capacity(texts.len());
+ 
+         for chunk in texts.chunks(self.config.max_batch_size) {
+-            // Try primary provider first
+-            if let Some(ref primary) = self.primary
+-                && !self.should_skip_primary()
+-            {
++            let mut chunk_ok = false;
++            let mut last_err = EmbeddingError::Unavailable("All embedding providers failed".to_string());
++
++            for entry in &self.providers {
++                // Skip degraded providers
++                if entry.is_degraded(self.config.failure_threshold) {
++                    continue;
++                }
++
++                // Scale timeout by chunk size
++                let timeout = entry.timeout_ms * chunk.len().max(1) as u64;
++
+                 match tokio::time::timeout(
+-                    std::time::Duration::from_millis(self.config.timeout_ms * chunk.len() as u64),
+-                    primary.embed_batch(chunk),
++                    std::time::Duration::from_millis(timeout),
++                    entry.provider.embed_batch(chunk),
+                 )
+                 .await
+                 {
+                     Ok(Ok(embeddings)) => {
+-                        self.record_primary_success();
++                        entry.record_success();
+                         all_embeddings.extend(embeddings);
+-                        continue;
++                        chunk_ok = true;
++                        break; // This chunk succeeded, move to next chunk
+                     }
+                     Ok(Err(e)) => {
+-                        tracing::warn!(error = %e, "Primary batch embedding failed");
+-                        self.record_primary_failure();
++                        tracing::warn!(
++                            provider = entry.provider.name(),
++                            error = %e,
++                            "Batch embedding provider failed"
++                        );
++                        entry.record_failure(self.config.failure_threshold);
++                        last_err = e;
+                     }
+                     Err(_) => {
+-                        tracing::warn!("Primary batch embedding timed out");
+-                        self.record_primary_failure();
++                        tracing::warn!(
++                            provider = entry.provider.name(),
++                            "Batch embedding provider timed out"
++                        );
++                        entry.record_failure(self.config.failure_threshold);
++                        last_err = EmbeddingError::Timeout(timeout);
+                     }
+                 }
+             }
+ 
+-            // Fallback to remote provider
+-            let embeddings = self.fallback.embed_batch(chunk).await?;
+-            all_embeddings.extend(embeddings);
++            if !chunk_ok {
++                tracing::error!(error = %last_err, "All embedding providers failed for batch chunk");
++                return Err(last_err);
++            }
++        }
++
++        // Validate we got the right number of embeddings
++        if all_embeddings.len() != texts.len() {
++            return Err(EmbeddingError::Unavailable(format!(
++                "Expected {} embeddings, got {}",
++                texts.len(),
++                all_embeddings.len()
++            )));
+         }
+ 
+         Ok(all_embeddings)
+     }
+ 
+     fn dimension(&self) -> usize {
+-        // When primary is active and not degraded, use its dimension
+-        // (Grafeo index was initialised with this value).
+-        // When primary has been skipped due to consecutive failures,
+-        // return the fallback dimension — though vector search may degrade
+-        // to text-only if the stored index dimension differs.
+-        if let Some(ref primary) = self.primary
+-            && !self.should_skip_primary()
+-        {
+-            primary.dimension()
+-        } else {
+-            self.fallback.dimension()
++        // Return the dimension of the first non-degraded provider.
++        // (Grafeo index was initialised with this value.)
++        // When all providers are degraded, return the last provider's dimension.
++        for entry in &self.providers {
++            if !entry.is_degraded(self.config.failure_threshold) {
++                return entry.provider.dimension();
++            }
+         }
++        self.providers
++            .last()
++            .map(|e| e.provider.dimension())
++            .unwrap_or(0)
+     }
+ 
+     async fn is_available(&self) -> bool {
+-        if let Some(ref primary) = self.primary {
+-            primary.is_available().await
+-        } else {
+-            self.fallback.is_available().await
++        for entry in &self.providers {
++            if !entry.is_degraded(self.config.failure_threshold)
++                && entry.provider.is_available().await
++            {
++                return true;
++            }
+         }
++        false
+     }
+ }

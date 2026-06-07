@@ -1,5 +1,5 @@
 import { memo, useCallback } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Folder, FolderOpen } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { getFileIcon } from "./fileIcons";
 import type { TreeEntry } from "../../../stores/workspaceStore";
@@ -49,10 +49,10 @@ export const FileTreeNode = memo(function FileTreeNode({
   return (
     <div
       className={cn(
-        "flex cursor-pointer items-center gap-1 py-[2px] pr-2 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800",
+        "flex cursor-pointer items-center gap-1 py-[2px] pr-3 text-xs hover:bg-zinc-100 dark:hover:bg-zinc-800",
         isSelected && "bg-blue-50 dark:bg-blue-900/20",
       )}
-      style={{ paddingLeft: `${depth * 16 + 4}px` }}
+      style={{ paddingLeft: `${depth * 16 + 8}px` }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       title={relPath}
@@ -68,19 +68,27 @@ export const FileTreeNode = memo(function FileTreeNode({
         />
       </span>
 
-      {/* File icon — only for files */}
-      {!isDir && fileIcon && (
-        <fileIcon.icon
-          className={cn(
-            "h-3.5 w-3.5 shrink-0",
-            !isDevicon && iconColor,
-          )}
-          style={!isDevicon && iconColor.startsWith("#") ? { color: iconColor } : undefined}
-        />
-      )}
+      {/* Icon — folder for dirs, file-type for files; keeps names aligned */}
+      <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+        {isDir ? (
+          isExpanded ? (
+            <FolderOpen className="h-3.5 w-3.5 text-zinc-400" />
+          ) : (
+            <Folder className="h-3.5 w-3.5 text-zinc-400" />
+          )
+        ) : fileIcon ? (
+          <fileIcon.icon
+            className={cn(
+              "h-3.5 w-3.5",
+              !isDevicon && iconColor,
+            )}
+            style={!isDevicon && iconColor.startsWith("#") ? { color: iconColor } : undefined}
+          />
+        ) : null}
+      </span>
 
       {/* Name */}
-      <span className="ml-1 truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>
+      <span className="truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>
 
       {/* Loading indicator for directories being fetched */}
       {isLoading && isDir && isExpanded && (
