@@ -77,8 +77,8 @@ export const FileTreeNode = memo(function FileTreeNode({
         ) : null}
       </span>
 
-      {/* Name */}
-      <span className="truncate text-zinc-700 dark:text-zinc-400">{entry.name}</span>
+      {/* Name — no truncation; horizontal scrollbar on parent handles overflow */}
+      <span className="whitespace-nowrap text-zinc-700 dark:text-zinc-400">{entry.name}</span>
 
       {/* Loading indicator for directories being fetched */}
       {isLoading && isDir && isExpanded && (

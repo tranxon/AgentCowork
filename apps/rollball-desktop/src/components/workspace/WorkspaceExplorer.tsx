@@ -262,8 +262,8 @@ export function WorkspaceExplorer() {
             </div>
 
             {/* File tree (normal mode, no search filtering) */}
-            {selectedAgentId && (
-                <FileTree agentId={selectedAgentId} workspaceId={currentWorkspaceId} onFileDoubleClick={handleFileDoubleClick} />
+            {selectedAgentId && activeSessionId && (
+                <FileTree agentId={selectedAgentId} workspaceId={currentWorkspaceId} sessionId={activeSessionId} onFileDoubleClick={handleFileDoubleClick} />
             )}
         </div>
     );

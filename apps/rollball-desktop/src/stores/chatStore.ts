@@ -67,6 +67,8 @@ interface SessionChatState {
   provider: string | null;
   /** Context compaction in progress (both manual and auto triggers) */
   isCompacting: boolean;
+  /** File tree expanded directory paths (persisted per-session) */
+  treeExpandedPaths: string[];
 }
 
 const DEFAULT_SESSION_STATE: SessionChatState = {
@@ -93,6 +95,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   model: null,
   provider: null,
   isCompacting: false,
+  treeExpandedPaths: [],
 };
 
 // ---------------------------------------------------------------------------
@@ -319,6 +322,8 @@ interface ChatStore {
   getOpenSessionIds: (agentId: string) => string[];
   /** Trigger context compaction for the current session */
   compactContext: (agentId: string, sessionId: string) => void;
+  /** Toggle a file tree directory expansion (per-session) */
+  toggleTreeExpandedPath: (agentId: string, sessionId: string, relPath: string) => void;
 }
 
 function toWsUrl(httpUrl: string, agentId: string): string {
@@ -1257,6 +1262,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     } finally {
       set({ isLoadingMore: false });
     }
+  },
+
+  toggleTreeExpandedPath: (agentId: string, sessionId: string, relPath: string) => {
+    set((state) => {
+      const ss = getSessionState(state, agentId, sessionId);
+      const current = ss.treeExpandedPaths;
+      const idx = current.indexOf(relPath);
+      const next = idx >= 0
+        ? current.filter((p) => p !== relPath)
+        : [...current, relPath];
+      return updateSessionState(state, agentId, sessionId, { treeExpandedPaths: next });
+    });
   },
 }));
 

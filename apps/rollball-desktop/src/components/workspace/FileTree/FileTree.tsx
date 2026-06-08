@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useWorkspaceStore, type TreeEntry } from "../../../stores/workspaceStore";
 import { useAgentStore } from "../../../stores/agentStore";
+import { useChatStore } from "../../../stores/chatStore";
 import { FileTreeNode } from "./FileTreeNode";
 
 /** Flattened tree node for virtualized rendering */
@@ -14,23 +15,30 @@ interface FlatNode {
 interface FileTreeProps {
     agentId: string;
     workspaceId: string;
+    sessionId: string;
     onFileDoubleClick?: (entry: TreeEntry, relPath: string) => void;
 }
 
-export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreeProps) {
-    const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set([""]));
+export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick }: FileTreeProps) {
     const [selectedPath, setSelectedPath] = useState<string | null>(null);
     const treeCache = useWorkspaceStore((s) => s.treeCache);
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
     const treeLoadingPaths = useWorkspaceStore((s) => s.treeLoadingPaths);
+    const toggleTreeExpandedPath = useChatStore((s) => s.toggleTreeExpandedPath);
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
 
-    /** Build cache key prefix: agentId:workspaceId */
-    const ck = `${agentId}:${workspaceId}`;
+    /** Build cache key prefix: agentId:workspaceId (tree cache is NOT per-session) */
+    const treeCachePrefix = `${agentId}:${workspaceId}`;
+
+    // Expanded paths from the session — Zustand selector is reactive
+    const expandedPathsArr = useChatStore((s) => {
+        const ss = s.agentStates[agentId]?.sessionStates[sessionId];
+        return ss?.treeExpandedPaths ?? [];
+    });
+    const expandedPaths = useMemo(() => new Set(expandedPathsArr), [expandedPathsArr]);
 
     // Reset state when agent or workspace changes
     useEffect(() => {
-        setExpandedPaths(new Set([""]));
         setSelectedPath(null);
     }, [selectedAgentId, workspaceId]);
 
@@ -46,7 +54,7 @@ export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreePr
         const result: FlatNode[] = [];
 
         function walk(relPath: string, depth: number) {
-            const cacheKey = `${ck}:${relPath}`;
+            const cacheKey = `${treeCachePrefix}:${relPath}`;
             const entries = treeCache[cacheKey];
             if (!entries) return;
 
@@ -63,25 +71,18 @@ export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreePr
 
         walk("", 0);
         return result;
-    }, [ck, treeCache, expandedPaths]);
+    }, [treeCachePrefix, treeCache, expandedPaths]);
 
     const handleToggle = useCallback(
         (relPath: string) => {
-            setExpandedPaths((prev) => {
-                const next = new Set(prev);
-                if (next.has(relPath)) {
-                    next.delete(relPath);
-                } else {
-                    next.add(relPath);
-                    // Lazy-load children
-                    if (!treeCache[`${ck}:${relPath}`]) {
-                        fetchTree(agentId, workspaceId, relPath);
-                    }
-                }
-                return next;
-            });
+            const isCurrentlyExpanded = expandedPaths.has(relPath);
+            toggleTreeExpandedPath(agentId, sessionId, relPath);
+            // Lazy-load children when expanding
+            if (!isCurrentlyExpanded && !treeCache[`${treeCachePrefix}:${relPath}`]) {
+                fetchTree(agentId, workspaceId, relPath);
+            }
         },
-        [agentId, workspaceId, ck, treeCache, fetchTree],
+        [agentId, workspaceId, sessionId, treeCachePrefix, expandedPaths, treeCache, fetchTree, toggleTreeExpandedPath],
     );
 
     const handleSelect = useCallback((_entry: TreeEntry, relPath: string) => {
@@ -99,7 +100,7 @@ export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreePr
 
     // Empty state
     if (flatNodes.length === 0) {
-        const rootEntries = treeCache[`${ck}:`];
+        const rootEntries = treeCache[`${treeCachePrefix}:`];
         if (!rootEntries) {
             return (
                 <div className="flex items-center justify-center py-8 text-xs text-zinc-400">
@@ -119,18 +120,19 @@ export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreePr
     return (
         <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto"
+            className="flex-1 overflow-auto"
         >
             <div
                 style={{
                     height: `${virtualizer.getTotalSize()}px`,
-                    width: "100%",
+                    width: "fit-content",
+                    minWidth: "100%",
                     position: "relative",
                 }}
             >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
                     const node = flatNodes[virtualRow.index];
-                    const isLoading = treeLoadingPaths.has(`${ck}:${node.relPath}`);
+                    const isLoading = treeLoadingPaths.has(`${treeCachePrefix}:${node.relPath}`);
 
                     return (
                         <div
@@ -139,7 +141,8 @@ export function FileTree({ agentId, workspaceId, onFileDoubleClick }: FileTreePr
                                 position: "absolute",
                                 top: 0,
                                 left: 0,
-                                width: "100%",
+                                minWidth: "100%",
+                                width: "fit-content",
                                 height: `${virtualRow.size}px`,
                                 transform: `translateY(${virtualRow.start}px)`,
                             }}

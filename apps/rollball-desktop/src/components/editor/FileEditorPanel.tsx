@@ -967,7 +967,7 @@ export function FileEditorPanel({ width }: { width: number }) {
                                 fontSize: 13,
                                 lineNumbers: "on",
                                 scrollBeyondLastLine: false,
-                                wordWrap: "on",
+                                wordWrap: "off",
                                 tabSize: 2,
                                 renderWhitespace: "selection",
                                 padding: { top: 8 },
