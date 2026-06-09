@@ -367,7 +367,12 @@
         "unsavedChanges": "Unsaved Changes",
         "saveChanges": "This file has unsaved changes. Discard and close?",
         "cancel": "Cancel",
-        "discard": "Discard"
+        "discard": "Discard",
+        "close": "Close",
+        "closeOthers": "Close Others",
+        "closeAll": "Close All",
+        "batchCloseOthersConfirm": "{count} other tab(s) have unsaved changes. Discard and close?",
+        "batchCloseAllConfirm": "{count} tab(s) have unsaved changes. Discard and close all?"
     },
     "sessionPanel": {
         "loadingSessions": "Loading sessions...",

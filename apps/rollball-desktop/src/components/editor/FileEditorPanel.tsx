@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "../../i18n/useTranslation";
 import { useFileEditorStore, type OpenFile } from "../../stores/fileEditorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
@@ -231,12 +232,23 @@ export function FileEditorPanel({ width }: { width: number }) {
     const updateContent = useFileEditorStore((s) => s.updateContent);
     const saveFile = useFileEditorStore((s) => s.saveFile);
     const closeFile = useFileEditorStore((s) => s.closeFile);
+    const closeOthers = useFileEditorStore((s) => s.closeOthers);
+    const closeAllFiles = useFileEditorStore((s) => s.closeAllFiles);
     const addAttachedContext = useChatStore((s) => s.addAttachedContext);
     const getActiveSessionId = useChatStore((s) => s.getActiveSessionId);
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
 
     const theme = useSettingsStore((s) => s.theme);
     const [closingFileId, setClosingFileId] = useState<string | null>(null);
+    // Tab right-click context menu (fileId, viewport position)
+    const [tabContextMenu, setTabContextMenu] = useState<
+        { fileId: string; x: number; y: number } | null
+    >(null);
+    const tabMenuRef = useRef<HTMLDivElement>(null);
+    // Batch close confirmation (Close Others / Close All with dirty files)
+    const [batchCloseRequest, setBatchCloseRequest] = useState<
+        { kind: "others" | "all"; fileIds: string[]; dirtyCount: number; keepFileId?: string } | null
+    >(null);
     const [showGoToFile, setShowGoToFile] = useState(false);
     const [showGlobalSearch, setShowGlobalSearch] = useState(false);
     const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
@@ -917,6 +929,132 @@ export function FileEditorPanel({ width }: { width: number }) {
         }
     }, [closingFileId, closeFile, lspClient, openFiles]);
 
+    // ── Tab right-click menu (VSCode-style: Close / Close Others / Close All) ──
+
+    // Close the menu on outside click or Escape
+    useEffect(() => {
+        if (!tabContextMenu) return;
+        const handleClickOutside = (e: MouseEvent) => {
+            if (tabMenuRef.current && !tabMenuRef.current.contains(e.target as Node)) {
+                setTabContextMenu(null);
+            }
+        };
+        const handleEscape = (e: KeyboardEvent) => {
+            if (e.key === "Escape") setTabContextMenu(null);
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        document.addEventListener("keydown", handleEscape);
+        return () => {
+            document.removeEventListener("mousedown", handleClickOutside);
+            document.removeEventListener("keydown", handleEscape);
+        };
+    }, [tabContextMenu]);
+
+    const handleTabContextMenu = useCallback((e: React.MouseEvent, file: OpenFile) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setTabContextMenu({ fileId: file.id, x: e.clientX, y: e.clientY });
+    }, []);
+
+    /**
+     * Send didClose to LSP and dispose Monaco models for a set of files.
+     * Store mutations are the caller's responsibility (single- or batch-close).
+     * This is the shared cleanup path for "Close", "Close Others", and "Close All".
+     */
+    const cleanupClosedFiles = useCallback((files: OpenFile[]) => {
+        if (files.length === 0) return;
+        // 1. Notify LSP server via didClose for every tracked model
+        if (lspClient && monacoRef.current && documentTrackerRef.current) {
+            for (const file of files) {
+                const monacoUri = monacoRef.current.Uri.parse(file.relPath);
+                const model = monacoRef.current.editor.getModel(monacoUri);
+                if (model) {
+                    documentTrackerRef.current.trackClose(lspClient, model);
+                }
+            }
+        }
+        // 2. Dispose Monaco models that are no longer referenced by any surviving tab
+        if (monacoRef.current) {
+            const remaining = useFileEditorStore.getState().openFiles;
+            for (const file of files) {
+                const stillReferenced = remaining.some(
+                    (f) => f.id !== file.id && f.relPath === file.relPath,
+                );
+                if (!stillReferenced) {
+                    disposeModelForFile(monacoRef.current, file.relPath);
+                }
+            }
+        }
+    }, [lspClient]);
+
+    const handleCloseTab = useCallback((file: OpenFile) => {
+        setTabContextMenu(null);
+        if (file.dirty) {
+            // Reuse the single-file unsaved-changes dialog
+            setClosingFileId(file.id);
+            return;
+        }
+        cleanupClosedFiles([file]);
+        closeFile(file.id);
+    }, [cleanupClosedFiles, closeFile]);
+
+    const handleCloseOthers = useCallback((file: OpenFile) => {
+        setTabContextMenu(null);
+        const others = openFiles.filter((f) => f.id !== file.id);
+        if (others.length === 0) return;
+        // Activate the kept tab first so the surviving tab is the focused one
+        // (the store will also do this, but doing it here keeps the visual
+        // transition smoother and avoids intermediate focus shifts).
+        setActiveFile(file.id);
+        const dirtyCount = others.filter((f) => f.dirty).length;
+        if (dirtyCount > 0) {
+            setBatchCloseRequest({
+                kind: "others",
+                fileIds: others.map((f) => f.id),
+                dirtyCount,
+                keepFileId: file.id,
+            });
+            return;
+        }
+        cleanupClosedFiles(others);
+        closeOthers(file.id);
+    }, [openFiles, cleanupClosedFiles, closeOthers, setActiveFile]);
+
+    const handleCloseAll = useCallback(() => {
+        setTabContextMenu(null);
+        if (openFiles.length === 0) return;
+        const dirtyCount = openFiles.filter((f) => f.dirty).length;
+        if (dirtyCount > 0) {
+            setBatchCloseRequest({
+                kind: "all",
+                fileIds: openFiles.map((f) => f.id),
+                dirtyCount,
+            });
+            return;
+        }
+        cleanupClosedFiles(openFiles);
+        closeAllFiles();
+    }, [openFiles, cleanupClosedFiles, closeAllFiles]);
+
+    const confirmBatchClose = useCallback(() => {
+        if (!batchCloseRequest) return;
+        // Re-resolve the actual OpenFile objects from the latest store state
+        // (in case files were closed by some other path while the dialog was open).
+        const live = useFileEditorStore.getState().openFiles;
+        const filesToClean = batchCloseRequest.fileIds
+            .map((id) => live.find((f) => f.id === id))
+            .filter((f): f is OpenFile => f !== undefined);
+        if (filesToClean.length > 0) {
+            cleanupClosedFiles(filesToClean);
+        }
+        if (batchCloseRequest.kind === "all") {
+            closeAllFiles(true);
+        } else if (batchCloseRequest.kind === "others" && batchCloseRequest.keepFileId) {
+            closeOthers(batchCloseRequest.keepFileId, true);
+        }
+        setBatchCloseRequest(null);
+    }, [batchCloseRequest, cleanupClosedFiles, closeAllFiles, closeOthers]);
+
     return (
         <div
             className="relative flex flex-col border-l border-zinc-200 bg-[#FAFAFA] dark:border-zinc-800 dark:bg-zinc-900"
@@ -935,6 +1073,7 @@ export function FileEditorPanel({ width }: { width: number }) {
                                 key={file.id}
                                 data-file-id={file.id}
                                 onClick={() => setActiveFile(file.id)}
+                                onContextMenu={(e) => handleTabContextMenu(e, file)}
                                 active={isActive}
                                 title={file.relPath}
                             >
@@ -1124,6 +1263,102 @@ export function FileEditorPanel({ width }: { width: number }) {
                         editorRef.current?.focus();
                     }}
                 />
+            )}
+
+            {/* Tab right-click context menu (VSCode-style) */}
+            {tabContextMenu && createPortal(
+                <div
+                    ref={tabMenuRef}
+                    className="fixed z-[100] min-w-[160px] rounded-lg border border-zinc-200 bg-white py-1 shadow-lg dark:border-zinc-700 dark:bg-zinc-800"
+                    style={{ left: tabContextMenu.x, top: tabContextMenu.y }}
+                    onContextMenu={(e) => e.preventDefault()}
+                >
+                    {(() => {
+                        const target = openFiles.find((f) => f.id === tabContextMenu.fileId);
+                        if (!target) return null;
+                        const canCloseOthers = openFiles.length > 1;
+                        const canCloseAll = openFiles.length > 0;
+                        const baseItem =
+                            "flex w-full items-center px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700";
+                        const disabledItem =
+                            "disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent dark:disabled:hover:bg-transparent";
+                        return (
+                            <>
+                                <button
+                                    type="button"
+                                    onClick={() => handleCloseTab(target)}
+                                    className={baseItem}
+                                >
+                                    {t("fileEditor.close")}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => canCloseOthers && handleCloseOthers(target)}
+                                    disabled={!canCloseOthers}
+                                    className={cn(baseItem, disabledItem)}
+                                >
+                                    {t("fileEditor.closeOthers")}
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => canCloseAll && handleCloseAll()}
+                                    disabled={!canCloseAll}
+                                    className={cn(baseItem, disabledItem)}
+                                >
+                                    {t("fileEditor.closeAll")}
+                                </button>
+                            </>
+                        );
+                    })()}
+                </div>,
+                document.body,
+            )}
+
+            {/* Batch close confirmation (Close Others / Close All with dirty files) */}
+            {batchCloseRequest && (
+                <div
+                    className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50"
+                    onClick={() => setBatchCloseRequest(null)}
+                >
+                    <div
+                        className="mx-4 w-full max-w-sm rounded-xl border border-zinc-200 bg-white p-5 shadow-xl dark:border-zinc-700 dark:bg-zinc-800"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="flex items-start gap-3">
+                            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-100 dark:bg-amber-900/30">
+                                <FileText className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                            </div>
+                            <div className="flex-1">
+                                <h3 className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                                    {t("fileEditor.unsavedChanges")}
+                                </h3>
+                                <p className="mt-1 text-xs text-zinc-500 dark:text-zinc-400">
+                                    {batchCloseRequest.kind === "all"
+                                        ? t("fileEditor.batchCloseAllConfirm", {
+                                            count: batchCloseRequest.dirtyCount,
+                                        })
+                                        : t("fileEditor.batchCloseOthersConfirm", {
+                                            count: batchCloseRequest.dirtyCount,
+                                        })}
+                                </p>
+                            </div>
+                        </div>
+                        <div className="mt-4 flex justify-end gap-2">
+                            <button
+                                onClick={() => setBatchCloseRequest(null)}
+                                className="rounded-lg btn-solid px-3 py-1.5 text-xs"
+                            >
+                                {t("fileEditor.cancel")}
+                            </button>
+                            <button
+                                onClick={confirmBatchClose}
+                                className="rounded-lg btn-accent px-3 py-1.5 text-xs"
+                            >
+                                {t("fileEditor.discard")}
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );

@@ -112,6 +112,36 @@ const DISCONNECT_GRACE_MS = 30_000;
 const START_TIMEOUT_MS = 30_000;
 const EMPTY_ENTRY: PublicEntry = { status: "disconnected", statusMessage: "", client: null };
 
+// ── Helpers ────────────────────────────────────────────────────────────
+
+/** Language-specific LSP install hints shown in error messages. */
+const LSP_INSTALL_HINTS: Record<string, string> = {
+    typescript: "npm install -g typescript-language-server typescript",
+    javascript: "npm install -g typescript-language-server typescript",
+    ts: "npm install -g typescript-language-server typescript",
+    js: "npm install -g typescript-language-server typescript",
+    rust: "rustup component add rust-analyzer",
+    python: "pip install python-lsp-server",
+    go: "go install golang.org/x/tools/gopls@latest",
+    json: "npm install -g vscode-json-languageserver",
+    yaml: "npm install -g yaml-language-server",
+    yml: "npm install -g yaml-language-server",
+    html: "npm install -g vscode-html-languageserver",
+    css: "npm install -g vscode-css-languageserver",
+    scss: "npm install -g vscode-css-languageserver",
+    less: "npm install -g vscode-css-languageserver",
+    markdown: "Install marksman: https://github.com/artempyanykh/marksman",
+    md: "Install marksman: https://github.com/artempyanykh/marksman",
+};
+
+function formatLspError(language: string, reason: string): string {
+    const hint = LSP_INSTALL_HINTS[language.toLowerCase()];
+    if (hint) {
+        return `${reason}. Install: ${hint}`;
+    }
+    return reason;
+}
+
 // ── Hook ───────────────────────────────────────────────────────────────
 
 export function useLspClientPool(
@@ -275,7 +305,7 @@ export function useLspClientPool(
                 if (st.cancelled) return;
                 console.error("[LSP] pool ws ctor failed —", language, err);
                 st.status = "error";
-                st.statusMessage = `Failed to create WebSocket: ${err}`;
+                st.statusMessage = formatLspError(language, `Failed to connect: ${err}`);
                 st.connecting = false;
                 publish(language);
                 return;
@@ -376,7 +406,10 @@ export function useLspClientPool(
                     st!.ws = null;
                     st!.reconnectNeeded = true;
                     st!.status = "error";
-                    st!.statusMessage = `Connection lost (${e.code})`;
+                    st!.statusMessage = formatLspError(
+                        language,
+                        `Connection lost (${e.code})`
+                    );
                     publish(language);
                 };
                 ws.onerror = (ev) => {
@@ -434,7 +467,10 @@ export function useLspClientPool(
                     st.connecting = false;
                     st.client = null;
                     st.status = "error";
-                    st.statusMessage = `Initialize timed out (${START_TIMEOUT_MS / 1000}s)`;
+                    st.statusMessage = formatLspError(
+                        language,
+                        `Initialize timed out (${START_TIMEOUT_MS / 1000}s). Check Gateway logs for LSP errors.`
+                    );
                     try {
                         lspClient.stop();
                     } catch {
@@ -564,7 +600,7 @@ export function useLspClientPool(
                 console.error("[LSP] pool connect failed —", language, err);
                 st.client = null;
                 st.status = "error";
-                st.statusMessage = String(err);
+                st.statusMessage = formatLspError(language, String(err));
                 st.connecting = false;
                 publish(language);
             }

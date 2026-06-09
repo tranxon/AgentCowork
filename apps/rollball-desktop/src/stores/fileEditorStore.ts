@@ -84,14 +84,18 @@ interface FileEditorState {
     openFileWithContent: (agentId: string, workspaceId: string, relPath: string, content: string, language: string) => void;
     /** Close a file tab. Returns false if dirty (caller should confirm first). */
     closeFile: (fileId: string, force?: boolean) => boolean;
+    /** Close all tabs except the one with `keepFileId`.
+     *  Returns `false` if any non-kept file is dirty and `force` is not set. */
+    closeOthers: (keepFileId: string, force?: boolean) => boolean;
     /** Set the active (focused) file */
     setActiveFile: (fileId: string) => void;
     /** Update file content (marks as dirty) */
     updateContent: (fileId: string, content: string) => void;
     /** Save file content to Gateway */
     saveFile: (fileId: string) => Promise<void>;
-    /** Close all open files */
-    closeAllFiles: () => void;
+    /** Close all open files. If `force` is false and any file is dirty,
+     *  no files are closed and the function returns `false`. */
+    closeAllFiles: (force?: boolean) => boolean;
 }
 
 function getGatewayUrl(): string {
@@ -239,6 +243,24 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
         return true;
     },
 
+    closeOthers: (keepFileId: string, force?: boolean) => {
+        const state = get();
+        if (!state.openFiles.some((f) => f.id === keepFileId)) return true;
+        if (!force) {
+            const hasDirty = state.openFiles.some(
+                (f) => f.id !== keepFileId && f.dirty,
+            );
+            if (hasDirty) return false;
+        }
+        set({
+            openFiles: state.openFiles.filter((f) => f.id === keepFileId),
+            // Keep the requested tab active; if it wasn't the active one,
+            // promote it so the surviving single tab is clearly focused.
+            activeFileId: keepFileId,
+        });
+        return true;
+    },
+
     setActiveFile: (fileId: string) => {
         set({ activeFileId: fileId });
     },
@@ -297,7 +319,10 @@ export const useFileEditorStore = create<FileEditorState>((set, get) => ({
         }
     },
 
-    closeAllFiles: () => {
+    closeAllFiles: (force?: boolean) => {
+        const state = get();
+        if (!force && state.openFiles.some((f) => f.dirty)) return false;
         set({ openFiles: [], activeFileId: null });
+        return true;
     },
 }));

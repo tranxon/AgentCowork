@@ -152,10 +152,11 @@ impl LspPool {
         workspace_root: &str,
     ) -> anyhow::Result<Arc<LspProcessEntry>> {
         let mut child = Command::new(command)
+            .arg("--stdio")
             .current_dir(workspace_root)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             // Do NOT use kill_on_drop — pool manages lifecycle
             .spawn()?;
 
@@ -175,6 +176,10 @@ impl LspPool {
             .stdout
             .take()
             .ok_or_else(|| anyhow::anyhow!("Failed to take stdout from child process"))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("Failed to take stderr from child process"))?;
 
         let (stdin_tx, mut stdin_rx) = mpsc::unbounded_channel::<String>();
         let (stdout_tx, _) = broadcast::channel::<String>(256);
@@ -197,7 +202,8 @@ impl LspPool {
 
         // Background task: read LSP Base Protocol frames from stdout → broadcast
         let stdout_tx_clone = stdout_tx.clone();
-        let _stdout_pid = pid;
+        let stdout_cmd = command.to_string();
+        let stdout_pid = pid;
         tokio::spawn(async move {
             let mut reader = BufReader::new(stdout);
             loop {
@@ -206,7 +212,15 @@ impl LspPool {
                 loop {
                     let mut line = String::new();
                     match reader.read_line(&mut line).await {
-                        Ok(0) => return, // EOF — process exited
+                        Ok(0) => {
+                            // EOF — process exited unexpectedly
+                            tracing::warn!(
+                                "[LSP Pool] '{}' (PID {}) stdout closed (process exited)",
+                                stdout_cmd,
+                                stdout_pid
+                            );
+                            return;
+                        }
                         Ok(_) => {
                             let trimmed = line.trim();
                             if trimmed.is_empty() {
@@ -216,7 +230,15 @@ impl LspPool {
                                 content_length = len;
                             }
                         }
-                        Err(_) => return,
+                        Err(e) => {
+                            tracing::warn!(
+                                "[LSP Pool] '{}' (PID {}) stdout read error: {}",
+                                stdout_cmd,
+                                stdout_pid,
+                                e
+                            );
+                            return;
+                        }
                     }
                 }
 
@@ -233,6 +255,38 @@ impl LspPool {
                 if let Ok(msg) = String::from_utf8(body) {
                     // Broadcast to all subscribers; ignore error if no receivers
                     let _ = stdout_tx_clone.send(msg);
+                }
+            }
+        });
+
+        // Background task: read LSP stderr line-by-line and log via tracing.
+        // This makes LSP server error messages visible even when the Gateway
+        // runs in background mode (no inherited console).
+        let stderr_cmd = command.to_string();
+        let stderr_pid = pid;
+        tokio::spawn(async move {
+            let reader = BufReader::new(stderr);
+            let mut lines = reader.lines();
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        tracing::warn!(
+                            "[LSP Pool] '{}' (PID {}) stderr: {}",
+                            stderr_cmd,
+                            stderr_pid,
+                            line
+                        );
+                    }
+                    Ok(None) => break, // EOF
+                    Err(e) => {
+                        tracing::warn!(
+                            "[LSP Pool] '{}' (PID {}) stderr read error: {}",
+                            stderr_cmd,
+                            stderr_pid,
+                            e
+                        );
+                        break;
+                    }
                 }
             }
         });

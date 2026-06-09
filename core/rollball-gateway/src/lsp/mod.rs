@@ -64,11 +64,13 @@ fn resolve_lsp_command(language: &str) -> Option<String> {
         _ => return None,
     };
 
-    // Find first candidate that exists on PATH
+    // Find first candidate that exists on PATH.
+    // Returns the actual filename found (e.g. "typescript-language-server.cmd"
+    // on Windows) so that Command::new can spawn it without relying on PATHEXT.
     for cmd in candidates {
-        if find_on_path(cmd) {
-            tracing::info!("[LSP] Found LSP command for '{language}': {cmd}");
-            return Some(cmd.to_string());
+        if let Some(found) = find_on_path(cmd) {
+            tracing::info!("[LSP] Found LSP command for '{language}': {found}");
+            return Some(found);
         }
     }
 
@@ -76,8 +78,12 @@ fn resolve_lsp_command(language: &str) -> Option<String> {
     None
 }
 
-/// Check if a command exists on the system PATH
-fn find_on_path(cmd: &str) -> bool {
+/// Check if a command exists on the system PATH.
+///
+/// On Windows, also tries `.exe`, `.cmd`, `.bat` extensions.
+/// Returns the actual filename found (with extension), which is critical
+/// for `Command::new` to spawn successfully on Windows.
+fn find_on_path(cmd: &str) -> Option<String> {
     // On Windows, also try with .exe / .cmd / .bat extensions
     let candidates: Vec<String> = if cfg!(windows) {
         vec![
@@ -96,11 +102,11 @@ fn find_on_path(cmd: &str) -> bool {
         for name in &candidates {
             let full = dir.join(name);
             if full.is_file() {
-                return true;
+                return Some(name.clone());
             }
         }
     }
-    false
+    None
 }
 
 // ── Query parameters ───────────────────────────────────────────────────
@@ -142,10 +148,27 @@ pub async fn lsp_handler(
     let lsp_cmd = match resolve_lsp_command(&lang_lower) {
         Some(cmd) => cmd,
         None => {
+            let install_hint = match lang_lower.as_str() {
+                "typescript" | "javascript" | "ts" | "js" => {
+                    "npm install -g typescript-language-server typescript"
+                }
+                "rust" => "rustup component add rust-analyzer",
+                "python" => "pip install python-lsp-server",
+                "go" => "go install golang.org/x/tools/gopls@latest",
+                "markdown" | "md" => {
+                    "Install marksman: https://github.com/artempyanykh/marksman"
+                }
+                "json" => "npm install -g vscode-json-languageserver",
+                "yaml" | "yml" => "npm install -g yaml-language-server",
+                "html" => "npm install -g vscode-html-languageserver",
+                "css" | "scss" | "less" => {
+                    "npm install -g vscode-css-languageserver"
+                }
+                _ => "Install the LSP server and ensure it is on PATH",
+            };
             let msg = format!(
-                "No LSP server found for language: {}. \
-                 Install one (e.g., 'rust-analyzer', 'pylsp', 'gopls') and ensure it is on PATH.",
-                language
+                "No LSP server found for language: {}. {}",
+                language, install_hint
             );
             let err_json = serde_json::json!({ "error": msg, "code": 400u16 });
             return (StatusCode::BAD_REQUEST, axum::Json(err_json)).into_response();
@@ -371,14 +394,14 @@ mod tests {
     fn test_find_on_path_known_command() {
         // On Windows, `cmd` should always be on PATH
         #[cfg(windows)]
-        assert!(find_on_path("cmd"));
+        assert!(find_on_path("cmd").is_some());
         // On Unix, `ls` should always be on PATH
         #[cfg(not(windows))]
-        assert!(find_on_path("ls"));
+        assert!(find_on_path("ls").is_some());
     }
 
     #[test]
     fn test_find_on_path_nonexistent() {
-        assert!(!find_on_path("this_command_definitely_does_not_exist_12345"));
+        assert!(find_on_path("this_command_definitely_does_not_exist_12345").is_none());
     }
 }

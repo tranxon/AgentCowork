@@ -366,7 +366,12 @@
         "unsavedChanges": "未保存の変更",
         "saveChanges": "このファイルには未保存の変更があります。破棄して閉じますか？",
         "cancel": "キャンセル",
-        "discard": "破棄"
+        "discard": "破棄",
+        "close": "閉じる",
+        "closeOthers": "その他を閉じる",
+        "closeAll": "すべて閉じる",
+        "batchCloseOthersConfirm": "他の {count} 個のタブに未保存の変更があります。破棄して閉じますか？",
+        "batchCloseAllConfirm": "{count} 個のタブに未保存の変更があります。すべて破棄して閉じますか？"
     },
     "sessionPanel": {
         "loadingSessions": "セッションを読み込み中...",

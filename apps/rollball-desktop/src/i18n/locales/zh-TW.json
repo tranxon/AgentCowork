@@ -366,7 +366,12 @@
         "unsavedChanges": "未儲存的變更",
         "saveChanges": "此檔案有未儲存的變更。放棄並關閉？",
         "cancel": "取消",
-        "discard": "放棄"
+        "discard": "放棄",
+        "close": "關閉",
+        "closeOthers": "關閉其他",
+        "closeAll": "全部關閉",
+        "batchCloseOthersConfirm": "其他 {count} 個分頁有未儲存的變更。放棄並關閉？",
+        "batchCloseAllConfirm": "{count} 個分頁有未儲存的變更。放棄並全部關閉？"
     },
     "sessionPanel": {
         "loadingSessions": "載入工作階段中...",
