@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { SearchKeyEntry, SearchProviderDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
+import { StyledInput } from "../common/StyledInput";
 import { SEARCH_PROVIDERS, lookupSearchProvider, searchKeyPlaceholder } from "../../lib/search-providers";
 import { useTranslation } from "../../i18n/useTranslation";
 
@@ -245,12 +246,11 @@ export function SearchTab() {
               {lookupSearchProvider(newProvider)?.requires_api_key !== false && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.apiKey")}</label>
-                  <input
+                  <StyledInput
                     type="password"
                     value={newKey}
                     onChange={(e) => setNewKey(e.target.value)}
                     placeholder={searchKeyPlaceholder(newProvider)}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                 </div>
               )}
@@ -258,12 +258,12 @@ export function SearchTab() {
               {/* Base URL */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.baseUrl")} <span className="text-zinc-400">({newProvider === "searxng" ? t("harnessSearch.required") : t("harnessSearch.optional")})</span></label>
-                <input
+                <StyledInput
                   type="text"
                   value={newBaseUrl}
                   onChange={(e) => setNewBaseUrl(e.target.value)}
                   placeholder={lookupSearchProvider(newProvider)?.base_url || "https://..."}
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  fontMono
                 />
               </div>
 
@@ -324,12 +324,11 @@ export function SearchTab() {
               {editProviderDef?.requires_api_key !== false && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.apiKey")} <span className="text-zinc-400">({t("harnessSearch.leaveEmptyToKeep")})</span></label>
-                  <input
+                  <StyledInput
                     type="password"
                     value={editKey}
                     onChange={(e) => setEditKey(e.target.value)}
                     placeholder={searchKeyPlaceholder(showEditDialog)}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                   <p className="mt-0.5 text-xs text-zinc-400">{t("harnessSearch.current")}: {keys.find(k => k.provider === showEditDialog)?.key_preview}</p>
                 </div>
@@ -338,12 +337,12 @@ export function SearchTab() {
               {/* Base URL */}
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">{t("harnessSearch.baseUrl")}</label>
-                <input
+                <StyledInput
                   type="text"
                   value={editBaseUrl}
                   onChange={(e) => setEditBaseUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  fontMono
                 />
               </div>
             </div>

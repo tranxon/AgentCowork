@@ -9,6 +9,7 @@ import { fetchProviderModels, fetchProviders, createUser } from "../../lib/gatew
 import { DEFAULT_GATEWAY_URL } from "../../lib/config";
 import type { GatewayMode, ModelInfo } from "../../lib/types";
 import { RadioGroup } from "../common/RadioGroup";
+import { StyledInput } from "../common/StyledInput";
 
 const TOTAL_STEPS = 5;
 
@@ -577,12 +578,12 @@ function IdentityStep({
       <div className="mt-6 space-y-4">
         <div>
           <label className="mb-1 block text-xs text-zinc-500">Name *</label>
-          <input
+          <StyledInput
             type="text"
             value={name}
             onChange={(e) => onUpdate({ name: e.target.value })}
-            placeholder="Your name"
-            className="w-full rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+            placeholder="Your Name"
+            className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
           />
         </div>
         <div>

@@ -5,6 +5,7 @@ import { SkillDetail } from "./SkillDetail";
 import { RefreshCw, AlertTriangle, Wrench, FolderPlus, X, Loader2 } from "lucide-react";
 import { useToast } from "../common/ToastProvider";
 import { cn } from "../../lib/utils";
+import { StyledInput } from "../common/StyledInput";
 
 export function SkillBrowser() {
   const { selectedAgentId } = useAgentStore();
@@ -169,12 +170,12 @@ export function SkillBrowser() {
           <div className="flex flex-1 flex-col overflow-hidden">
             {/* Search */}
             <div className="border-b border-zinc-200 p-3 dark:border-zinc-800">
-              <input
+              <StyledInput
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="Search skills..."
-                className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm outline-none focus:border-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:focus:border-zinc-500"
+                className="bg-white dark:bg-zinc-800"
               />
             </div>
 

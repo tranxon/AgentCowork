@@ -313,6 +313,21 @@ impl McpClient {
     }
 }
 
+// ── McpConnectionFailure ───────────────────────────────────────────────────
+
+/// Describes a failed MCP server connection attempt.
+///
+/// Carried up through [`McpRegistry`] → [`McpManager`] → [`SessionManager`]
+/// so the Runtime can inject a system notification into the LLM context,
+/// letting the Agent use its shell tools to resolve missing dependencies.
+#[derive(Debug, Clone)]
+pub struct McpConnectionFailure {
+    /// Configured server name (e.g. "docling").
+    pub server_name: String,
+    /// Human-readable error message (e.g. "program not found").
+    pub error_message: String,
+}
+
 // ── McpRegistry ───────────────────────────────────────────────────────────
 
 /// Registry of all connected MCP servers, with a flat tool index.
@@ -328,17 +343,24 @@ pub struct McpRegistry {
 }
 
 impl McpRegistry {
-    /// Connect to all configured servers in parallel. Non-fatal: failures are logged and skipped.
+    /// Connect to all configured servers in parallel. Non-fatal: failures are
+    /// collected and returned alongside the registry so callers can surface
+    /// them to the LLM context for self-healing.
     ///
     /// All server connections are attempted concurrently via `join_all`,
     /// reducing total startup time from `N × timeout` to a single timeout
     /// window when multiple servers are configured.
-    pub async fn connect_all(configs: &[McpServerConfig]) -> Result<Self> {
+    pub async fn connect_all(
+        configs: &[McpServerConfig],
+    ) -> Result<(Self, Vec<McpConnectionFailure>)> {
         if configs.is_empty() {
-            return Ok(Self {
-                servers: Vec::new(),
-                tool_index: HashMap::new(),
-            });
+            return Ok((
+                Self {
+                    servers: Vec::new(),
+                    tool_index: HashMap::new(),
+                },
+                Vec::new(),
+            ));
         }
 
         // Connect to all servers in parallel
@@ -356,6 +378,7 @@ impl McpRegistry {
         // Build server list and tool index from successful connections
         let mut servers = Vec::new();
         let mut tool_index = HashMap::new();
+        let mut failures = Vec::new();
 
         for (name, result) in results {
             match result {
@@ -369,15 +392,27 @@ impl McpRegistry {
                     servers.push(server);
                 }
                 Err(e) => {
-                    tracing::error!("Failed to connect to MCP server `{}`: {:#}", name, e);
+                    let error_message = format!("{:#}", e);
+                    tracing::error!(
+                        "Failed to connect to MCP server `{}`: {}",
+                        name,
+                        error_message
+                    );
+                    failures.push(McpConnectionFailure {
+                        server_name: name,
+                        error_message,
+                    });
                 }
             }
         }
 
-        Ok(Self {
-            servers,
-            tool_index,
-        })
+        Ok((
+            Self {
+                servers,
+                tool_index,
+            },
+            failures,
+        ))
     }
 
     /// All prefixed tool names across all connected servers.
@@ -478,26 +513,30 @@ mod tests {
             command: "/usr/bin/does_not_exist_rb_test".to_string(),
             ..Default::default()
         }];
-        let registry = McpRegistry::connect_all(&configs)
+        let (registry, failures) = McpRegistry::connect_all(&configs)
             .await
             .expect("connect_all should not fail");
         assert!(registry.is_empty());
         assert_eq!(registry.tool_count(), 0);
+        assert_eq!(failures.len(), 1);
+        assert_eq!(failures[0].server_name, "bad");
+        assert!(failures[0].error_message.contains("failed to create transport"));
     }
 
     #[tokio::test]
     async fn empty_registry_is_empty() {
-        let registry = McpRegistry::connect_all(&[])
+        let (registry, failures) = McpRegistry::connect_all(&[])
             .await
             .expect("connect_all on empty slice should succeed");
         assert!(registry.is_empty());
         assert_eq!(registry.server_count(), 0);
         assert_eq!(registry.tool_count(), 0);
+        assert!(failures.is_empty());
     }
 
     #[tokio::test]
     async fn empty_registry_tool_names_is_empty() {
-        let registry = McpRegistry::connect_all(&[])
+        let (registry, _) = McpRegistry::connect_all(&[])
             .await
             .expect("connect_all should succeed");
         assert!(registry.tool_names().is_empty());
@@ -505,7 +544,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_registry_get_tool_def_returns_none() {
-        let registry = McpRegistry::connect_all(&[])
+        let (registry, _) = McpRegistry::connect_all(&[])
             .await
             .expect("connect_all should succeed");
         let result = registry.get_tool_def("mcp:nonexistent__tool");
@@ -514,7 +553,7 @@ mod tests {
 
     #[tokio::test]
     async fn empty_registry_call_tool_unknown_name_returns_error() {
-        let registry = McpRegistry::connect_all(&[])
+        let (registry, _) = McpRegistry::connect_all(&[])
             .await
             .expect("connect_all should succeed");
         let err = registry

@@ -4,6 +4,7 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { useToast } from "../common/ToastProvider";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { open } from "@tauri-apps/plugin-dialog";
+import { StyledInput } from "../common/StyledInput";
 
 interface WorkspaceDir {
   id: string;
@@ -298,12 +299,12 @@ function AddWorkspaceDialog({ onClose, onAdd, recentPaths: _recentPaths }: { onC
               Path
             </label>
             <div className="flex gap-2">
-              <input
+              <StyledInput
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
                 placeholder="e.g. F:/work/project"
-                className="flex-1 rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
+                className="flex-1 border-zinc-300 bg-white py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
               />
               <button
                 onClick={handleBrowse}
@@ -318,12 +319,12 @@ function AddWorkspaceDialog({ onClose, onAdd, recentPaths: _recentPaths }: { onC
             <label className="mb-1.5 block text-sm font-medium text-zinc-700 dark:text-zinc-300">
               Alias (optional)
             </label>
-            <input
+            <StyledInput
               type="text"
               value={alias}
               onChange={(e) => setAlias(e.target.value)}
               placeholder="e.g. my-project"
-              className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
+              className="border-zinc-300 bg-white py-2 text-sm dark:border-zinc-600 dark:bg-zinc-800"
             />
           </div>
 

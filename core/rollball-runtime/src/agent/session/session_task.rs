@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use rollball_core::providers::traits::ChatMessage;
 use rollball_core::tools::traits::Tool;
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
@@ -99,6 +100,10 @@ pub enum SessionMessage {
         embed_model_id: String,
         embed_dimension: usize,
     },
+    /// Inject a system notification into the conversation history.
+    /// Used to surface MCP connection failures and other async events
+    /// to the LLM context so the Agent can self-heal.
+    SystemNotification { content: String },
 }
 
 impl std::fmt::Debug for SessionMessage {
@@ -163,6 +168,10 @@ impl std::fmt::Debug for SessionMessage {
                 .field("embed_endpoint", embed_endpoint)
                 .field("embed_model_id", embed_model_id)
                 .field("embed_dimension", embed_dimension)
+                .finish(),
+            SessionMessage::SystemNotification { content } => f
+                .debug_struct("SystemNotification")
+                .field("len", &content.len())
                 .finish(),
         }
     }
@@ -1035,6 +1044,26 @@ impl SessionTask {
                             ))
                         };
                     agent_loop.core.update_embedding_provider(new_emb);
+                }
+                Some(SessionMessage::SystemNotification { content }) => {
+                    // Only inject into sessions that have already started a conversation.
+                    // Prevents MCP connection failure notifications from appearing before
+                    // the user has sent their first message.
+                    if agent_loop.session.history_mut().is_empty() {
+                        tracing::debug!(
+                            session_id = %session_id,
+                            "SessionTask: skipping system notification — no conversation history yet"
+                        );
+                        continue;
+                    }
+                    tracing::info!(
+                        session_id = %session_id,
+                        content_len = content.len(),
+                        "SessionTask: injecting system notification into history"
+                    );
+                    agent_loop.session.history_mut().append(
+                        ChatMessage::user(format!("[System Notification] {content}")),
+                    );
                 }
                 None => {
                     tracing::info!(

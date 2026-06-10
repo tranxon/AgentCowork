@@ -218,7 +218,7 @@
         "localProviders": "本地服务商",
         "remoteProviders": "远程服务商",
         "available": "可用",
-        "modelsAvailable": "{count} 个模型可用",
+        "modelsAvailable": "{{count}} 个模型可用",
         "connect": "连接",
         "addKey": "添加密钥",
         "connectLocalProvider": "连接本地服务商：",
@@ -260,7 +260,9 @@
         "tools": "工具",
         "editProvider": "编辑：",
         "enterNewApiKey": "输入新的 API 密钥...",
-        "contextWindowMaxOutputPositive": "上下文窗口和最大输出 Token 数必须为正数"
+        "contextWindowMaxOutputPositive": "上下文窗口和最大输出 Token 数必须为正数",
+        "searchProviders": "搜索服务商...",
+        "noProvidersMatch": "无匹配的服务商"
     },
     "harnessSearch": {
         "searchProviderManagement": "搜索服务商管理",
@@ -331,7 +333,7 @@
         "phase": "阶段",
         "tokens": "Token",
         "sessionStatusLabel": "状态",
-        "contextSnapshots": "上下文快照（{count}）",
+        "contextSnapshots": "上下文快照（{{count}}）",
         "noSnapshots": "暂无上下文快照。",
         "sendMessageToGenerate": "向 Agent 发送消息以生成快照。",
         "sessionStatus": "会话状态",

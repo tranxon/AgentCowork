@@ -11,6 +11,7 @@ import { AgentAvatar } from "../common/AgentAvatar";
 import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
 import { Play, Square, Trash2, Info, Copy, Plus, Search, Package, Sparkles, Bug } from "lucide-react";
+import { StyledInput } from "../common/StyledInput";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useSessionStore } from "../../stores/sessionStore";
 import { useAgentProfileStore } from "../../stores/agentProfileStore";
@@ -249,12 +250,12 @@ export function AgentList({ width }: AgentListProps) {
           {/* Search input */}
           <div className="relative flex-1">
             <Search className="absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-500 dark:text-zinc-400" />
-            <input
+            <StyledInput
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder={t("agentList.searchPlaceholder")}
-              className="w-full rounded-md bg-[#D8D9DC] py-1.5 pl-7 pr-2 text-xs text-zinc-800 placeholder-zinc-500 outline-none dark:bg-[#3D3D3F] dark:text-zinc-200 dark:placeholder-zinc-400"
+              className="rounded-md bg-[#D8D9DC] py-1.5 pl-7 pr-2 dark:bg-[#3D3D3F]"
             />
           </div>
           {/* Add button */}

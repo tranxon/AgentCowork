@@ -218,7 +218,7 @@
         "localProviders": "로컬 제공자",
         "remoteProviders": "원격 제공자",
         "available": "사용 가능",
-        "modelsAvailable": "{count}개 모델 사용 가능",
+        "modelsAvailable": "{{count}}개 모델 사용 가능",
         "connect": "연결",
         "addKey": "키 추가",
         "connectLocalProvider": "로컬 제공자 연결：",
@@ -260,7 +260,9 @@
         "tools": "도구",
         "editProvider": "편집：",
         "enterNewApiKey": "새 API 키 입력...",
-        "contextWindowMaxOutputPositive": "컨텍스트 윈도우와 최대 출력 토큰 수는 양수여야 합니다"
+        "contextWindowMaxOutputPositive": "컨텍스트 윈도우와 최대 출력 토큰 수는 양수여야 합니다",
+        "searchProviders": "제공자 검색...",
+        "noProvidersMatch": "일치하는 제공자가 없습니다"
     },
     "harnessSearch": {
         "searchProviderManagement": "검색 제공자 관리",
@@ -331,7 +333,7 @@
         "phase": "단계",
         "tokens": "토큰",
         "sessionStatusLabel": "상태",
-        "contextSnapshots": "컨텍스트 스냅샷（{count}）",
+        "contextSnapshots": "컨텍스트 스냅샷（{{count}}）",
         "noSnapshots": "컨텍스트 스냅샷이 아직 없습니다。",
         "sendMessageToGenerate": "Agent에 메시지를 보내 스냅샷을 생성하세요。",
         "sessionStatus": "세션 상태",

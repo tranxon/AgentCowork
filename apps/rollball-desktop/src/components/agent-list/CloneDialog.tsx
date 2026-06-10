@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
+import { StyledInput } from "../common/StyledInput";
 import type { CloneMode, CloneResponse } from "../../lib/types";
 import { Copy, Info } from "lucide-react";
 
@@ -126,7 +127,7 @@ export function CloneDialog({
             <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
               New Agent ID
             </label>
-            <input
+            <StyledInput
               ref={inputRef}
               type="text"
               value={newAgentId}
@@ -138,7 +139,7 @@ export function CloneDialog({
                 if (e.key === "Enter") void handleClone();
               }}
               placeholder="com.example.myagent"
-              className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+              className="bg-white dark:bg-zinc-700"
             />
           </div>
 

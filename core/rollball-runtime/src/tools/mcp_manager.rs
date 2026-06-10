@@ -11,6 +11,9 @@ use rollball_core::tools::traits::Tool;
 use rollball_mcp::client::McpRegistry;
 use rollball_mcp::wrapper::McpToolWrapper;
 
+/// Re-export from rollball-mcp so SessionManager can reference it.
+pub use rollball_mcp::client::McpConnectionFailure;
+
 /// MCP connection manager.
 ///
 /// Holds a shared [`McpRegistry`] and provides helpers for connecting
@@ -33,21 +36,27 @@ impl McpManager {
     ///   - `Arc<McpRegistry>` — shared registry for tool dispatch
     ///   - `Vec<McpToolWrapper>` — one wrapper per MCP tool
     ///   - `Vec<(String, serde_json::Value)>` — tool specs for LLM definitions
+    ///   - `Vec<McpConnectionFailure>` — connection failures to surface to LLM
     ///
     /// On connection failure, individual servers are skipped (logged as errors).
     /// The returned registry may be empty if no servers connected successfully.
     pub async fn connect(
         &mut self,
         configs: &[McpServerConfigDef],
-    ) -> (Arc<McpRegistry>, Vec<McpToolWrapper>, Vec<(String, serde_json::Value)>) {
+    ) -> (
+        Arc<McpRegistry>,
+        Vec<McpToolWrapper>,
+        Vec<(String, serde_json::Value)>,
+        Vec<McpConnectionFailure>,
+    ) {
         // McpServerConfigDef is now the single source of truth for MCP config,
         // shared between rollball-core (wire format) and rollball-mcp (runtime).
         // No conversion needed — the same type flows through both crates.
-        let registry = Arc::new(
+        let (registry, failures) =
             McpRegistry::connect_all(configs)
                 .await
-                .expect("connect_all is non-fatal and should never fail"),
-        );
+                .expect("connect_all is non-fatal and should never fail");
+        let registry = Arc::new(registry);
 
         // Build tool wrappers and specs from the registry
         let mut wrappers = Vec::new();
@@ -67,11 +76,12 @@ impl McpManager {
         tracing::info!(
             server_count = registry.server_count(),
             tool_count = wrappers.len(),
+            failure_count = failures.len(),
             "MCP manager: connected"
         );
 
         self.registry = Some(registry.clone());
-        (registry, wrappers, specs)
+        (registry, wrappers, specs, failures)
     }
 
     /// Get the current MCP registry, if any servers are connected.
@@ -119,10 +129,11 @@ mod tests {
     #[tokio::test]
     async fn connect_empty_yields_empty_registry() {
         let mut mgr = McpManager::new();
-        let (registry, wrappers, specs) = mgr.connect(&[]).await;
+        let (registry, wrappers, specs, failures) = mgr.connect(&[]).await;
         assert!(registry.is_empty());
         assert!(wrappers.is_empty());
         assert!(specs.is_empty());
+        assert!(failures.is_empty());
         assert!(!mgr.is_connected());
     }
 

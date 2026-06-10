@@ -17,6 +17,7 @@ import { fetchProviderModels, fetchProviders } from "../../lib/gateway-api";
 import { emitAgentConfigRefresh } from "../../lib/refresh";
 import { syncAgentUI } from "../../lib/agent-start";
 import { toolbarButton } from "../../lib/ui-styles";
+import { StyledInput } from "../common/StyledInput";
 import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Cpu, Loader, Pencil, Paperclip, Image, Brain } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -1996,12 +1997,11 @@ function AddModelDialog({
             {needsApiKey(provider) && (
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">API Key</label>
-                <input
+                <StyledInput
                   type="password"
                   value={key}
                   onChange={(e) => setKey(e.target.value)}
                   placeholder={keyPlaceholder(provider)}
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
               </div>
             )}
@@ -2009,12 +2009,12 @@ function AddModelDialog({
             {showBaseUrl && (
               <div>
                 <label className="mb-1 block text-xs text-zinc-500">Base URL</label>
-                <input
+                <StyledInput
                   type="text"
                   value={baseUrl}
                   onChange={(e) => setBaseUrl(e.target.value)}
                   placeholder="https://..."
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                  fontMono
                 />
               </div>
             )}
@@ -2072,12 +2072,11 @@ function AddModelDialog({
               )}
 
               {/* Search */}
-              <input
+              <StyledInput
                 type="text"
                 value={modelSearchTerm}
                 onChange={(e) => setModelSearchTerm(e.target.value)}
                 placeholder="Search models..."
-                className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
               />
 
               {/* Model list */}
@@ -2138,11 +2137,11 @@ function AddModelDialog({
 
               {/* Manual model input */}
               <div className="mt-2 flex gap-1">
-                <input
+                <StyledInput
                   type="text"
                   placeholder="Or type a custom model name..."
-                  className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                  onKeyDown={(e) => {
+                  className="flex-1"
+                  onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => {
                     if (e.key === "Enter") {
                       const val = (e.target as HTMLInputElement).value.trim();
                       if (val && !models.includes(val)) {
@@ -2176,33 +2175,31 @@ function AddModelDialog({
                   <div className="flex gap-2">
                     <div className="flex-1">
                       <label className="mb-0.5 block text-[10px] text-zinc-400">Context Window</label>
-                      <input
+                      <StyledInput
                         type="number"
                         value={displayContextWindow}
                         onChange={(e) => setContextWindow(e.target.value)}
                         readOnly={hasModelsDevData}
                         placeholder="e.g. 128000"
                         className={cn(
-                          "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                           hasModelsDevData
-                            ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
-                            : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                            ? "bg-zinc-50 text-zinc-400 dark:text-zinc-500"
+                            : "",
                         )}
                       />
                     </div>
                     <div className="flex-1">
                       <label className="mb-0.5 block text-[10px] text-zinc-400">Max Output Tokens</label>
-                      <input
+                      <StyledInput
                         type="number"
                         value={displayMaxOutputTokens}
                         onChange={(e) => setMaxOutputTokens(e.target.value)}
                         readOnly={hasModelsDevData}
                         placeholder="e.g. 4096"
                         className={cn(
-                          "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                           hasModelsDevData
-                            ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
-                            : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
+                            ? "bg-zinc-50 text-zinc-400 dark:text-zinc-500"
+                            : "",
                         )}
                       />
                     </div>

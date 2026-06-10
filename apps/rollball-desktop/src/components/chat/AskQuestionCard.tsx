@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { MessageCircleQuestion } from "lucide-react";
 import type { AskQuestionEvent } from "../../lib/types";
+import { StyledTextarea } from "../common/StyledInput";
 
 interface AskQuestionCardProps {
   event: AskQuestionEvent;
@@ -103,9 +104,8 @@ export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
 
         {/* Other textarea */}
         {isOtherSelected && !submitted && (
-          <textarea
-            className="mt-1 ml-4 w-full rounded border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-800 placeholder-zinc-400 focus:outline-none focus:ring-1 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder-zinc-500"
-            style={{ outlineColor: "var(--color-accent)" }}
+          <StyledTextarea
+            className="mt-1 ml-4 border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800"
             rows={1}
             placeholder="Type your answer..."
             value={otherText}

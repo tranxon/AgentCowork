@@ -6,6 +6,7 @@ import { getGatewayUrl } from "../../lib/config";
 import { ConfirmDialog } from "../common/ConfirmDialog";
 import { useMcpStore } from "../../stores/mcpStore";
 import { useTranslation } from "../../i18n/useTranslation";
+import { StyledInput } from "../common/StyledInput";
 import type { SearchProviderListItem, AgentSearchProvider } from "../../lib/types";
 
 // ── Types ───────────────────────────────────────────────────────────────
@@ -330,14 +331,14 @@ export function AgentSetupTab() {
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
           {t("agentSetup.agentName")}
         </label>
-        <input
+        <StyledInput
           type="text"
           value={profile.displayName ?? selectedAgent.name ?? ""}
           onChange={(e) =>
             setProfile(selectedAgentId, { displayName: e.target.value || undefined })
           }
           placeholder={selectedAgent.name ?? "Agent name"}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
+          className="rounded-lg bg-white dark:bg-zinc-800"
         />
       </div>
 
@@ -346,7 +347,7 @@ export function AgentSetupTab() {
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
           {t("agentSetup.maxOutputTokens")}
         </label>
-        <input
+        <StyledInput
           type="number"
           min={0}
           max={131072}
@@ -359,7 +360,7 @@ export function AgentSetupTab() {
             });
           }}
           placeholder={`${profile.globalMaxTokens ?? 32768} ${t("agentSetup.gatewayLimit")}`}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          className="rounded-lg bg-white dark:bg-zinc-800"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
           {t("agentSetup.leaveEmptyDefault")}
@@ -371,7 +372,7 @@ export function AgentSetupTab() {
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
           {t("agentSetup.maxIterations")}
         </label>
-        <input
+        <StyledInput
           type="number"
           min={0}
           max={200}
@@ -383,7 +384,7 @@ export function AgentSetupTab() {
             });
           }}
           placeholder={t("agentSetup.defaultIterations")}
-          className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          className="rounded-lg bg-white dark:bg-zinc-800"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
           {t("agentSetup.leaveEmptyDefault")}
@@ -451,7 +452,7 @@ export function AgentSetupTab() {
         <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
           {t("agentSetup.approvalTimeout")}
         </label>
-        <input
+        <StyledInput
           type="number"
           min={0}
           max={3600}
@@ -464,7 +465,7 @@ export function AgentSetupTab() {
             });
           }}
           placeholder="300 (5 min)"
-          className="w-full rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+          className="rounded-lg bg-white dark:bg-zinc-800"
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
           {t("agentSetup.approvalTimeoutDesc")}

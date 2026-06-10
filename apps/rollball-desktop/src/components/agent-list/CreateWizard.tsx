@@ -10,6 +10,7 @@ import {
   FileText,
   Globe,
 } from "lucide-react";
+import { StyledInput, StyledTextarea } from "../common/StyledInput";
 
 interface CreateWizardProps {
   open: boolean;
@@ -210,24 +211,24 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                 <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                   Agent ID * <span className="font-normal text-zinc-400">(e.g. com.example.myagent)</span>
                 </label>
-                <input
+                <StyledInput
                   type="text"
                   value={form.agent_id}
                   onChange={(e) => update({ agent_id: e.target.value })}
                   placeholder="com.example.myagent"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="bg-white dark:bg-zinc-700"
                 />
               </div>
               <div>
                 <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                   Display Name *
                 </label>
-                <input
+                <StyledInput
                   type="text"
                   value={form.name}
                   onChange={(e) => update({ name: e.target.value })}
                   placeholder="My Agent"
-                  className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="bg-white dark:bg-zinc-700"
                 />
               </div>
               <div className="grid grid-cols-2 gap-3">
@@ -235,24 +236,24 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                     Version
                   </label>
-                  <input
+                  <StyledInput
                     type="text"
                     value={form.version}
                     onChange={(e) => update({ version: e.target.value })}
                     placeholder="0.1.0"
-                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                    className="bg-white dark:bg-zinc-700"
                   />
                 </div>
                 <div>
                   <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                     Author
                   </label>
-                  <input
+                  <StyledInput
                     type="text"
                     value={form.author}
                     onChange={(e) => update({ author: e.target.value })}
                     placeholder="Your Name"
-                    className="w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                    className="bg-white dark:bg-zinc-700"
                   />
                 </div>
               </div>
@@ -260,12 +261,12 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                 <label className="mb-1 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
                   Description
                 </label>
-                <textarea
+                <StyledTextarea
                   value={form.description}
                   onChange={(e) => update({ description: e.target.value })}
                   placeholder="Describe what this agent does..."
                   rows={3}
-                  className="w-full resize-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-800 placeholder-zinc-400 outline-none transition-colors focus:border-zinc-400 focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-700 dark:text-zinc-200 dark:placeholder-zinc-500"
+                  className="resize-none bg-white dark:bg-zinc-700"
                 />
               </div>
             </div>

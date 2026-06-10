@@ -5,6 +5,7 @@ import { RadioGroup } from "../common/RadioGroup";
 import { fetchActiveUser, updateUser } from "../../lib/gateway-api";
 import type { BackendUserProfile } from "../../lib/types";
 import { useTranslation } from "../../i18n/useTranslation";
+import { StyledInput } from "../common/StyledInput";
 import i18n from "../../i18n";
 
 const TIMEZONES = [
@@ -176,7 +177,7 @@ export function ProfileTab() {
           <label className="block text-xs font-medium text-zinc-600 dark:text-zinc-400">
             {t("settings.displayName")}
           </label>
-          <input
+          <StyledInput
             type="text"
             value={nameValue}
             onChange={(e) => setNameValue(e.target.value)}
@@ -188,7 +189,7 @@ export function ProfileTab() {
               }
             }}
             placeholder={t("settings.displayNamePlaceholder")}
-            className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
+            className="rounded-lg border-zinc-300 bg-white py-2 text-zinc-800 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:placeholder:text-zinc-500"
           />
         </div>
       </div>
@@ -273,7 +274,7 @@ export function ProfileTab() {
             {/* City */}
             <div>
               <label className="mb-1 block text-xs text-zinc-500">{t("settings.city")}</label>
-              <input
+              <StyledInput
                 type="text"
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
@@ -285,14 +286,14 @@ export function ProfileTab() {
                   }
                 }}
                 placeholder={t("settings.cityPlaceholder")}
-                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
+                className="rounded-lg border-zinc-300 bg-white py-2 text-zinc-800 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:placeholder:text-zinc-500"
               />
             </div>
 
             {/* Occupation */}
             <div>
               <label className="mb-1 block text-xs text-zinc-500">{t("settings.occupation")}</label>
-              <input
+              <StyledInput
                 type="text"
                 value={occupation}
                 onChange={(e) => setOccupation(e.target.value)}
@@ -304,7 +305,7 @@ export function ProfileTab() {
                   }
                 }}
                 placeholder={t("settings.occupationPlaceholder")}
-                className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-xs text-zinc-800 placeholder:text-zinc-400 focus:border-zinc-400 focus:outline-none focus:ring-1 focus:ring-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:text-zinc-200 dark:placeholder:text-zinc-500"
+                className="rounded-lg border-zinc-300 bg-white py-2 text-zinc-800 placeholder:text-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:placeholder:text-zinc-500"
               />
             </div>
           </div>

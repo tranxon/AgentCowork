@@ -218,7 +218,7 @@
         "localProviders": "本機服務提供者",
         "remoteProviders": "遠端服務提供者",
         "available": "可用",
-        "modelsAvailable": "{count} 個模型可用",
+        "modelsAvailable": "{{count}} 個模型可用",
         "connect": "連線",
         "addKey": "新增金鑰",
         "connectLocalProvider": "連線本機服務提供者：",
@@ -260,7 +260,9 @@
         "tools": "工具",
         "editProvider": "編輯：",
         "enterNewApiKey": "輸入新的 API 金鑰...",
-        "contextWindowMaxOutputPositive": "上下文視窗和最大輸出 Token 數必須為正數"
+        "contextWindowMaxOutputPositive": "上下文視窗和最大輸出 Token 數必須為正數",
+        "searchProviders": "搜尋服務提供者...",
+        "noProvidersMatch": "無符合的服務提供者"
     },
     "harnessSearch": {
         "searchProviderManagement": "搜尋服務提供者管理",
@@ -331,7 +333,7 @@
         "phase": "階段",
         "tokens": "Token",
         "sessionStatusLabel": "狀態",
-        "contextSnapshots": "上下文快照（{count}）",
+        "contextSnapshots": "上下文快照（{{count}}）",
         "noSnapshots": "暫無上下文快照。",
         "sendMessageToGenerate": "向 Agent 傳送訊息以產生快照。",
         "sessionStatus": "工作階段狀態",

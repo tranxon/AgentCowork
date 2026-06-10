@@ -218,7 +218,7 @@
         "localProviders": "ローカルプロバイダー",
         "remoteProviders": "リモートプロバイダー",
         "available": "利用可能",
-        "modelsAvailable": "{count} モデルが利用可能",
+        "modelsAvailable": "{{count}} モデルが利用可能",
         "connect": "接続",
         "addKey": "キーを追加",
         "connectLocalProvider": "ローカルプロバイダーに接続：",
@@ -260,7 +260,9 @@
         "tools": "ツール",
         "editProvider": "編集：",
         "enterNewApiKey": "新しいAPIキーを入力...",
-        "contextWindowMaxOutputPositive": "コンテキストウィンドウと最大出力トークン数は正の数である必要があります"
+        "contextWindowMaxOutputPositive": "コンテキストウィンドウと最大出力トークン数は正の数である必要があります",
+        "searchProviders": "プロバイダーを検索...",
+        "noProvidersMatch": "一致するプロバイダーがありません"
     },
     "harnessSearch": {
         "searchProviderManagement": "検索プロバイダー管理",
@@ -331,7 +333,7 @@
         "phase": "フェーズ",
         "tokens": "トークン",
         "sessionStatusLabel": "ステータス",
-        "contextSnapshots": "コンテキストスナップショット（{count}）",
+        "contextSnapshots": "コンテキストスナップショット（{{count}}）",
         "noSnapshots": "コンテキストスナップショットはまだありません。",
         "sendMessageToGenerate": "Agentにメッセージを送信してスナップショットを生成してください。",
         "sessionStatus": "セッションステータス",

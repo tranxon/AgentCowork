@@ -690,7 +690,7 @@ impl SessionManager {
         // Disconnect previous MCP connections before connecting new ones
         self.mcp_manager.disconnect().await;
 
-        let (registry, wrappers, _specs) = self.mcp_manager.connect(&configs).await;
+        let (registry, wrappers, _specs, failures) = self.mcp_manager.connect(&configs).await;
 
         // Store MCP tool wrappers (Arc<dyn Tool>) for dispatch
         let mcp_tool_arcs: Vec<Arc<dyn Tool>> = wrappers
@@ -723,8 +723,32 @@ impl SessionManager {
         tracing::info!(
             server_count = registry.server_count(),
             tool_count = registry.tool_count(),
+            failure_count = failures.len(),
             "SessionManager: MCP servers applied"
         );
+
+        // Inject system notification for connection failures so the LLM can self-heal
+        if !failures.is_empty() {
+            let failure_lines: Vec<String> = failures
+                .iter()
+                .map(|f| format!("- Server \"{}\": {}", f.server_name, f.error_message))
+                .collect();
+            let notification = format!(
+                "MCP server connection failed:\n{}\n\n\
+You are an AI agent. If any of the above MCP servers require dependencies \
+that need to be installed, use your shell tools to install them. \
+After installation, ask the user to re-enable the MCP server.",
+                failure_lines.join("\n")
+            );
+            tracing::warn!(
+                failure_count = failures.len(),
+                notification_len = notification.len(),
+                "SessionManager: broadcasting MCP connection failure notification"
+            );
+            self.broadcast(SessionMessage::SystemNotification {
+                content: notification,
+            });
+        }
     }
 
     /// Rebuild `full_tool_specs` by merging the original built-in specs with

@@ -3,10 +3,11 @@ import { invoke } from "@tauri-apps/api/core";
 import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesMap, ProviderListEntry, McpServerConfigDef, McpTransportDef, McpPresetDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { inputBase, selectBase } from "../../lib/ui-styles";
+import { StyledInput, StyledTextarea } from "../common/StyledInput";
 import { needsApiKey, keyPlaceholder, isLocalProvider } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
 import { getGatewayUrl } from "../../lib/config";
-import { Star } from "lucide-react";
+import { Monitor, Search, Globe, BookOpen, FileText, PenTool, Star, ChevronsDown } from "lucide-react";
 import { useMcpStore } from "../../stores/mcpStore";
 import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
@@ -53,18 +54,6 @@ export function HarnessPage() {
   );
 }
 
-/** Compare two provider arrays by id for equality check (avoid unnecessary re-renders) */
-function providersEqual(a: ProviderListEntry[], b: ProviderListEntry[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((item, i) =>
-    item.id === b[i].id &&
-    item.name === b[i].name &&
-    item.model_count === b[i].model_count &&
-    item.local === b[i].local &&
-    item.api === b[i].api,
-  );
-}
-
 /** Provider configuration */
 function ProvidersTab() {
   const { t } = useTranslation();
@@ -108,10 +97,12 @@ function ProvidersTab() {
 
   // Dynamic provider list from Gateway API
   const [dynamicProviders, setDynamicProviders] = useState<ProviderListEntry[]>([]);
-  const [dynamicProvidersLoading, setDynamicProvidersLoading] = useState(false);
 
   // Collapsible remote providers section (folded by default when any local provider is configured)
-  const [showRemoteProviders, setShowRemoteProviders] = useState(false);
+  const [showAllRemote, setShowAllRemote] = useState(false);
+
+  // Search term for filtering available providers (both local and remote)
+  const [providerSearchTerm, setProviderSearchTerm] = useState("");
 
   // Split providers into local / remote for UI grouping
   const { localProviders, remoteProviders } = useMemo(() => {
@@ -126,6 +117,16 @@ function ProvidersTab() {
     }
     return { localProviders: local, remoteProviders: remote };
   }, [dynamicProviders]);
+
+  // Filter remote providers by search term (match name or id)
+  const filteredRemoteProviders = useMemo(() => {
+    if (!providerSearchTerm.trim()) return remoteProviders;
+    const term = providerSearchTerm.toLowerCase().trim();
+    return remoteProviders.filter(p =>
+      p.name?.toLowerCase().includes(term) ||
+      p.id.toLowerCase().includes(term)
+    );
+  }, [remoteProviders, providerSearchTerm]);
 
   // Derived: is the current "add" target a local provider?
   const newProviderIsLocal = useMemo(
@@ -156,138 +157,31 @@ function ProvidersTab() {
     }
   }, []);
 
-  // Fetch dynamic provider list from Gateway API with stale-while-revalidate pattern
-  const fetchDynamicProviders = useCallback(async (useCache = true) => {
-    const CACHE_KEY = "rollball_models_cache";
-    const CACHE_TIMESTAMP_KEY = "rollball_models_cache_timestamp";
-    const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-
-    let hasValidCache = false;
-    let hasCachedData = false;
-
-    if (useCache) {
-      try {
-        const cachedData = localStorage.getItem(CACHE_KEY);
-        const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-
-        if (cachedData && cachedTimestamp) {
-          const timestamp = parseInt(cachedTimestamp, 10);
-          const now = Date.now();
-
-          // Use cache immediately regardless of freshness (stale-while-revalidate)
-          const parsed = JSON.parse(cachedData);
-          const cachedProviders = parsed.providers ?? [];
-          setDynamicProviders(cachedProviders);
-          hasCachedData = cachedProviders.length > 0;
-
-          if (now - timestamp < CACHE_TTL) {
-            // Cache is fresh — background refresh without loading indicator
-            hasValidCache = true;
-          }
-          // Stale cache: show loading indicator while revalidating
-        }
-      } catch {
-        // Ignore cache errors
-      }
-    }
-
-    // Show loading indicator only when no cached data is displayed yet
-    if (!hasValidCache && !hasCachedData) {
-      setDynamicProvidersLoading(true);
-    }
-
-    // Fetch from Gateway API
+  // Load provider list from Gateway API (offline_providers.json is the sole data source)
+  const loadProviders = useCallback(async () => {
     try {
       const response = await fetch(`${getGatewayUrl()}/api/models`);
       if (response.ok) {
         const data = await response.json();
-        const newProviders = data.providers ?? [];
-
-        // Only update state if data actually changed (avoid unnecessary re-renders)
-        setDynamicProviders(prev => {
-          if (providersEqual(prev, newProviders)) return prev;
-          return newProviders;
-        });
-
-        // Update cache
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-        } catch {
-          // Ignore cache write errors
-        }
+        setDynamicProviders(data.providers ?? []);
       }
     } catch {
-      // Gateway API failed, keep using cached data if available
-      if (!hasValidCache && !hasCachedData) {
-        // No cache and API failed, show empty state
-        setDynamicProviders([]);
-      }
-    } finally {
-      setDynamicProvidersLoading(false);
+      // Gateway may not be running
     }
   }, []);
 
   useEffect(() => {
     fetchKeys();
     fetchConfig();
-    // First load: use cache for instant display, refresh in background
-    fetchDynamicProviders(true);
-  }, [fetchKeys, fetchConfig, fetchDynamicProviders]);
+    loadProviders();
+  }, [fetchKeys, fetchConfig, loadProviders]);
 
   // Fetch available models for a provider from Gateway API
   const fetchModels = useCallback(async (providerId: string): Promise<ModelInfo[]> => {
-    // For local providers (Ollama, LM Studio), skip the cache entirely —
-    // model list must be fetched live from the running server each time
-    if (!isLocalProvider(providerId)) {
-      // Check localStorage cache for this provider
-      const CACHE_KEY = `rollball_models_${providerId}`;
-      const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
-      const CACHE_TTL = 30 * 60 * 1000; // 30 minutes
-
-      try {
-        const cachedData = localStorage.getItem(CACHE_KEY);
-        const cachedTimestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY);
-
-        if (cachedData && cachedTimestamp) {
-          const timestamp = parseInt(cachedTimestamp, 10);
-          const now = Date.now();
-
-          // Use cache if it's still fresh
-          if (now - timestamp < CACHE_TTL) {
-            const parsed = JSON.parse(cachedData);
-            return parsed.models ?? [];
-          } else {
-            // Cache expired
-            localStorage.removeItem(CACHE_KEY);
-            localStorage.removeItem(CACHE_TIMESTAMP_KEY);
-          }
-        }
-      } catch {
-        // Ignore cache errors
-      }
-    }
-
-    // Fetch from Gateway API
     try {
       const data = await fetchProviderModels(providerId);
-      const models = data.models ?? [];
-
-      // Update cache (only for remote providers — local providers skip cache)
-      if (!isLocalProvider(providerId)) {
-        const CACHE_KEY = `rollball_models_${providerId}`;
-        const CACHE_TIMESTAMP_KEY = `rollball_models_${providerId}_timestamp`;
-        try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify(data));
-          localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
-        } catch {
-          // Ignore cache write errors
-        }
-      }
-
-      return models;
+      return data.models ?? [];
     } catch {
-      // No fallback — Gateway always returns model list
       return [];
     }
   }, []);
@@ -636,39 +530,13 @@ function ProvidersTab() {
 
         {/* Available Providers — split into Local / Remote sections */}
         <div>
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-xs font-medium text-zinc-500">
-              {t("harness.availableProviders")} {dynamicProvidersLoading && <span className="text-zinc-400">({t("harness.refreshing")})</span>}
+          <div className="mb-2 flex items-center">
+            <h3 className="shrink-0 text-xs font-medium text-zinc-500">
+              {t("harness.availableProviders")}
             </h3>
-            <div className="flex gap-1">
-              <button
-                onClick={() => {
-                  Object.keys(localStorage)
-                    .filter(k => k.startsWith('rollball_models_'))
-                    .forEach(k => localStorage.removeItem(k));
-                  setDynamicProvidersLoading(true);
-                  fetchDynamicProviders(false);
-                }}
-                className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:text-red-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:text-red-400 dark:hover:bg-zinc-800"
-                title="Clear cache and refresh"
-              >
-                🗑 {t("harness.clearCache")}
-              </button>
-              <button
-                onClick={() => fetchDynamicProviders(false)}
-                disabled={dynamicProvidersLoading}
-                className="rounded px-2 py-0.5 text-xs text-zinc-500 hover:text-zinc-700 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-zinc-800"
-                title="Refresh provider list"
-              >
-                {dynamicProvidersLoading ? t("harness.refreshing2") : "↻ " + t("harness.refresh")}
-              </button>
-            </div>
           </div>
 
-          {/* Show loading indicator when no data and still loading */}
-          {dynamicProvidersLoading && dynamicProviders.length === 0 ? (
-            <div className="py-3 text-center text-xs text-zinc-400">{t("harness.loadingProviders")}</div>
-          ) : dynamicProviders.length === 0 && !dynamicProvidersLoading ? (
+          {dynamicProviders.length === 0 ? (
             <div className="py-3 text-center text-xs text-zinc-400">{t("harness.noProvidersAvailable")}</div>
           ) : (
             <div className="space-y-3">
@@ -711,52 +579,88 @@ function ProvidersTab() {
                 </div>
               )}
 
-              {/* ── Remote Providers (collapsible) ── */}
+              {/* ── Remote Providers (expandable) ── */}
               {remoteProviders.length > 0 && (
                 <div>
-                  <button
-                    onClick={() => setShowRemoteProviders(!showRemoteProviders)}
-                    className="mb-1.5 flex w-full items-center gap-1 text-xs font-medium text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
-                  >
-                    <span className={cn("transition-transform", showRemoteProviders && "rotate-90")}>▶</span>
-                    ☁️ {t("harness.remoteProviders")} ({remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length} {t("harness.available")})
-                  </button>
-                  {showRemoteProviders && (
-                    <div className="space-y-1">
-                      {remoteProviders.map((item) => {
-                        const providerId = item.id;
-                        const providerName = item.name || providerId;
-                        const keyEntry = keys.find((k) => k.provider === providerId);
-                        const modelCount = item.model_count;
-                        if (keyEntry) return null;
-                        return (
-                          <div key={providerId} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
-                            <div className="flex items-center justify-between">
-                              <div className="min-w-0 flex-1">
-                                <span className="text-xs font-medium">{providerName}</span>
-                                {modelCount ? (
-                                  <span className="ml-2 text-xs text-zinc-400">{t("harness.modelsAvailable", { count: modelCount })}</span>
-                                ) : null}
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <span className="flex items-center gap-1 text-xs font-medium text-zinc-500 dark:text-zinc-400">
+                      ☁️ {t("harness.remoteProviders")} (
+                      {providerSearchTerm.trim()
+                        ? `${filteredRemoteProviders.length}/${remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length}`
+                        : remoteProviders.filter(p => !keys.find(k => k.provider === p.id)).length
+                      }
+                      {" "}{t("harness.available")})
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {/* Search filter for remote providers */}
+                      <div className="relative">
+                        <StyledInput
+                          type="text"
+                          value={providerSearchTerm}
+                          onChange={(e) => setProviderSearchTerm(e.target.value)}
+                          placeholder={t("harness.searchProviders")}
+                          className="w-[180px] bg-white pl-7 pr-2 placeholder-zinc-400 dark:border-zinc-600 dark:bg-zinc-800 dark:placeholder-zinc-500"
+                        />
+                        <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400" />
+                      </div>
+                    </div>
+                  </div>
+                  {filteredRemoteProviders.length > 0 && (
+                    <>
+                      <div className="space-y-1">
+                        {(() => {
+                          const hasMore = !providerSearchTerm.trim() && !showAllRemote && filteredRemoteProviders.length > 5;
+                          const displayed = hasMore ? filteredRemoteProviders.slice(0, 5) : filteredRemoteProviders;
+                          return displayed.map((item) => {
+                            const providerId = item.id;
+                            const providerName = item.name || providerId;
+                            const keyEntry = keys.find((k) => k.provider === providerId);
+                            const modelCount = item.model_count;
+                            if (keyEntry) return null;
+                            return (
+                              <div key={providerId} className="rounded-lg border border-zinc-200 px-3 py-1.5 dark:border-zinc-700">
+                                <div className="flex items-center justify-between">
+                                  <div className="min-w-0 flex-1">
+                                    <span className="text-xs font-medium">{providerName}</span>
+                                    {modelCount != null ? (
+                                      <span className="ml-2 text-xs text-zinc-400">{t("harness.modelsAvailable", { count: modelCount })}</span>
+                                    ) : null}
+                                  </div>
+                                  <button
+                                    onClick={() => {
+                                      setNewProvider(providerId);
+                                      const dynamicProvider = dynamicProviders.find((p) => p.id === providerId);
+                                      setNewBaseUrl(dynamicProvider?.api ?? "");
+                                      fetchModels(providerId).then((models) => setAvailableModels(models));
+                                      setNewContextWindow("");
+                                      setNewMaxOutputTokens("");
+                                      setNewSupportsToolCalling(true);
+                                      setShowAddDialog(true);
+                                    }}
+                                    className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
+                                  >
+                                    {t("harness.addKey")}
+                                  </button>
+                                </div>
                               </div>
-                              <button
-                                onClick={() => {
-                                  setNewProvider(providerId);
-                                  const dynamicProvider = dynamicProviders.find((p) => p.id === providerId);
-                                  setNewBaseUrl(dynamicProvider?.api ?? "");
-                                  fetchModels(providerId).then((models) => setAvailableModels(models));
-                                  setNewContextWindow("");
-                                  setNewMaxOutputTokens("");
-                                  setNewSupportsToolCalling(true);
-                                  setShowAddDialog(true);
-                                }}
-                                className="rounded-md bg-zinc-100 px-3 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
-                              >
-                                {t("harness.addKey")}
-                              </button>
-                            </div>
-                          </div>
-                        );
-                      })}
+                            );
+                          });
+                        })()}
+                      </div>
+                      {!providerSearchTerm.trim() && !showAllRemote && filteredRemoteProviders.length > 5 && (
+                        <button
+                          onClick={() => setShowAllRemote(true)}
+                          className="mt-1 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-zinc-300 py-2 text-xs text-zinc-500 transition-colors hover:border-zinc-400 hover:text-zinc-700 dark:border-zinc-600 dark:text-zinc-400 dark:hover:border-zinc-500 dark:hover:text-zinc-300"
+                        >
+                          <ChevronsDown className="h-4 w-4" />
+                          <>Show all ({filteredRemoteProviders.length})</>
+                        </button>
+                      )}
+                    </>
+                  )}
+                  {filteredRemoteProviders.length === 0 && providerSearchTerm.trim() && (
+                    <div className="py-3 text-center text-xs text-zinc-400">
+                      {t("harness.noProvidersMatch")}
                     </div>
                   )}
                 </div>
@@ -787,12 +691,11 @@ function ProvidersTab() {
               {needsApiKey(newProvider) && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">{t("harness.apiKey")}</label>
-                  <input
+                  <StyledInput
                     type="password"
                     value={newKey}
                     onChange={(e) => setNewKey(e.target.value)}
                     placeholder={keyPlaceholder(newProvider)}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                 </div>
               )}
@@ -801,12 +704,12 @@ function ProvidersTab() {
                 return (
                   <div>
                     <label className="mb-1 block text-xs text-zinc-500">{t("harness.baseUrl")}</label>
-                    <input
+                    <StyledInput
                       type="text"
                       value={newBaseUrl}
                       onChange={(e) => setNewBaseUrl(e.target.value)}
                       placeholder="https://..."
-                      className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                      fontMono
                     />
                   </div>
                 )
@@ -879,12 +782,11 @@ function ProvidersTab() {
                   </div>
                 )}
                 {/* Search and select models */}
-                <input
+                <StyledInput
                   type="text"
                   value={modelSearchTerm}
                   onChange={(e) => setModelSearchTerm(e.target.value)}
                   placeholder={t("harness.searchModels")}
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {modelsLoading ? (
@@ -942,10 +844,10 @@ function ProvidersTab() {
                 </div>
                 {/* Manual model input */}
                 <div className="mt-2 flex gap-1">
-                  <input
+                  <StyledInput
                     type="text"
                     placeholder={t("harness.customModelPlaceholder")}
-                    className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    className="flex-1"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         const val = (e.target as HTMLInputElement).value.trim();
@@ -983,14 +885,13 @@ function ProvidersTab() {
                     <div className="flex gap-2">
                       <div className="flex-1">
                         <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.contextWindow")}</label>
-                        <input
+                        <StyledInput
                           type="number"
                           value={displayContextWindow}
                           onChange={(e) => setNewContextWindow(e.target.value)}
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 128000"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -999,14 +900,13 @@ function ProvidersTab() {
                       </div>
                       <div className="flex-1">
                         <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.maxOutputTokens")}</label>
-                        <input
+                        <StyledInput
                           type="number"
                           value={displayMaxOutputTokens}
                           onChange={(e) => setNewMaxOutputTokens(e.target.value)}
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 4096"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -1111,12 +1011,11 @@ function ProvidersTab() {
               {!isLocalProvider(showEditDialog) && (
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">{t("harness.apiKey")}</label>
-                  <input
+                  <StyledInput
                     type="password"
                     value={editKey}
                     onChange={(e) => setEditKey(e.target.value)}
                     placeholder={t("harness.enterNewApiKey")}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                   />
                 </div>
               )}
@@ -1124,12 +1023,12 @@ function ProvidersTab() {
               {(
                 <div>
                   <label className="mb-1 block text-xs text-zinc-500">{t("harness.baseUrl")}</label>
-                  <input
+                  <StyledInput
                     type="text"
                     value={editBaseUrl}
                     onChange={(e) => setEditBaseUrl(e.target.value)}
                     placeholder="https://..."
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 font-mono text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    fontMono
                   />
                 </div>
               )}
@@ -1199,12 +1098,11 @@ function ProvidersTab() {
                     ))}
                   </div>
                 )}
-                <input
+                <StyledInput
                   type="text"
                   value={editModelSearchTerm}
                   onChange={(e) => setEditModelSearchTerm(e.target.value)}
                   placeholder={t("harness.searchModels")}
-                  className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
                 />
                 <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
                   {editModelsLoading ? (
@@ -1258,10 +1156,10 @@ function ProvidersTab() {
                   )}
                 </div>
                 <div className="mt-2 flex gap-1">
-                  <input
+                  <StyledInput
                     type="text"
                     placeholder={t("harness.customModelPlaceholder")}
-                    className="flex-1 rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
+                    className="flex-1"
                     onKeyDown={(e) => {
                       if (e.key === "Enter") {
                         const val = (e.target as HTMLInputElement).value.trim();
@@ -1296,14 +1194,13 @@ function ProvidersTab() {
                     <div className="flex gap-2">
                       <div className="flex-1">
                         <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.contextWindow")}</label>
-                        <input
+                        <StyledInput
                           type="number"
                           value={displayContextWindow}
                           onChange={(e) => setEditContextWindow(e.target.value)}
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 128000"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -1312,14 +1209,13 @@ function ProvidersTab() {
                       </div>
                       <div className="flex-1">
                         <label className="mb-0.5 block text-xs text-zinc-400">{t("harness.maxOutputTokens")}</label>
-                        <input
+                        <StyledInput
                           type="number"
                           value={displayMaxOutputTokens}
                           onChange={(e) => setEditMaxOutputTokens(e.target.value)}
                           readOnly={hasModelsDevData}
                           placeholder="e.g. 4096"
                           className={cn(
-                            "w-full rounded-md border border-zinc-200 px-3 py-2 text-xs",
                             hasModelsDevData
                               ? "bg-zinc-50 text-zinc-400 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-500"
                               : "dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200",
@@ -1386,10 +1282,22 @@ function ProvidersTab() {
 }
 
 /** MCP tab — placeholder, content TBD */
+const MCP_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> = {
+  Monitor, Search, Globe, BookOpen, FileText, PenTool,
+};
+
 function McpTab() {
   const { t } = useTranslation();
   const { catalog, loading, error, loadCatalog, addServer, removeServer } = useMcpStore();
   const [showAddForm, setShowAddForm] = useState(false);
+
+  const presetIconMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const p of MCP_PRESETS) {
+      map[p.id] = p.icon ?? "";
+    }
+    return map;
+  }, []);
 
   // New server form state
   const [newName, setNewName] = useState("");
@@ -1491,28 +1399,35 @@ function McpTab() {
             {catalog.map((server) => (
               <div
                 key={server.name}
-                className="flex items-center justify-between rounded border border-zinc-100 px-3 py-2 dark:border-zinc-600"
+                className="rounded border border-zinc-100 px-3 py-2 dark:border-zinc-600"
               >
-                <div className="flex items-center gap-2">
-                  <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-700">
-                    {server.transport}
-                  </span>
-                  <span className="text-xs font-medium">{server.name}</span>
-                  {server.has_secrets && (
-                    <span className="text-[10px] text-amber-500">{t("harnessMcp.hasApiKey")}</span>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-zinc-400">
-                    {server.command || server.url || ""}
-                  </span>
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-700 shrink-0">
+                      {server.transport}
+                    </span>
+                    {(() => {
+                      const iconName = presetIconMap[server.name];
+                      const Icon = iconName ? MCP_ICON_MAP[iconName] : undefined;
+                      return Icon ? <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null;
+                    })()}
+                    <span className="text-xs font-medium truncate">{server.name}</span>
+                    {server.has_secrets && (
+                      <span className="text-[10px] text-amber-500 shrink-0">{t("harnessMcp.hasApiKey")}</span>
+                    )}
+                  </div>
                   <button
                     onClick={() => removeServer(server.name)}
-                    className="text-xs text-zinc-400 hover:text-red-500"
+                    className="shrink-0 text-xs text-zinc-400 hover:text-red-500"
                   >
                     {t("harnessMcp.remove")}
                   </button>
                 </div>
+                {(server.command || server.url) && (
+                  <p className="mt-1 text-[10px] text-zinc-400 break-all">
+                    {server.command || server.url}
+                  </p>
+                )}
               </div>
             ))}
           </div>
@@ -1532,7 +1447,13 @@ function McpTab() {
               >
                 <div className="flex items-start justify-between">
                   <div>
-                    <span className="text-xs font-medium">{preset.name}</span>
+                    <span className="flex items-center gap-1">
+                      {(() => {
+                        const Icon = MCP_ICON_MAP[preset.icon ?? ""];
+                        return Icon ? <Icon className="h-3.5 w-3.5 shrink-0" /> : null;
+                      })()}
+                      <span className="text-xs font-medium">{preset.name}</span>
+                    </span>
                     <span className="ml-1.5 rounded bg-zinc-100 px-1 py-0.5 text-[10px] text-zinc-400 dark:bg-zinc-700">
                       {preset.category}
                     </span>
@@ -1665,7 +1586,7 @@ function McpTab() {
                   onChange={(e) =>
                     setPresetEnvForm((prev) => ({ ...prev, [envKey]: e.target.value }))
                   }
-                  className="w-full rounded border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-600 dark:bg-zinc-700"
+                  className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-700"
                   placeholder={`${t("harnessMcp.enter")}${envKey}`}
                 />
               </div>

@@ -218,7 +218,7 @@
         "localProviders": "Local Providers",
         "remoteProviders": "Remote Providers",
         "available": "available",
-        "modelsAvailable": "{count} models available",
+        "modelsAvailable": "{{count}} models available",
         "connect": "Connect",
         "addKey": "Add Key",
         "connectLocalProvider": "Connect Local Provider: ",
@@ -260,7 +260,9 @@
         "tools": "tools",
         "editProvider": "Edit: ",
         "enterNewApiKey": "Enter new API key...",
-        "contextWindowMaxOutputPositive": "Context Window and Max Output Tokens must be positive numbers"
+        "contextWindowMaxOutputPositive": "Context Window and Max Output Tokens must be positive numbers",
+        "searchProviders": "Search providers...",
+        "noProvidersMatch": "No matching providers"
     },
     "harnessSearch": {
         "searchProviderManagement": "Search Provider Management",
@@ -331,7 +333,7 @@
         "phase": "Phase",
         "tokens": "Tokens",
         "sessionStatusLabel": "Status",
-        "contextSnapshots": "Context Snapshots ({count})",
+        "contextSnapshots": "Context Snapshots ({{count}})",
         "noSnapshots": "No context snapshots yet.",
         "sendMessageToGenerate": "Send a message to the agent to generate snapshots.",
         "sessionStatus": "Session Status",

@@ -6,6 +6,7 @@ import { useDebugStore } from "../../stores/debugStore";
 import { isSessionActive } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRight, Search, TriangleAlert } from "lucide-react";
+import { StyledInput } from "../common/StyledInput";
 import { ScrollableTabBar, type ScrollableTabBarHandle } from "../common/ScrollableTabBar";
 import { TabItem } from "../common/tab";
 
@@ -109,14 +110,14 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
 
       {/* Search input */}
       <div className="border-b border-zinc-200 px-2 py-1.5 dark:border-zinc-700">
-        <div className="flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-1 dark:border-zinc-700">
-          <Search className="h-3 w-3 shrink-0 text-zinc-400" />
-          <input
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-400" />
+          <StyledInput
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Search sessions..."
-            className="w-full bg-transparent text-xs text-zinc-700 placeholder-zinc-400 outline-none dark:text-zinc-200 dark:placeholder-zinc-500"
+            className="pl-7"
           />
         </div>
       </div>
