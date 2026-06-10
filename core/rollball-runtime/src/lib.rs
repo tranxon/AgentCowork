@@ -8,6 +8,7 @@ pub mod package;
 pub mod providers;
 pub mod tools;
 pub mod memory;
+pub mod mcp_notify;
 pub mod skills;
 pub mod ipc;
 pub mod grpc;

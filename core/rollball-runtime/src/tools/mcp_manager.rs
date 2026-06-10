@@ -14,6 +14,17 @@ use rollball_mcp::wrapper::McpToolWrapper;
 /// Re-export from rollball-mcp so SessionManager can reference it.
 pub use rollball_mcp::client::McpConnectionFailure;
 
+/// Result of an asynchronous MCP server connection attempt.
+///
+/// Produced by a background task and applied to SessionManager
+/// via [`SessionManager::apply_mcp_connection_result`].
+pub type McpConnectResult = (
+    Arc<McpRegistry>,
+    Vec<McpToolWrapper>,
+    Vec<(String, serde_json::Value)>,
+    Vec<McpConnectionFailure>,
+);
+
 /// MCP connection manager.
 ///
 /// Holds a shared [`McpRegistry`] and provides helpers for connecting
@@ -92,6 +103,12 @@ impl McpManager {
     /// Check whether any MCP servers are connected.
     pub fn is_connected(&self) -> bool {
         self.registry.as_ref().map_or(false, |r| !r.is_empty())
+    }
+
+    /// Set the registry directly (used when MCP connection results are
+    /// produced by a background task and applied asynchronously).
+    pub fn set_registry(&mut self, registry: Arc<McpRegistry>) {
+        self.registry = Some(registry);
     }
 
     /// Disconnect from all MCP servers and release resources.

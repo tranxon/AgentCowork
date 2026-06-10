@@ -36,6 +36,8 @@ pub mod content_search;
 pub mod intent_send;
 pub mod rag_query;
 pub mod ask_user_question;
+pub mod mcp_install;
+pub mod mcp_uninstall;
 pub mod search_backends;
 pub mod todo_write;
 
@@ -44,6 +46,7 @@ use rollball_grafeo::grafeo::GrafeoStore;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::mcp_notify::McpNotifyRef;
 use crate::tools::workspace_resolver::SharedResolver;
 use search_backends::WebSearchEngine;
 
@@ -62,6 +65,7 @@ use search_backends::WebSearchEngine;
 ///   a tool that always returns "Provider not configured".
 /// * `grafeo_store` - Optional GrafeoStore for memory_store backend wiring.
 /// * `memory_session` - Optional MemorySessionHandle for memory_recall session-aware retrieval.
+/// * `mcp_notifier` - Optional McpConfigNotifier for mcp_install/mcp_uninstall event notification.
 pub fn all_builtin_tools(
     resolver: &SharedResolver,
     agent_id: &str,
@@ -69,6 +73,7 @@ pub fn all_builtin_tools(
     has_search_providers: bool,
     grafeo_store: Option<Arc<GrafeoStore>>,
     memory_session: Option<Arc<crate::memory::MemorySessionHandle>>,
+    mcp_notifier: McpNotifyRef,
 ) -> Vec<Arc<dyn Tool>> {
     // Register shell tools based on platform detection
     let shell_tools: Vec<Arc<dyn Tool>> = crate::platform::detected_shells()
@@ -98,6 +103,8 @@ pub fn all_builtin_tools(
         Arc::new(intent_send::IntentSendTool::new()),
         Arc::new(ask_user_question::AskUserQuestionTool::new()),
         Arc::new(todo_write::TodoWriteTool::new()),
+        Arc::new(mcp_install::McpInstallTool::new(mcp_notifier.clone())),
+        Arc::new(mcp_uninstall::McpUninstallTool::new(mcp_notifier.clone())),
     ];
 
     // Only register web_search when at least one search provider is configured.
