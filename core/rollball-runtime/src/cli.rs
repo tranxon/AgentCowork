@@ -1466,6 +1466,13 @@ async fn async_main(
         // run_gateway_loop via mcp_startup_rx.  No blocking here — the Gateway
         // message loop starts immediately.
 
+        // Runtime MCP connect channel — used by RuntimeConfigUpdate and
+        // mcp_config_rx handlers to spawn background MCP connections
+        // without blocking the Gateway message loop (avoids session timeout).
+        let (mcp_runtime_tx, mcp_runtime_rx) = tokio::sync::mpsc::channel::<
+            crate::tools::mcp_manager::McpConnectResult,
+        >(1);
+
         // Extract gateway query receiver before passing client to the loop.
         // This avoids &mut self conflicts when tokio::select! polls both
         // recv_message() and the gateway query channel.
@@ -1485,6 +1492,8 @@ async fn async_main(
             config.session_idle_timeout_secs,
             mcp_notifier.subscribe(),
             mcp_startup_rx,
+            mcp_runtime_tx,
+            mcp_runtime_rx,
         )
         .await;
 
@@ -1673,6 +1682,8 @@ async fn run_gateway_loop(
     mut mcp_startup_rx: Option<
         tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
     >,
+    mcp_runtime_tx: tokio::sync::mpsc::Sender<crate::tools::mcp_manager::McpConnectResult>,
+    mut mcp_runtime_rx: tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
 ) -> Result<()> {
     // Retrieve the provider name for budget queries
     let budget_provider = session_manager.provider_name();
@@ -1702,6 +1713,7 @@ async fn run_gateway_loop(
                         &budget_provider,
                         &log_reload_handle,
                         session_idle_timeout_secs,
+                        &mcp_runtime_tx,
                     ).await {
                         LoopAction::Continue => continue,
                         LoopAction::Break => break,
@@ -1725,15 +1737,49 @@ async fn run_gateway_loop(
                     mcp_startup_rx = None;
                 }
 
+                // Runtime MCP connect result — received from background connect
+                // tasks spawned by RuntimeConfigUpdate or mcp_config_rx handlers.
+                mcp_runtime_result = mcp_runtime_rx.recv() => {
+                    if let Some((registry, wrappers, specs, failures)) = mcp_runtime_result {
+                        session_manager.apply_mcp_connection_result(
+                            registry, wrappers, specs, failures,
+                        );
+                    }
+                }
+
                 // MCP config change notification — triggered by mcp_install
                 // / mcp_uninstall tools via McpConfigNotifier::notify().
                 // Event-driven, zero-latency — replaces periodic polling.
+                // Connection is spawned in background to avoid blocking the
+                // Gateway message loop (up to 30s per server timeout).
                 _ = mcp_config_rx.changed() => {
-                    tracing::info!("MCP config change notification — reconnecting MCP servers");
+                    tracing::info!("MCP config change notification — reconnecting MCP servers (background)");
                     let merged = crate::agent_config::load_merged_mcp_configs(
                         std::path::Path::new(&work_dir),
                     );
-                    session_manager.apply_mcp_servers(merged).await;
+                    let tx = mcp_runtime_tx.clone();
+                    tokio::spawn(async move {
+                        let (registry, failures) =
+                            rollball_mcp::client::McpRegistry::connect_all(&merged)
+                                .await
+                                .expect("connect_all is non-fatal and should never fail");
+                        let registry = std::sync::Arc::new(registry);
+                        let mut wrappers = Vec::new();
+                        let mut specs = Vec::new();
+                        for prefixed_name in registry.tool_names() {
+                            if let Some(def) = registry.get_tool_def(&prefixed_name) {
+                                let wrapper = rollball_mcp::wrapper::McpToolWrapper::new(
+                                    prefixed_name.clone(), def, registry.clone(),
+                                );
+                                use rollball_core::tools::traits::Tool;
+                                let tool_spec = wrapper.spec();
+                                let serialized = serde_json::to_value(&tool_spec).unwrap_or_default();
+                                specs.push((tool_spec.name.clone(), serialized));
+                                wrappers.push(wrapper);
+                            }
+                        }
+                        let _ = tx.send((registry, wrappers, specs, failures)).await;
+                    });
                 }
 
                 query_opt = mq_rx.recv() => {
@@ -1817,6 +1863,7 @@ async fn run_gateway_loop(
                 &budget_provider,
                 &log_reload_handle,
                 session_idle_timeout_secs,
+                &mcp_runtime_tx,
             )
             .await
             {
@@ -1875,6 +1922,7 @@ async fn process_gateway_recv(
     budget_provider: &str,
     log_reload_handle: &Option<LogReloadHandle>,
     _session_idle_timeout_secs: u64,
+    mcp_runtime_tx: &tokio::sync::mpsc::Sender<crate::tools::mcp_manager::McpConnectResult>,
 ) -> LoopAction {
     use rollball_core::protocol::GatewayResponse;
     match recv_result {
@@ -2773,6 +2821,12 @@ async fn process_gateway_recv(
                     // Handle MCP server config changes: connect, disconnect, or reconnect.
                     // Gateway pushes catalog MCPs. We must merge catalog + local
                     // before connecting, and only persist the catalog portion.
+                    //
+                    // Disconnect is done inline (fast) to release old connections
+                    // immediately.  Connect is spawned as a background task to
+                    // avoid blocking the Gateway message loop for up to 30 seconds
+                    // per server.  Results are applied via the mcp_runtime_rx
+                    // channel in the select! loop (apply_mcp_connection_result).
                     let mcp_for_persist = mcp_servers.clone();
                     if let Some(catalog_mcp_configs) = mcp_servers {
                         // Merge catalog + local for full MCP connection list
@@ -2782,10 +2836,39 @@ async fn process_gateway_recv(
                         .unwrap_or_default()
                         .unwrap_or_default();
                         let full_mcp_configs = AgentMcpConfig {
-                            catalog: catalog_mcp_configs,
+                            catalog: catalog_mcp_configs.clone(),
                             local: merged.local,
                         }.merged();
-                        session_manager.apply_mcp_servers(full_mcp_configs).await;
+
+                        // Disconnect existing MCP connections inline (fast).
+                        session_manager.apply_mcp_servers(vec![]).await;
+
+                        // Spawn background task for connecting new MCP servers.
+                        // The result is sent via mcp_runtime_tx and applied
+                        // asynchronously in the select! loop.
+                        let tx = mcp_runtime_tx.clone();
+                        tokio::spawn(async move {
+                            let (registry, failures) =
+                                rollball_mcp::client::McpRegistry::connect_all(&full_mcp_configs)
+                                    .await
+                                    .expect("connect_all is non-fatal and should never fail");
+                            let registry = std::sync::Arc::new(registry);
+                            let mut wrappers = Vec::new();
+                            let mut specs = Vec::new();
+                            for prefixed_name in registry.tool_names() {
+                                if let Some(def) = registry.get_tool_def(&prefixed_name) {
+                                    let wrapper = rollball_mcp::wrapper::McpToolWrapper::new(
+                                        prefixed_name.clone(), def, registry.clone(),
+                                    );
+                                    use rollball_core::tools::traits::Tool;
+                                    let tool_spec = wrapper.spec();
+                                    let serialized = serde_json::to_value(&tool_spec).unwrap_or_default();
+                                    specs.push((tool_spec.name.clone(), serialized));
+                                    wrappers.push(wrapper);
+                                }
+                            }
+                            let _ = tx.send((registry, wrappers, specs, failures)).await;
+                        });
                     }
 
                     // Handle per-agent search config persistence.

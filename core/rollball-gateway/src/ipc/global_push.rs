@@ -197,7 +197,11 @@ impl GlobalResourcePusher {
         // Gateway no longer stores per-agent MCP configuration, so we cannot filter
         // by per-agent active servers. Push the full catalog to all running agents;
         // Runtime will filter based on its own persisted config.
-        if agent_ids.is_empty() || catalog.is_empty() {
+        //
+        // NOTE: Do NOT skip when catalog is empty — the Runtime needs to receive
+        // an empty catalog push to clear its agent_mcp.json.  Skipping here would
+        // leave stale catalog entries in per-agent config after all MCPs are removed.
+        if agent_ids.is_empty() {
             return;
         }
 
