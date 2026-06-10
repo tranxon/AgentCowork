@@ -210,6 +210,14 @@ export const FileTreeNode = memo(function FileTreeNode({
           style={{ left: contextMenu.x, top: contextMenu.y }}
         >
           <button
+            onClick={handleAddToChat}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+          >
+            <MessageSquarePlus className="h-3.5 w-3.5 text-zinc-400" />
+            Add to Chat
+          </button>
+          <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
+          <button
             onClick={handleNewFile}
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
           >
@@ -245,14 +253,6 @@ export const FileTreeNode = memo(function FileTreeNode({
           >
             <Trash2 className="h-3.5 w-3.5 text-red-500" />
             Delete
-          </button>
-          <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
-          <button
-            onClick={handleAddToChat}
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
-          >
-            <MessageSquarePlus className="h-3.5 w-3.5 text-zinc-400" />
-            Add to Chat
           </button>
         </div>,
         document.body,

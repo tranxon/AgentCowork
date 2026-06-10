@@ -18,7 +18,7 @@ import { emitAgentConfigRefresh } from "../../lib/refresh";
 import { syncAgentUI } from "../../lib/agent-start";
 import { toolbarButton } from "../../lib/ui-styles";
 import { StyledInput } from "../common/StyledInput";
-import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Cpu, Loader, Pencil, Paperclip, Image, Brain } from "lucide-react";
+import { Bot, Play, Send, ChevronDown, ChevronRight, Wrench, AlertTriangle, X, Square, Copy, Plus, RefreshCw, Cpu, Loader, Pencil, Paperclip, Image, Brain, Circle, CircleDot } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { ChatMessage, VaultKeyEntry, ModelInfo, ModelEntry, ModelCapabilitiesMap } from "../../lib/types";
@@ -1093,24 +1093,34 @@ export function ChatPanel() {
             {!todosCollapsed && (
               <div className="max-h-[7.5rem] overflow-y-auto">
                 {todos.map((item) => {
-                  const statusMark = item.status === "completed" ? "x" : item.status === "in_progress" ? "-" : " ";
                   const isCompleted = item.status === "completed";
+                  const isInProgress = item.status === "in_progress";
                   return (
                     <div
                       key={item.id}
                       className="flex items-start gap-1.5 px-2.5 py-1.5 hover:bg-zinc-100 dark:hover:bg-zinc-700/40 border-b border-zinc-100 dark:border-zinc-700/30 last:border-b-0"
                     >
                       <span className={cn(
-                        "shrink-0 text-[10px] mt-0.5 select-none font-mono",
-                        isCompleted ? "text-zinc-400 dark:text-zinc-500" : "text-zinc-500 dark:text-zinc-400"
+                        "shrink-0 mt-0.5 select-none",
+                        isCompleted
+                          ? "text-zinc-400 dark:text-zinc-500"
+                          : isInProgress
+                            ? "text-zinc-500 dark:text-zinc-300"
+                            : "text-zinc-400 dark:text-zinc-500"
                       )}>
-                        [{statusMark}]
+                        {isCompleted ? (
+                          <CircleDot className="h-3.5 w-3.5" strokeWidth={2.25} />
+                        ) : isInProgress ? (
+                          <Loader className="h-3.5 w-3.5 animate-spin" strokeWidth={2.25} />
+                        ) : (
+                          <Circle className="h-3.5 w-3.5" strokeWidth={2.25} />
+                        )}
                       </span>
                       <span className={cn(
                         "flex-1 min-w-0 text-xs leading-relaxed",
                         isCompleted
                           ? "text-zinc-400 dark:text-zinc-500 line-through"
-                          : item.status === "in_progress"
+                          : isInProgress
                             ? "text-zinc-700 dark:text-zinc-200 font-medium"
                             : "text-zinc-600 dark:text-zinc-300"
                       )}>
