@@ -1,8 +1,8 @@
-//! Tool registry — tool pool registration + manifest-driven activation
+//! Tool registry — tool pool registration + activation
 //!
 //! Two-step process:
 //! 1. `all_builtin_tools()` builds the complete tool pool
-//! 2. `activate()` filters by manifest declarations and applies security decorators
+//! 2. `activate()` applies security decorators (all builtin tools are always active)
 use rollball_core::tools::traits::Tool;
 use rollball_core::AgentManifest;
 use std::sync::Arc;
@@ -11,11 +11,6 @@ use crate::tools::workspace_resolver::SharedResolver;
 
 #[cfg(test)]
 use crate::tools::workspace_resolver::{WorkspaceDir, WorkspaceAccess, WorkspaceResolver};
-
-/// Tools that cannot be disabled — always available regardless of manifest
-/// or user configuration. These are foundational capabilities the LLM must
-/// always have access to (e.g. asking the user a question).
-const ALWAYS_ON_TOOLS: &[&str] = &["ask_user_question"];
 
 /// Tool registry
 pub struct ToolRegistry {
@@ -44,57 +39,37 @@ impl ToolRegistry {
         &self.tools
     }
 
-    /// Activate tools based on manifest declarations.
+    /// Activate all registered tools with security decorators.
+    ///
+    /// All builtin tools are always active — manifest `[[tools]]` is reserved
+    /// for future scope restriction, not activation filtering.
     ///
     /// Tool activation IS authorization — no separate permission check needed.
     ///
     /// Steps:
-    /// 1. If manifest.tools is non-empty, filter to only declared tools
-    /// 2. Load workspace directories from `.agent_workspaces.json`
-    /// 3. Apply security decorators: PathGuarded → RateLimited
+    /// 1. Load workspace directories from the shared resolver
+    /// 2. Apply security decorators: PathGuarded → RateLimited
     pub fn activate(
         &self,
-        manifest: &AgentManifest,
+        _manifest: &AgentManifest,
         resolver: &SharedResolver,
         max_calls_per_minute: u32,
     ) -> Vec<Arc<dyn Tool>> {
 
-        let filtered: Vec<Arc<dyn Tool>> = if manifest.tools.is_empty() {
-            // No tool declarations → all tools available
-            self.tools.clone()
-        } else {
-
-            // Filter to only declared tools.
-            // Shell tools may be declared as "shell" in the manifest but
-            // registered as "bash"/"powershell" by the platform detector.
-            self.tools
-                .iter()
-                .filter(|tool| {
-                    manifest.has_tool(&tool.name())
-                        || is_shell_alias(&tool.name(), manifest)
-                        || ALWAYS_ON_TOOLS.contains(&tool.name().as_str())
-                })
-                .cloned()
-                .collect()
-
-        };
-
         // Use the shared workspace resolver (single source of truth for directory resolution)
         let allowed_dirs = resolver.read().unwrap().allowed_dirs().to_vec();
 
-        // Apply security decorators
-        let tools = filtered
-            .into_iter()
+        // Apply security decorators to all registered tools
+        self.tools
+            .iter()
             .map(|tool| {
                 // Layer 1: Path guard (for filesystem tools)
-                let path_guarded = Arc::new(PathGuardedTool::new(tool, allowed_dirs.clone())) as Arc<dyn Tool>;
+                let path_guarded = Arc::new(PathGuardedTool::new(tool.clone(), allowed_dirs.clone())) as Arc<dyn Tool>;
 
                 // Layer 2: Rate limit
                 Arc::new(RateLimitedTool::new(path_guarded, max_calls_per_minute)) as Arc<dyn Tool>
             })
-
-            .collect();
-        tools
+            .collect()
 
     }
 
@@ -230,17 +205,14 @@ mod tests {
     }
 
     #[test]
-    fn test_registry_activate_with_manifest_tools() {
+    fn test_registry_activate_returns_all_tools() {
 
         let reg = create_registry();
         let manifest = manifest_with_tools(&["shell", "calculator"]);
         let resolver: SharedResolver = Arc::new(std::sync::RwLock::new(WorkspaceResolver::new("/tmp/test")));
         let activated = reg.activate(&manifest, &resolver, 60);
-        assert_eq!(activated.len(), 2);
-        let names: Vec<String> = activated.iter().map(|t| t.name()).collect();
-        assert!(names.contains(&"shell".to_string()));
-        assert!(names.contains(&"calculator".to_string()));
-        assert!(!names.contains(&"weather".to_string()));
+        // All tools are always active, regardless of manifest
+        assert_eq!(activated.len(), 4);
 
     }
 
@@ -274,20 +246,6 @@ mod tests {
         let reg = ToolRegistry::default();
         assert!(reg.all().is_empty());
     }
-
-}
-
-/// Check whether a tool is a shell variant that should match a "shell"
-/// declaration in the manifest.
-///
-/// Platform-aware shell tools (bash, powershell) fill the same role as the
-/// legacy unified "shell" tool.  If the manifest declares "shell" but the
-/// platform detector registered "bash" + "powershell", they should still pass
-/// the activation filter.
-fn is_shell_alias(tool_name: &str, manifest: &AgentManifest) -> bool {
-
-    matches!(tool_name, "bash" | "powershell" | "pwsh" | "shell")
-        && (manifest.has_tool("shell") || manifest.has_tool("pwsh"))
 
 }
 

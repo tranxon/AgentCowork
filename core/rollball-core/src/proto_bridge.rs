@@ -352,7 +352,6 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                 max_iterations,
                 temperature,
                 system_prompt_override,
-                active_tools,
                 shell_approval_threshold,
                 mcp_servers,
                 search_config_json,
@@ -370,7 +369,6 @@ impl GatewayRequestToProto for protocol::GatewayRequest {
                         max_iterations: max_iterations.clone(),
                         temperature: temperature.clone(),
                         system_prompt_override: system_prompt_override.clone(),
-                        active_tools: active_tools.clone().unwrap_or_default(),
                         shell_approval_threshold: shell_approval_threshold.clone(),
                         mcp_servers_json: mcp_json,
                         search_config_json: search_config_json.clone(),
@@ -644,7 +642,6 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 max_iterations,
                 temperature,
                 system_prompt_override,
-                active_tools,
                 shell_approval_threshold,
                 mcp_servers,
                 model,
@@ -653,7 +650,6 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                 embed_config_json,
             } => {
                 let mcp_servers_set = mcp_servers.is_some();
-                let active_tools_set = active_tools.is_some();
                 let system_prompt_set = system_prompt_override.is_some();
                 let mcp_servers_json: Vec<String> = mcp_servers
                     .as_ref()
@@ -670,14 +666,12 @@ impl GatewayResponseToProto for protocol::GatewayResponse {
                         max_iterations: max_iterations.clone(),
                         temperature: temperature.clone(),
                         system_prompt_override: system_prompt_override.clone().unwrap_or_default(),
-                        active_tools: active_tools.clone().unwrap_or_default(),
                         shell_approval_threshold: shell_approval_threshold.clone().unwrap_or_default(),
                         mcp_servers_json,
                         model: model.clone(),
                         provider: provider.clone(),
                         search_config_json: search_config_json.clone(),
                         mcp_servers_set,
-                        active_tools_set,
                         system_prompt_set,
                         embed_config_json: embed_config_json.clone(),
                     },

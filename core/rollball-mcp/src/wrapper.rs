@@ -153,11 +153,10 @@ mod tests {
     }
 
     async fn empty_registry() -> Arc<McpRegistry> {
-        Arc::new(
-            McpRegistry::connect_all(&[])
-                .await
-                .expect("empty connect_all should succeed"),
-        )
+        let (registry, _failures) = McpRegistry::connect_all(&[])
+            .await
+            .expect("empty connect_all should succeed");
+        Arc::new(registry)
     }
 
     #[tokio::test]

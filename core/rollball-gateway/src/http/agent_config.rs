@@ -28,8 +28,6 @@ pub struct AgentConfigResponse {
     /// User's system prompt override (None = use manifest default)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system_prompt_override: Option<String>,
-    /// Active tool names (from manifest + config overrides)
-    pub active_tools: Vec<String>,
     /// Effective shell approval threshold
     #[serde(skip_serializing_if = "Option::is_none")]
     pub shell_approval_threshold: Option<String>,
@@ -60,8 +58,6 @@ pub struct UpdateAgentConfigRequest {
     pub temperature: Option<f32>,
     #[serde(default)]
     pub system_prompt_override: Option<String>,
-    #[serde(default)]
-    pub active_tools: Option<Vec<String>>,
     #[serde(default)]
     pub shell_approval_threshold: Option<ShellApprovalThreshold>,
     #[serde(default)]

@@ -20,8 +20,6 @@ export interface AgentProfileSettings {
   temperature?: number;
   /** System prompt override */
   systemPrompt?: string;
-  /** Active tool names (from manifest + overrides) */
-  activeTools?: string[];
   /** Shell approval threshold: "low" | "medium" | "high" | "never" */
   shellApprovalThreshold?: string;
   /** Approval timeout in seconds (default 300 = 5 min). 0 = Gateway default. */
@@ -47,7 +45,6 @@ const DEFAULT_SETTINGS: AgentProfileSettings = {
   maxIterations: 0,
   temperature: 0.7,
   systemPrompt: undefined,
-  activeTools: undefined,
   shellApprovalThreshold: undefined,
   approvalTimeoutSecs: undefined,
 };
@@ -85,7 +82,6 @@ function loadProfiles(): Record<string, AgentProfileSettings> {
                 : 0,
           temperature: typeof settings.temperature === "number" ? settings.temperature : 0.7,
           systemPrompt: settings.systemPrompt,
-          activeTools: Array.isArray(settings.activeTools) ? settings.activeTools : undefined,
           shellApprovalThreshold: settings.shellApprovalThreshold,
           approvalTimeoutSecs: typeof settings.approvalTimeoutSecs === "number" && settings.approvalTimeoutSecs > 0 ? settings.approvalTimeoutSecs : undefined,
           globalMaxTokens: typeof settings.globalMaxTokens === "number" ? settings.globalMaxTokens : undefined,

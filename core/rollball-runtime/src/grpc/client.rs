@@ -1056,14 +1056,6 @@ fn proto_to_gateway_response(msg: proto::ServerMessage) -> GatewayResponse {
                 } else {
                     Some(rcu.system_prompt_override)
                 },
-                active_tools: if rcu.active_tools_set {
-                    // Sender explicitly set active tools, even if the list is empty
-                    Some(rcu.active_tools)
-                } else if rcu.active_tools.is_empty() {
-                    None
-                } else {
-                    Some(rcu.active_tools)
-                },
                 shell_approval_threshold: if rcu.shell_approval_threshold.is_empty() {
                     None
                 } else {

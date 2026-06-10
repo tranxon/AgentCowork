@@ -9,22 +9,6 @@ import { useTranslation } from "../../i18n/useTranslation";
 import { StyledInput } from "../common/StyledInput";
 import type { SearchProviderListItem, AgentSearchProvider } from "../../lib/types";
 
-// ── Types ───────────────────────────────────────────────────────────────
-
-interface AvailableTool {
-  name: string;
-  description: string;
-  required_permissions: string[];
-  always_on?: boolean;
-}
-
-interface ToolsResponse {
-  agent_id: string;
-  tools: AvailableTool[];
-  active_tools: string[];
-  manifest_tools: string[];
-}
-
 interface SearchProvidersResponse {
   agent_id: string;
   providers: SearchProviderListItem[];
@@ -59,12 +43,6 @@ export function AgentSetupTab() {
   }, [iconOpen]);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
 
-  // Tools configuration
-  const [availableTools, setAvailableTools] = useState<AvailableTool[]>([]);
-  const [activeTools, setActiveTools] = useState<string[]>([]);
-  const [manifestTools, setManifestTools] = useState<string[]>([]);
-  const [toolsLoading, setToolsLoading] = useState(false);
-
   // MCP server activation
   const { catalog, activeServers, loadCatalog, toggleServer, activationLoading } = useMcpStore();
 
@@ -77,7 +55,6 @@ export function AgentSetupTab() {
     if (!selectedAgentId) return;
     let cancelled = false;
     setConfigLoading(true);
-    setToolsLoading(true);
     // Fetch config
     fetch(`${getGatewayUrl()}/api/agents/${selectedAgentId}/config`)
       .then((res) => (res.ok ? res.json() : null))
@@ -105,24 +82,6 @@ export function AgentSetupTab() {
       })
       .finally(() => {
         if (!cancelled) setConfigLoading(false);
-      });
-    // Fetch tools
-    fetch(`${getGatewayUrl()}/api/agents/${selectedAgentId}/tools`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data: ToolsResponse | null) => {
-        if (cancelled || !data) return;
-        setAvailableTools(data.tools);
-        setActiveTools(data.active_tools);
-        setManifestTools(data.manifest_tools ?? []);
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          // 503 = agent not ready yet, silently retry on next mount
-          console.debug("[AgentSetup] Agent not ready:", err);
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setToolsLoading(false);
       });
     // Load MCP catalog
     loadCatalog();
@@ -240,10 +199,6 @@ export function AgentSetupTab() {
       if (profile.temperature !== undefined) body.temperature = profile.temperature;
       if (profile.shellApprovalThreshold) body.shell_approval_threshold = profile.shellApprovalThreshold;
       if (profile.approvalTimeoutSecs !== undefined && profile.approvalTimeoutSecs > 0) body.approval_timeout_secs = profile.approvalTimeoutSecs;
-      // Always send active_tools — merge manifest tools (always-on) with user-toggled extras
-      const allActiveTools = [...new Set([...manifestTools, ...activeTools])];
-      if (allActiveTools.length >= 0) body.active_tools = allActiveTools;
-
       const res = await fetch(
         `${getGatewayUrl()}/api/agents/${selectedAgentId}/config`,
         {
@@ -469,56 +424,6 @@ export function AgentSetupTab() {
         />
         <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
           {t("agentSetup.approvalTimeoutDesc")}
-        </p>
-      </div>
-
-      {/* Tools Configuration */}
-      <div className="mb-3 space-y-1">
-        <label className="block text-[10px] font-medium text-zinc-500 dark:text-zinc-400">
-          {t("agentSetup.activeTools")}
-        </label>
-        {toolsLoading ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{t("agentSetup.loading")}</span>
-        ) : availableTools.length === 0 ? (
-          <span className="text-[10px] text-zinc-400 dark:text-zinc-500">{t("agentSetup.noToolsAvailable")}</span>
-        ) : (
-          <div className="max-h-48 overflow-y-auto space-y-1 rounded-lg border border-zinc-200 bg-white p-1.5 dark:border-zinc-700 dark:bg-zinc-800">
-            {availableTools.map((tool) => {
-              const isManifest = manifestTools.includes(tool.name);
-              const checked = isManifest || activeTools.includes(tool.name);
-              const toggle = () => {
-                setActiveTools((prev) =>
-                  checked ? prev.filter((n) => n !== tool.name) : [...prev, tool.name],
-                );
-              };
-              const isAlwaysOn = tool.always_on === true || isManifest;
-              return (
-                <label
-                  key={tool.name}
-                  className={"flex items-center gap-2 py-1 px-1.5 rounded " + (isAlwaysOn ? "opacity-60" : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50 cursor-pointer")}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isAlwaysOn || checked}
-                    onChange={isAlwaysOn ? undefined : toggle}
-                    disabled={isAlwaysOn}
-                    className="h-3.5 w-3.5 shrink-0 rounded accent-[var(--color-accent)]"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <span className="text-[11px] font-medium text-zinc-700 dark:text-zinc-300">
-                      {tool.name}
-                    </span>
-                    <span className="block text-[9px] text-zinc-400 dark:text-zinc-500 leading-tight">
-                      {tool.description}
-                    </span>
-                  </div>
-                </label>
-              );
-            })}
-          </div>
-        )}
-        <p className="text-[9px] text-zinc-400 dark:text-zinc-500">
-          {t("agentSetup.uncheckAllHint")}
         </p>
       </div>
 

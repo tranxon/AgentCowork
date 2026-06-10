@@ -61,11 +61,6 @@ pub enum SessionMessage {
     },
     /// Update workspace context text
     UpdateWorkspaceContext { context_text: String },
-    /// Update active tools (hot-push from Gateway RuntimeConfigUpdate).
-    /// Carries the rebuilt tool_definitions JSON to replace in ContextBuilder.
-    UpdateActiveTools {
-        tool_definitions: Vec<serde_json::Value>,
-    },
     /// Update MCP tools on AgentCore (hot-push when MCP servers connect/disconnect).
     /// Refreshes `AgentCore.all_tools` so LLM injection and debug snapshot capture
     /// pick up the latest MCP tool list.
@@ -131,10 +126,6 @@ impl std::fmt::Debug for SessionMessage {
             SessionMessage::UpdateWorkspaceContext { context_text } => f
                 .debug_struct("UpdateWorkspaceContext")
                 .field("len", &context_text.len())
-                .finish(),
-            SessionMessage::UpdateActiveTools { tool_definitions } => f
-                .debug_struct("UpdateActiveTools")
-                .field("count", &tool_definitions.len())
                 .finish(),
             SessionMessage::UpdateMcpTools { mcp_tools } => f
                 .debug_struct("UpdateMcpTools")
@@ -921,14 +912,6 @@ impl SessionTask {
                         "SessionTask: updating workspace context"
                     );
                     context_builder.set_workspace_context(context_text);
-                }
-                Some(SessionMessage::UpdateActiveTools { tool_definitions }) => {
-                    tracing::info!(
-                        session_id = %session_id,
-                        tool_count = tool_definitions.len(),
-                        "SessionTask: updating active tools"
-                    );
-                    context_builder.set_tool_definitions(tool_definitions);
                 }
                 Some(SessionMessage::UpdateMcpTools { mcp_tools }) => {
                     tracing::info!(

@@ -2,10 +2,12 @@
 use crate::agent::agent_core::AgentCore;
 use crate::agent::inbound::InboundMessage;
 use crate::agent::session::{SessionManager, SessionManagerConfig, SessionMessage};
+use crate::agent_config::AgentMcpConfig;
 use crate::config::RuntimeConfig;
 use crate::error::{Result, RuntimeError};
 use clap::Parser;
 use rollball_core::protocol::{McpListItem, ProtocolType, ProviderListItem};
+use rollball_core::tools::traits::Tool;
 use std::sync::Arc;
 
 use tracing_subscriber::{EnvFilter, layer::SubscriberExt, reload, util::SubscriberInitExt};
@@ -651,6 +653,11 @@ async fn async_main(
         Some(emb_provider.clone()),
     ));
 
+    // Create MCP config change notifier — tools call notify() after
+    // writing to agent_mcp.json, and the main loop receives the signal
+    // via the watch receiver (passed to run_gateway_loop).
+    let mcp_notifier = Arc::new(crate::mcp_notify::McpConfigNotifier::default());
+
     let mut registry = ToolRegistry::new();
     for tool in builtin::all_builtin_tools(
         &workspace_resolver,
@@ -659,6 +666,7 @@ async fn async_main(
         has_search_providers,
         None, // GrafeoStore not yet initialized — tool uses fallback path
         Some(memory_session.clone()), // Shared session handle for memory_recall
+        Some(mcp_notifier.clone()),   // MCP config change notifier
     ) {
         registry.register(tool);
     }
@@ -688,14 +696,12 @@ async fn async_main(
             (spec.name.clone(), serialized)
         })
         .collect();
-    let tool_definitions =
-        crate::agent::context::build_tool_definitions(&loaded.manifest, &tool_specs);
+    let tool_definitions: Vec<serde_json::Value> =
+        tool_specs.iter().map(|(_, v)| v.clone()).collect();
 
-    // Build full tool specs from ALL registered tools (not just manifest-active ones).
-    // `full_tool_specs` is the complete pool that `apply_active_tools` searches when
-    // the user dynamically enables/disables tools via the Setup panel at runtime.
-    // Without this, tools not declared in manifest.toml (e.g. todo_write) would be
-    // missing from the pool and silently ignored when activated later.
+    // Build full tool specs from ALL registered tools.
+    // `full_tool_specs` is the complete pool used by SessionManager for
+    // MCP tool merging and tool definition rebuilding.
     let full_tool_specs: Vec<(String, serde_json::Value)> = registry
         .all()
         .iter()
@@ -1089,7 +1095,7 @@ async fn async_main(
             // On first start (no config file), create a default with empty overrides;
             // subsequent starts load any user-customized values.
             let work_dir_path = std::path::Path::new(&config.work_dir);
-            let mut agent_cfg = crate::agent_config::load_agent_config(work_dir_path)
+            let agent_cfg = crate::agent_config::load_agent_config(work_dir_path)
                 .unwrap_or_default()
                 .unwrap_or_default();
 
@@ -1100,29 +1106,6 @@ async fn async_main(
                 .exists()
                 == false;
 
-            // On first start, seed active_tools from manifest.toml [[tools]] declarations.
-            // This ensures manifest-declared tools are always-on by default and the
-            // ConfigSnapshot response includes them from the very first QueryConfig.
-            if is_first_start
-                && agent_cfg.active_tools.is_empty()
-                && !loaded.manifest.tools.is_empty()
-            {
-                let manifest_tool_names: Vec<String> = loaded
-                    .manifest
-                    .tools
-                    .iter()
-                    .map(|t| t.name.clone())
-                    .collect();
-                tracing::info!(
-                    count = manifest_tool_names.len(),
-                    tools = ?manifest_tool_names,
-                    "First start: initializing active_tools from manifest.toml [[tools]]"
-                );
-                agent_cfg.active_tools = manifest_tool_names.clone();
-                // Apply immediately so ConfigSnapshot queries return the correct list.
-                session_manager.apply_active_tools(Some(manifest_tool_names));
-            }
-
             if is_first_start {
                 let _ = crate::agent_config::save_agent_config(work_dir_path, &agent_cfg);
             }
@@ -1131,8 +1114,7 @@ async fn async_main(
                 || agent_cfg.max_iterations.is_some()
                 || agent_cfg.temperature.is_some()
                 || agent_cfg.system_prompt_override.is_some()
-                || agent_cfg.shell_approval_threshold.is_some()
-                || !agent_cfg.active_tools.is_empty();
+                || agent_cfg.shell_approval_threshold.is_some();
             if has_overrides {
                 tracing::info!(
                     max_output_tokens = ?agent_cfg.max_output_tokens,
@@ -1147,36 +1129,66 @@ async fn async_main(
                     agent_cfg.system_prompt_override.clone(),
                     agent_cfg.shell_approval_threshold.clone(),
                 );
-
-                // Restore active_tools from persisted config
-                if !agent_cfg.active_tools.is_empty() {
-                    session_manager.apply_active_tools(Some(agent_cfg.active_tools.clone()));
-                }
             }
 
         // ADR-012: Per-session model — no global agent_model.json anymore.
         // Model is initialized per-session and persisted in JSONL SessionMetadata.
         }
 
-        // ── MCP server auto-connect at startup ──
-        // Load persisted MCP server config from agent_mcp.json and connect to
-        // servers proactively.  Without this, MCP tools are only injected when
-        // the user modifies MCP settings through the Settings UI (which triggers
-        // RuntimeConfigUpdate → apply_mcp_servers).
-        {
-            let mcp_configs = crate::agent_config::load_agent_mcp_config(
+        // ── MCP server auto-connect at startup (background, non-blocking) ──
+        // Spawn MCP connect in a background task. Results are sent through an
+        // mpsc channel and applied asynchronously inside run_gateway_loop's
+        // tokio::select!.  This ensures the Gateway message loop starts
+        // immediately without waiting for MCP connection timeouts (30s/server).
+        // AgentReady was already sent above — the agent appears connected
+        // instantly, and MCP tools become available later when ready.
+        let mcp_startup_rx: Option<
+            tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
+        > = {
+            let mcp_configs = crate::agent_config::load_merged_mcp_configs(
                 std::path::Path::new(&config.work_dir),
-            )
-            .unwrap_or_default()
-            .unwrap_or_default();
+            );
             if !mcp_configs.is_empty() {
+                let (tx, rx) =
+                    tokio::sync::mpsc::channel::<crate::tools::mcp_manager::McpConnectResult>(1);
                 tracing::info!(
                     mcp_count = mcp_configs.len(),
-                    "Auto-connecting to persisted MCP servers at startup"
+                    "Auto-connecting to persisted MCP servers at startup (background)"
                 );
-                session_manager.apply_mcp_servers(mcp_configs).await;
+                tokio::spawn(async move {
+                    // Connect to MCP servers (this is the slow part — up to 30s timeout).
+                    let (registry, failures) =
+                        rollball_mcp::client::McpRegistry::connect_all(&mcp_configs)
+                            .await
+                            .expect("connect_all is non-fatal and should never fail");
+                    let registry = std::sync::Arc::new(registry);
+
+                    // Build tool wrappers and specs from the registry (fast, sync).
+                    let mut wrappers = Vec::new();
+                    let mut specs = Vec::new();
+                    for prefixed_name in registry.tool_names() {
+                        if let Some(def) = registry.get_tool_def(&prefixed_name) {
+                            let wrapper = rollball_mcp::wrapper::McpToolWrapper::new(
+                                prefixed_name.clone(),
+                                def,
+                                registry.clone(),
+                            );
+                            let tool_spec = wrapper.spec();
+                            let serialized =
+                                serde_json::to_value(&tool_spec).unwrap_or_default();
+                            specs.push((tool_spec.name.clone(), serialized));
+                            wrappers.push(wrapper);
+                        }
+                    }
+
+                    // Send results to run_gateway_loop for async application.
+                    let _ = tx.send((registry, wrappers, specs, failures)).await;
+                });
+                Some(rx)
+            } else {
+                None
             }
-        }
+        };
 
         // Step 9.8: Send workspace config snapshot to Gateway (in-memory cache only).
         // Gateway does NOT persist workspace config — it caches this for HTTP API responses
@@ -1450,6 +1462,10 @@ async fn async_main(
             None
         };
 
+        // MCP auto-connect runs in background; results are received inside
+        // run_gateway_loop via mcp_startup_rx.  No blocking here — the Gateway
+        // message loop starts immediately.
+
         // Extract gateway query receiver before passing client to the loop.
         // This avoids &mut self conflicts when tokio::select! polls both
         // recv_message() and the gateway query channel.
@@ -1467,6 +1483,8 @@ async fn async_main(
             workspace_resolver.clone(),
             initial_session_id,
             config.session_idle_timeout_secs,
+            mcp_notifier.subscribe(),
+            mcp_startup_rx,
         )
         .await;
 
@@ -1651,6 +1669,10 @@ async fn run_gateway_loop(
     resolver: crate::tools::workspace_resolver::SharedResolver,
     _initial_session_id: String,
     session_idle_timeout_secs: u64,
+    mut mcp_config_rx: tokio::sync::watch::Receiver<()>,
+    mut mcp_startup_rx: Option<
+        tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
+    >,
 ) -> Result<()> {
     // Retrieve the provider name for budget queries
     let budget_provider = session_manager.provider_name();
@@ -1660,7 +1682,10 @@ async fn run_gateway_loop(
 
     // Main message loop — receive messages from Gateway and route them.
     // Also polls the gateway query channel for HTTP→Runtime request-response
-    // queries (QueryConfig, Memory API).
+    // queries (QueryConfig, Memory API), receives MCP config change
+    // notifications via watch channel (event-driven, no polling), and
+    // receives initial MCP auto-connect results from the background task
+    // started in async_main (applied asynchronously so the loop starts immediately).
     loop {
         if let Some(ref mut mq_rx) = gateway_query_rx {
             tokio::select! {
@@ -1683,6 +1708,34 @@ async fn run_gateway_loop(
                     }
                 }
 
+                // Initial MCP auto-connect result — received from the background
+                // connect task spawned in async_main.  Applied asynchronously
+                // so the Gateway message loop can start immediately.
+                mcp_result = async {
+                    match &mut mcp_startup_rx {
+                        Some(rx) => rx.recv().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some((registry, wrappers, specs, failures)) = mcp_result {
+                        session_manager.apply_mcp_connection_result(
+                            registry, wrappers, specs, failures,
+                        );
+                    }
+                    mcp_startup_rx = None;
+                }
+
+                // MCP config change notification — triggered by mcp_install
+                // / mcp_uninstall tools via McpConfigNotifier::notify().
+                // Event-driven, zero-latency — replaces periodic polling.
+                _ = mcp_config_rx.changed() => {
+                    tracing::info!("MCP config change notification — reconnecting MCP servers");
+                    let merged = crate::agent_config::load_merged_mcp_configs(
+                        std::path::Path::new(&work_dir),
+                    );
+                    session_manager.apply_mcp_servers(merged).await;
+                }
+
                 query_opt = mq_rx.recv() => {
                     match query_opt {
                         Some((request_id, payload)) => {
@@ -1693,12 +1746,10 @@ async fn run_gateway_loop(
                                     .unwrap_or_default();
                                 let current_provider = Some(session_manager.provider_name());
                                 let overrides = &session_manager.runtime_overrides;
-                                // Read MCP config from separate agent_mcp.json.
-                                let mcp_json: Vec<String> = crate::agent_config::load_agent_mcp_config(
+                                // Read MCP config from separate agent_mcp.json (merged: catalog + local).
+                                let mcp_json: Vec<String> = crate::agent_config::load_merged_mcp_configs(
                                     std::path::Path::new(&work_dir),
                                 )
-                                .unwrap_or_default()
-                                .unwrap_or_default()
                                 .iter()
                                 .map(|s| serde_json::to_string(s).unwrap_or_default())
                                 .collect();
@@ -1711,7 +1762,6 @@ async fn run_gateway_loop(
                                         max_iterations: overrides.max_iterations,
                                         temperature: overrides.temperature,
                                         system_prompt_override: overrides.system_prompt_override.clone(),
-                                        active_tools: overrides.active_tools.clone().unwrap_or_default(),
                                         shell_approval_threshold: overrides.shell_approval_threshold.clone(),
                                         mcp_servers_json: mcp_json,
                                         search_config_json: crate::agent_config::load_agent_search_config(
@@ -2686,7 +2736,6 @@ async fn process_gateway_recv(
                     max_iterations,
                     temperature,
                     system_prompt_override,
-                    active_tools,
                     shell_approval_threshold,
                     mcp_servers,
                     model: _,    // ADR-012: model_switch is a separate action
@@ -2699,7 +2748,6 @@ async fn process_gateway_recv(
                         max_output_tokens = ?max_output_tokens,
                         max_iterations = ?max_iterations,
                         temperature = ?temperature,
-                        active_tools = ?active_tools,
                         shell_approval_threshold = ?shell_approval_threshold,
 
                         mcp_server_count = mcp_servers.as_ref().map(|s| s.len()),
@@ -2723,18 +2771,21 @@ async fn process_gateway_recv(
                     );
 
                     // Handle MCP server config changes: connect, disconnect, or reconnect.
-                    // Clone before the `if let` so the full configs survive for persistence below.
+                    // Gateway pushes catalog MCPs. We must merge catalog + local
+                    // before connecting, and only persist the catalog portion.
                     let mcp_for_persist = mcp_servers.clone();
-                    if let Some(mcp_configs) = mcp_servers {
-                        session_manager.apply_mcp_servers(mcp_configs).await;
-                    }
-
-                    // Hot-rebuild tool definitions when active_tools changes.
-                    // This must be called separately from apply_runtime_config_override
-                    // because tool rebuilding requires full_tool_specs which live in
-                    // SessionManagerConfig, not in the RuntimeConfigOverrides cache.
-                    if active_tools.is_some() {
-                        session_manager.apply_active_tools(active_tools);
+                    if let Some(catalog_mcp_configs) = mcp_servers {
+                        // Merge catalog + local for full MCP connection list
+                        let merged = crate::agent_config::load_agent_mcp_config(
+                            std::path::Path::new(&work_dir),
+                        )
+                        .unwrap_or_default()
+                        .unwrap_or_default();
+                        let full_mcp_configs = AgentMcpConfig {
+                            catalog: catalog_mcp_configs,
+                            local: merged.local,
+                        }.merged();
+                        session_manager.apply_mcp_servers(full_mcp_configs).await;
                     }
 
                     // Handle per-agent search config persistence.
@@ -2806,32 +2857,25 @@ async fn process_gateway_recv(
                     // Persist per-agent config to workspace/config/agent_config.json.
                     // This consolidates all overrides into a single file owned by Runtime,
                     // replacing the former Gateway-side data/agent_configs/{agent_id}.json.
-                    // MUST run AFTER apply_active_tools so that runtime_overrides.active_tools
-                    // has the latest value before serialization.
                     {
-                        // Preserve active_tools from previous persisted config.
-                        let persisted_before =
-                            crate::agent_config::load_agent_config(std::path::Path::new(&work_dir))
-                                .unwrap_or_default()
-                                .unwrap_or_default();
                         let overrides = &session_manager.runtime_overrides;
                         let agent_cfg = crate::agent_config::AgentConfig {
                             max_output_tokens: overrides.max_output_tokens,
                             max_iterations: overrides.max_iterations,
                             temperature: overrides.temperature,
                             system_prompt_override: overrides.system_prompt_override.clone(),
-                            active_tools: overrides.active_tools.clone().unwrap_or_else(|| persisted_before.active_tools),
                             shell_approval_threshold: overrides.shell_approval_threshold.clone(),
                         };
                         let _ = crate::agent_config::save_agent_config(
                             std::path::Path::new(&work_dir),
                             &agent_cfg,
                         );
-                        // Persist MCP config separately to agent_mcp.json.
-                        if let Some(ref mcp_servers) = mcp_for_persist {
-                            let _ = crate::agent_config::save_agent_mcp_config(
+                        // Persist only catalog portion to agent_mcp.json,
+                        // preserving local entries (agent-installed MCPs).
+                        if let Some(ref catalog_mcp_servers) = mcp_for_persist {
+                            let _ = crate::agent_config::save_agent_mcp_config_catalog(
                                 std::path::Path::new(&work_dir),
-                                mcp_servers,
+                                catalog_mcp_servers,
                             );
                         }
                     }

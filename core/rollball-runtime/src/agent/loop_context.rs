@@ -404,7 +404,7 @@ impl AgentLoop {
         );
 
         // Merge MCP tool definitions into the LLM request right before
-        // injection. MCP tools are kept separate from active_tools and
+        // injection. MCP tools are kept separate from builtin tools and
         // only mixed here (LLM injection) + in debug snapshot capture.
         if let Some(ref mut tools) = chat_request.tools {
             for tool in &self.core.all_tools {

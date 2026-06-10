@@ -30,14 +30,8 @@ triggers = []
 identity_deps = []
 
 # System Agent tools
-[[tools]]
-name = "memory_store"
-
-[[tools]]
-name = "memory_recall"
-
-[[tools]]
-name = "intent_send"
+# Builtin tools are always active — no need to declare them here.
+# The [[tools]] section is reserved for future scope-limiting (optional).
 
 [llm]
 temperature = 0.5

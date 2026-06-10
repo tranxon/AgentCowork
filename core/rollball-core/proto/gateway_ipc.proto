@@ -200,7 +200,6 @@ message ConfigSnapshot {
   optional uint32 max_iterations = 5;
   optional float temperature = 6;
   optional string system_prompt_override = 7;
-  repeated string active_tools = 8;
   optional string shell_approval_threshold = 9;
   // MCP server configs as JSON strings (one per server)
   repeated string mcp_servers_json = 10;
@@ -230,7 +229,6 @@ message RuntimeConfigUpdate      {
     optional uint32 max_iterations = 2;
     optional float temperature = 3;
     string system_prompt_override = 4;
-    repeated string active_tools = 5;
     string shell_approval_threshold = 6;
     repeated string mcp_servers_json = 7;
     optional string model = 8;
@@ -241,7 +239,6 @@ message RuntimeConfigUpdate      {
     // receiver cannot tell whether the sender intentionally sent an empty list or
     // just omitted the field entirely.
     bool mcp_servers_set = 11;
-    bool active_tools_set = 12;
     bool system_prompt_set = 13;
     // Embedding config override (JSON: {"embed_endpoint":"...","embed_model_id":"...","embed_dimension":N})
     optional string embed_config_json = 14;

@@ -9,9 +9,9 @@
     },
     "time": {
         "justNow": "방금",
-        "minutesAgo": "{count}분 전",
-        "hoursAgo": "{count}시간 전",
-        "daysAgo": "{count}일 전"
+        "minutesAgo": "{{count}}분 전",
+        "hoursAgo": "{{count}}시간 전",
+        "daysAgo": "{{count}}일 전"
     },
     "errorBoundary": {
         "title": "문제가 발생했습니다",
@@ -23,8 +23,8 @@
     "chatPanel": {
         "sessionLoadFailed": "세션 로드 실패",
         "retry": "재시도",
-        "taskList": "작업 목록（{completed}/{total}）",
-        "messageQueue": "메시지 큐（{count}）",
+        "taskList": "작업 목록（{{completed}}/{{total}}）",
+        "messageQueue": "메시지 큐（{{count}}）",
         "uploadFile": "파일 업로드",
         "selectImage": "이미지 선택",
         "selectImageTitle": "이미지 선택",
@@ -55,8 +55,8 @@
     },
     "agentList": {
         "searchPlaceholder": "Agent 검색...",
-        "stopConfirm": "{agent}을(를) 중지하시겠습니까？현재 대화 상태는 보존됩니다。",
-        "uninstallConfirm": "{agent}을(를) 제거하시겠습니까？이 작업은 취소할 수 없습니다。"
+        "stopConfirm": "{{agent}}을(를) 중지하시겠습니까？현재 대화 상태는 보존됩니다。",
+        "uninstallConfirm": "{{agent}}을(를) 제거하시겠습니까？이 작업은 취소할 수 없습니다。"
     },
     "cloneDialog": {
         "skeleton": "스켈레톤",
@@ -134,10 +134,10 @@
         "logFileSize": "로그 파일 크기 (MB)",
         "logFileSizeHint": "0 = 분할 비활성화。파일명은 YYYYMMDD_HHMMSS.log",
         "noSplit": "분할 안 함",
-        "autoSplit": "{size} MB에서 자동 분할",
+        "autoSplit": "{{size}} MB에서 자동 분할",
         "maxLogFiles": "최대 로그 파일 수",
         "unlimited": "무제한",
-        "keepFiles": "{count}개 파일 유지",
+        "keepFiles": "{{count}}개 파일 유지",
         "maxLogFilesHint": "0 = 무제한。제한 초과 시 가장 오래된 파일이 삭제됩니다。",
         "deleteAllLogs": "모든 로그 삭제",
         "deleting": "삭제 중...",
@@ -161,7 +161,7 @@
         "leaveEmptyDefault": "비워두면 런타임 기본값 사용",
         "maxIterations": "최대 반복 횟수 (실행당)",
         "defaultIterations": "50（기본값）",
-        "temperature": "온도：{value}",
+        "temperature": "온도：{{value}}",
         "deterministic": "0（결정적）",
         "creative": "2（창의적）",
         "shellCommandApproval": "셸 명령 승인",
@@ -172,13 +172,9 @@
         "approvalDesc": "사용자 확인이 필요한 셸 명령을 제어합니다。기본값：중。",
         "approvalTimeout": "승인 타임아웃（초）",
         "approvalTimeoutDesc": "비워두면 기본값（300초 = 5분）사용。도구 승인은 타임아웃 후 자동 거부됩니다。",
-        "activeTools": "활성 도구",
-        "loading": "로딩 중...",
-        "noToolsAvailable": "사용 가능한 도구 없음",
-        "uncheckAllHint": "모두 선택 해제하면 모든 도구 비활성화。비워두면 매니페스트 기본값 사용",
         "webSearchProviders": "웹 검색 제공자",
         "noSearchKeys": "검색 API 키가 설정되지 않았습니다。Harness > 검색 탭에서 키를 추가하세요。",
-        "priority": "우선순위：{value}",
+        "priority": "우선순위：{{value}}",
         "noKey": "키 없음",
         "moveUp": "위로 이동（우선순위 높임）",
         "searchProvidersDesc": "이 Agent의 검색 제공자를 선택하고 우선순위를 지정하세요。우선순위가 높을수록 먼저 시도됩니다。",
@@ -206,7 +202,7 @@
         "key": "키",
         "edit": "편집",
         "remove": "제거",
-        "removeKeyConfirm": "{provider}의 키를 제거하시겠습니까？",
+        "removeKeyConfirm": "{{provider}}의 키를 제거하시겠습니까？",
         "availableProviders": "사용 가능한 제공자",
         "refreshing": "새로고침 중...",
         "clearCache": "캐시 삭제",
@@ -272,7 +268,7 @@
         "key": "키",
         "edit": "편집",
         "remove": "제거",
-        "removeKeyConfirm": "{provider}의 검색 키를 제거하시겠습니까？",
+        "removeKeyConfirm": "{{provider}}의 검색 키를 제거하시겠습니까？",
         "availableSearchProviders": "사용 가능한 검색 제공자",
         "allConfigured": "모든 검색 제공자 설정 완료",
         "addKey": "키 추가",
@@ -372,20 +368,20 @@
         "close": "닫기",
         "closeOthers": "다른 탭 닫기",
         "closeAll": "모두 닫기",
-        "batchCloseOthersConfirm": "다른 {count}개 탭에 저장되지 않은 변경사항이 있습니다. 삭제하고 닫으시겠습니까?",
-        "batchCloseAllConfirm": "{count}개 탭에 저장되지 않은 변경사항이 있습니다. 모두 삭제하고 닫으시겠습니까?"
+        "batchCloseOthersConfirm": "다른 {{count}}개 탭에 저장되지 않은 변경사항이 있습니다. 삭제하고 닫으시겠습니까?",
+        "batchCloseAllConfirm": "{{count}}개 탭에 저장되지 않은 변경사항이 있습니다. 모두 삭제하고 닫으시겠습니까?"
     },
     "sessionPanel": {
         "loadingSessions": "세션 로딩 중...",
         "noSessions": "세션 없음",
         "untitledSession": "제목 없는 세션",
-        "messages": "{count}개 메시지",
+        "messages": "{{count}}개 메시지",
         "deleteSession": "세션 삭제",
         "newConversation": "새 대화"
     },
     "documentChip": {
         "uploadFailed": "업로드 실패",
-        "removeFile": "{filename} 제거"
+        "removeFile": "{{filename}} 제거"
     },
     "language": {
         "zhCN": "중국어（간체）",

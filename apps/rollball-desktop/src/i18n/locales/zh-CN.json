@@ -9,9 +9,9 @@
     },
     "time": {
         "justNow": "刚刚",
-        "minutesAgo": "{count}分钟前",
-        "hoursAgo": "{count}小时前",
-        "daysAgo": "{count}天前"
+        "minutesAgo": "{{count}}分钟前",
+        "hoursAgo": "{{count}}小时前",
+        "daysAgo": "{{count}}天前"
     },
     "errorBoundary": {
         "title": "应用出现了异常",
@@ -23,8 +23,8 @@
     "chatPanel": {
         "sessionLoadFailed": "Session 加载失败",
         "retry": "重试",
-        "taskList": "任务列表 ({completed}/{total})",
-        "messageQueue": "消息队列 ({count})",
+        "taskList": "任务列表 ({{completed}}/{{total}})",
+        "messageQueue": "消息队列 ({{count}})",
         "uploadFile": "上传文件",
         "selectImage": "选择图片",
         "selectImageTitle": "选择图片",
@@ -55,8 +55,8 @@
     },
     "agentList": {
         "searchPlaceholder": "搜索 Agent...",
-        "stopConfirm": "确定要停止 {agent} 吗？当前对话状态将保留。",
-        "uninstallConfirm": "确定要卸载 {agent} 吗？此操作不可撤销。"
+        "stopConfirm": "确定要停止 {{agent}} 吗？当前对话状态将保留。",
+        "uninstallConfirm": "确定要卸载 {{agent}} 吗？此操作不可撤销。"
     },
     "cloneDialog": {
         "skeleton": "骨架",
@@ -134,10 +134,10 @@
         "logFileSize": "日志文件大小 (MB)",
         "logFileSizeHint": "0 = 禁用分割。文件命名为 YYYYMMDD_HHMMSS.log",
         "noSplit": "不分割",
-        "autoSplit": "超过 {size} MB 自动分割",
+        "autoSplit": "超过 {{size}} MB 自动分割",
         "maxLogFiles": "最大日志文件数",
         "unlimited": "无限制",
-        "keepFiles": "保留 {count} 个文件",
+        "keepFiles": "保留 {{count}} 个文件",
         "maxLogFilesHint": "0 = 无限制。超出限制时删除最旧的文件。",
         "deleteAllLogs": "删除所有日志",
         "deleting": "删除中...",
@@ -161,7 +161,7 @@
         "leaveEmptyDefault": "留空使用运行时默认值",
         "maxIterations": "最大迭代次数（每次运行）",
         "defaultIterations": "50（默认）",
-        "temperature": "温度：{value}",
+        "temperature": "温度：{{value}}",
         "deterministic": "0（确定性）",
         "creative": "2（创造性）",
         "shellCommandApproval": "Shell 命令审批",
@@ -172,13 +172,9 @@
         "approvalDesc": "控制哪些 Shell 命令需要用户确认。默认：中。",
         "approvalTimeout": "审批超时时间（秒）",
         "approvalTimeoutDesc": "留空使用默认值（300秒 = 5分钟）。工具审批将在超时后自动拒绝。",
-        "activeTools": "已启用工具",
-        "loading": "加载中...",
-        "noToolsAvailable": "无可用工具",
-        "uncheckAllHint": "取消全选以禁用所有工具；留空则使用 manifest 默认配置",
         "webSearchProviders": "网页搜索服务商",
         "noSearchKeys": "未配置搜索 API 密钥。请先在 Harness > 搜索 标签页添加密钥。",
-        "priority": "优先级：{value}",
+        "priority": "优先级：{{value}}",
         "noKey": "无密钥",
         "moveUp": "上移（提高优先级）",
         "searchProvidersDesc": "选择并排列此 Agent 的搜索服务商。优先级越高越先尝试。",
@@ -206,7 +202,7 @@
         "key": "密钥",
         "edit": "编辑",
         "remove": "移除",
-        "removeKeyConfirm": "确定移除 {provider} 的密钥吗？",
+        "removeKeyConfirm": "确定移除 {{provider}} 的密钥吗？",
         "availableProviders": "可用服务商",
         "refreshing": "刷新中...",
         "clearCache": "清除缓存",
@@ -272,7 +268,7 @@
         "key": "密钥",
         "edit": "编辑",
         "remove": "移除",
-        "removeKeyConfirm": "确定移除 {provider} 的搜索密钥吗？",
+        "removeKeyConfirm": "确定移除 {{provider}} 的搜索密钥吗？",
         "availableSearchProviders": "可用搜索服务商",
         "allConfigured": "所有搜索服务商已配置",
         "addKey": "添加密钥",
@@ -373,20 +369,20 @@
         "close": "关闭",
         "closeOthers": "关闭其他",
         "closeAll": "全部关闭",
-        "batchCloseOthersConfirm": "其他 {count} 个标签页有未保存的更改。放弃并关闭？",
-        "batchCloseAllConfirm": "{count} 个标签页有未保存的更改。放弃并全部关闭？"
+        "batchCloseOthersConfirm": "其他 {{count}} 个标签页有未保存的更改。放弃并关闭？",
+        "batchCloseAllConfirm": "{{count}} 个标签页有未保存的更改。放弃并全部关闭？"
     },
     "sessionPanel": {
         "loadingSessions": "加载会话中...",
         "noSessions": "暂无会话",
         "untitledSession": "未命名会话",
-        "messages": "{count} 条消息",
+        "messages": "{{count}} 条消息",
         "deleteSession": "删除会话",
         "newConversation": "新建会话"
     },
     "documentChip": {
         "uploadFailed": "上传失败",
-        "removeFile": "移除 {filename}"
+        "removeFile": "移除 {{filename}}"
     },
     "language": {
         "zhCN": "中文 (简体)",

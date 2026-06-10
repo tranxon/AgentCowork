@@ -9,9 +9,9 @@
     },
     "time": {
         "justNow": "剛剛",
-        "minutesAgo": "{count} 分鐘前",
-        "hoursAgo": "{count} 小時前",
-        "daysAgo": "{count} 天前"
+        "minutesAgo": "{{count}} 分鐘前",
+        "hoursAgo": "{{count}} 小時前",
+        "daysAgo": "{{count}} 天前"
     },
     "errorBoundary": {
         "title": "應用程式出現異常",
@@ -23,8 +23,8 @@
     "chatPanel": {
         "sessionLoadFailed": "工作階段載入失敗",
         "retry": "重試",
-        "taskList": "任務清單（{completed}/{total}）",
-        "messageQueue": "訊息佇列（{count}）",
+        "taskList": "任務清單（{{completed}}/{{total}}）",
+        "messageQueue": "訊息佇列（{{count}}）",
         "uploadFile": "上傳檔案",
         "selectImage": "選取圖片",
         "selectImageTitle": "選取圖片",
@@ -55,8 +55,8 @@
     },
     "agentList": {
         "searchPlaceholder": "搜尋 Agent...",
-        "stopConfirm": "確定要停止 {agent} 嗎？目前對話狀態將保留。",
-        "uninstallConfirm": "確定要解除安裝 {agent} 嗎？此操作無法復原。"
+        "stopConfirm": "確定要停止 {{agent}} 嗎？目前對話狀態將保留。",
+        "uninstallConfirm": "確定要解除安裝 {{agent}} 嗎？此操作無法復原。"
     },
     "cloneDialog": {
         "skeleton": "骨架",
@@ -134,10 +134,10 @@
         "logFileSize": "日誌檔案大小（MB）",
         "logFileSizeHint": "0 = 停用分割。檔案命名為 YYYYMMDD_HHMMSS.log",
         "noSplit": "不分割",
-        "autoSplit": "超過 {size} MB 自動分割",
+        "autoSplit": "超過 {{size}} MB 自動分割",
         "maxLogFiles": "最大日誌檔案數",
         "unlimited": "無限制",
-        "keepFiles": "保留 {count} 個檔案",
+        "keepFiles": "保留 {{count}} 個檔案",
         "maxLogFilesHint": "0 = 無限制。超出限制時刪除最舊的檔案。",
         "deleteAllLogs": "刪除所有日誌",
         "deleting": "刪除中...",
@@ -161,7 +161,7 @@
         "leaveEmptyDefault": "留空使用執行階段預設值",
         "maxIterations": "最大迭代次數（每次執行）",
         "defaultIterations": "50（預設）",
-        "temperature": "溫度：{value}",
+        "temperature": "溫度：{{value}}",
         "deterministic": "0（確定性）",
         "creative": "2（創造性）",
         "shellCommandApproval": "Shell 命令審批",
@@ -172,13 +172,9 @@
         "approvalDesc": "控制哪些 Shell 命令需要使用者確認。預設：中。",
         "approvalTimeout": "審批逾時時間（秒）",
         "approvalTimeoutDesc": "留空使用預設值（300 秒 = 5 分鐘）。工具審批將在逾時後自動拒絕。",
-        "activeTools": "已啟用工具",
-        "loading": "載入中...",
-        "noToolsAvailable": "無可用工具",
-        "uncheckAllHint": "取消全選以停用所有工具；留空則使用 manifest 預設設定",
         "webSearchProviders": "網頁搜尋服務提供者",
         "noSearchKeys": "未設定搜尋 API 金鑰。請先在 Harness > 搜尋 標籤頁新增金鑰。",
-        "priority": "優先順序：{value}",
+        "priority": "優先順序：{{value}}",
         "noKey": "無金鑰",
         "moveUp": "上移（提高優先順序）",
         "searchProvidersDesc": "選擇並排列此 Agent 的搜尋服務提供者。優先順序越高越先嘗試。",
@@ -206,7 +202,7 @@
         "key": "金鑰",
         "edit": "編輯",
         "remove": "移除",
-        "removeKeyConfirm": "確定移除 {provider} 的金鑰嗎？",
+        "removeKeyConfirm": "確定移除 {{provider}} 的金鑰嗎？",
         "availableProviders": "可用服務提供者",
         "refreshing": "重新整理中...",
         "clearCache": "清除快取",
@@ -272,7 +268,7 @@
         "key": "金鑰",
         "edit": "編輯",
         "remove": "移除",
-        "removeKeyConfirm": "確定移除 {provider} 的搜尋金鑰嗎？",
+        "removeKeyConfirm": "確定移除 {{provider}} 的搜尋金鑰嗎？",
         "availableSearchProviders": "可用搜尋服務提供者",
         "allConfigured": "所有搜尋服務提供者已設定",
         "addKey": "新增金鑰",
@@ -372,20 +368,20 @@
         "close": "關閉",
         "closeOthers": "關閉其他",
         "closeAll": "全部關閉",
-        "batchCloseOthersConfirm": "其他 {count} 個分頁有未儲存的變更。放棄並關閉？",
-        "batchCloseAllConfirm": "{count} 個分頁有未儲存的變更。放棄並全部關閉？"
+        "batchCloseOthersConfirm": "其他 {{count}} 個分頁有未儲存的變更。放棄並關閉？",
+        "batchCloseAllConfirm": "{{count}} 個分頁有未儲存的變更。放棄並全部關閉？"
     },
     "sessionPanel": {
         "loadingSessions": "載入工作階段中...",
         "noSessions": "暫無工作階段",
         "untitledSession": "未命名工作階段",
-        "messages": "{count} 則訊息",
+        "messages": "{{count}} 則訊息",
         "deleteSession": "刪除工作階段",
         "newConversation": "新增對話"
     },
     "documentChip": {
         "uploadFailed": "上傳失敗",
-        "removeFile": "移除 {filename}"
+        "removeFile": "移除 {{filename}}"
     },
     "language": {
         "zhCN": "中文（簡體）",

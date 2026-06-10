@@ -22,7 +22,7 @@ use crate::error::GatewayError;
 use crate::http::agent_config::{self, AgentConfigResponse, UpdateAgentConfigRequest};
 use crate::http::routes::{ApiError, AppState};
 use rollball_core::protocol::GatewayResponse;
-use rollball_core::protocol::{AgentSearchConfig, AvailableTool, AvailableToolsResponse, McpServerConfigDef};
+use rollball_core::protocol::{AgentSearchConfig, McpServerConfigDef};
 use rollball_core::AgentManifest;
 
 /// Build embed_config_json from GatewayState's embed_process info.
@@ -54,7 +54,6 @@ pub fn agent_routes() -> Router<AppState> {
         .route("/api/agents/{id}/restart-debug", post(restart_agent_in_debug))
         .route("/api/agents/{id}/model", get(get_agent_model))
         .route("/api/agents/{id}/config", get(get_agent_config).put(update_agent_config))
-        .route("/api/agents/{id}/tools", get(get_agent_tools))
         .route("/api/agents/{id}/mcp-servers", get(get_agent_mcp_servers).put(update_agent_mcp_servers))
         .route("/api/agents/{id}/search-providers", get(get_agent_search_providers))
         .route("/api/agents/{id}/search-config", get(get_agent_search_config).put(update_agent_search_config))
@@ -916,7 +915,7 @@ pub async fn get_agent_config(
 
     // Query Runtime workspace config via IPC (QueryConfig → ConfigSnapshot roundtrip).
     let (model, provider, max_output_tokens, max_iterations, temperature,
-         system_prompt_override, active_tools, shell_approval_threshold,
+         system_prompt_override, shell_approval_threshold,
          mcp_servers, search_config_json) =
         if let Some(ref grpc_mgr) = state.grpc_session_mgr {
             let query = rollball_core::proto::server_message::Payload::QueryConfig(
@@ -930,18 +929,17 @@ pub async fn get_agent_config(
                         (snap.model, snap.provider,
                          snap.max_output_tokens, snap.max_iterations, snap.temperature,
                          snap.system_prompt_override,
-                         if snap.active_tools.is_empty() { None } else { Some(snap.active_tools) },
                          snap.shell_approval_threshold,
                          snap.mcp_servers_json,
                          snap.search_config_json)
                     } else {
-                        (None, None, None, None, None, None, None, None, vec![], None)
+                        (None, None, None, None, None, None, None, vec![], None)
                     }
                 }
-                None => (None, None, None, None, None, None, None, None, vec![], None),
+                None => (None, None, None, None, None, None, None, vec![], None),
             }
         } else {
-            (None, None, None, None, None, None, None, None, vec![], None)
+            (None, None, None, None, None, None, None, vec![], None)
         };
 
     // Build the effective config from ConfigSnapshot data
@@ -962,7 +960,6 @@ pub async fn get_agent_config(
         // Use model snap fields for active model/provider in response
         model,
         provider,
-        active_tools: active_tools.unwrap_or_default(),
         system_prompt_override,
         shell_approval_threshold,
         active_mcp_servers,
@@ -1007,7 +1004,6 @@ pub async fn update_agent_config(
     };
 
     let req_system_prompt_override = req.system_prompt_override.clone();
-    let req_active_tools = req.active_tools.clone();
     let req_shell_approval_threshold = req.shell_approval_threshold;
     let req_mcp_servers = req.mcp_servers.clone();
 
@@ -1026,7 +1022,6 @@ pub async fn update_agent_config(
                     max_iterations: req.max_iterations,
                     temperature: req.temperature,
                     system_prompt_override: req_system_prompt_override,
-                    active_tools: req_active_tools,
                     shell_approval_threshold: req_shell_approval_threshold.map(|t| format!("{:?}", t).to_lowercase()),
                     mcp_servers: req_mcp_servers,
                     model: None,
@@ -1071,7 +1066,6 @@ pub async fn update_agent_config(
         temperature: req.temperature,
         system_prompt: None,
         system_prompt_override: req.system_prompt_override,
-        active_tools: req.active_tools.unwrap_or_default(),
         shell_approval_threshold: req_shell_approval_threshold.map(|t| format!("{:?}", t).to_lowercase()),
         model: None,
         provider: None,
@@ -1083,202 +1077,6 @@ pub async fn update_agent_config(
     Ok(Json(effective))
 }
 
-/// `GET /api/agents/{id}/tools` — list available tools and current activation state.
-///
-/// Returns all built-in tools with their names, descriptions, and required
-/// permissions, plus the currently active tool names queried from Runtime.
-pub async fn get_agent_tools(
-    State(state): State<AppState>,
-    Path(agent_id): Path<String>,
-) -> Result<Json<AvailableToolsResponse>, (StatusCode, Json<ApiError>)> {
-    // Read manifest tools from installed agent info (before dropping the lock)
-    let manifest_tools: Vec<String> = {
-        let gw = state.gateway_state.read().await;
-        if !gw.installed_agents.contains_key(&agent_id) {
-            return Err(ApiError::not_found(&format!("Agent not found: {}", agent_id)));
-        }
-        if let Some(info) = gw.running_agents.get(&agent_id) {
-            if !info.ready {
-                return Err(ApiError::service_unavailable(
-                    &format!("Agent '{}' is starting up, please wait", agent_id),
-                ));
-            }
-        } else {
-            return Err(ApiError::service_unavailable(
-                &format!("Agent '{}' is not started", agent_id),
-            ));
-        }
-        gw.installed_agents
-            .get(&agent_id)
-            .map(|info| {
-                info.manifest
-                    .tools
-                    .iter()
-                    .map(|t| t.name.clone())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
-
-    // Get all available built-in tools with metadata
-    let available = builtin_tool_metadata();
-
-    // Query Runtime for active_tools via gRPC (QueryConfig → ConfigSnapshot)
-    let active_tools = if let Some(ref grpc_mgr) = state.grpc_session_mgr {
-        let query = rollball_core::proto::server_message::Payload::QueryConfig(
-            rollball_core::proto::QueryConfig {
-                request_id: uuid::Uuid::new_v4().to_string(),
-            },
-        );
-        match crate::http::memory_api::grpc_memory_roundtrip(grpc_mgr, &agent_id, query).await {
-            Some(response) => {
-                if let Some(rollball_core::proto::client_message::Payload::ConfigSnapshot(snap)) = response.payload {
-                    normalize_shell_tools(&snap.active_tools)
-                } else {
-                    Vec::new()
-                }
-            }
-            None => Vec::new(),
-        }
-    } else {
-        Vec::new()
-    };
-
-    Ok(Json(AvailableToolsResponse {
-        agent_id,
-        tools: available,
-        active_tools,
-        manifest_tools,
-    }))
-}
-
-/// Static metadata for all built-in tools.
-/// Maps tool name to description and required permissions.
-fn builtin_tool_metadata() -> Vec<AvailableTool> {
-    vec![
-        AvailableTool {
-            name: "memory_recall".into(),
-            description: "Recall information from the agent's persistent memory".into(),
-            required_permissions: vec!["memory:read".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "memory_store".into(),
-            description: "Store information into the agent's persistent memory".into(),
-            required_permissions: vec!["memory:write".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "http_request".into(),
-            description: "Make HTTP requests to external APIs".into(),
-            required_permissions: vec!["network:<url>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "web_fetch".into(),
-            description: "Fetch and extract content from web pages".into(),
-            required_permissions: vec!["network:<url>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "web_search".into(),
-            description: "Search the web for information".into(),
-            required_permissions: vec!["search:web".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "shell".into(),
-            description: "Execute shell commands in the platform's native shell".into(),
-            required_permissions: vec!["filesystem:exec".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "file_read".into(),
-            description: "Read file contents from the filesystem".into(),
-            required_permissions: vec!["filesystem:read:<path>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "file_write".into(),
-            description: "Write content to files on the filesystem".into(),
-            required_permissions: vec!["filesystem:write:<path>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "file_edit".into(),
-            description: "Edit existing files with search-and-replace".into(),
-            required_permissions: vec!["filesystem:write:<path>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "doc_reader".into(),
-            description: "Read and extract text from documents (PDF, DOCX, PPTX, XLSX)".into(),
-            required_permissions: vec!["filesystem:read:<path>".into()],
-            always_on: false,
-        },
-        AvailableTool {
-            name: "glob_search".into(),
-            description: "Search for files matching glob patterns".into(),
-            required_permissions: vec!["filesystem:read:<path>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "content_search".into(),
-            description: "Search file contents with regex/grep".into(),
-            required_permissions: vec!["filesystem:read:<path>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "intent_send".into(),
-            description: "Send an intent message to another agent".into(),
-            required_permissions: vec!["intent:send:<target>".into()],
-        always_on: false,
-        },
-        AvailableTool {
-            name: "rag_query".into(),
-            description: "Query enterprise RAG knowledge base".into(),
-            required_permissions: vec!["rag:query".into(), "network:<rag_url>".into()],
-            always_on: false,
-        },
-        AvailableTool {
-            name: "ask_user_question".into(),
-            description: "Present a question with options for the user to answer".into(),
-            required_permissions: vec![],
-            always_on: true,
-        },
-        AvailableTool {
-            name: "todo_write".into(),
-            description: "Create and manage a structured task list for the current session".into(),
-            required_permissions: vec![],
-            always_on: false,
-        },
-    ]
-}
-
-/// Normalize platform-specific shell tool names in the active tools list.
-///
-/// The Runtime registers platform-specific shells (e.g. "bash", "powershell"
-/// on Windows; "shell" on Linux/macOS), but the agent setup UI presents a
-/// single unified "shell" toggle.  This function maps any platform-specific
-/// shell variants back to "shell" so the UI checkbox reflects the correct
-/// state, and deduplicates in case multiple variants were present.
-fn normalize_shell_tools(tools: &[String]) -> Vec<String> {
-    let shell_names: &[&str] = &["bash", "powershell", "pwsh"];
-    let has_shell_variant = tools.iter().any(|t| shell_names.contains(&t.as_str()));
-    if !has_shell_variant {
-        return tools.to_vec();
-    }
-    let mut result: Vec<String> = tools
-        .iter()
-        .filter(|t| !shell_names.contains(&t.as_str()))
-        .cloned()
-        .collect();
-    // Deduplicate: only push "shell" once
-    if !result.contains(&"shell".to_string()) {
-        result.push("shell".to_string());
-    }
-    result
-}
 
 // ── Agent MCP server activation handlers ─────────────────────────────
 
@@ -1424,7 +1222,6 @@ pub async fn update_agent_mcp_servers(
                     max_iterations: None,
                     temperature: None,
                     system_prompt_override: None,
-                    active_tools: None,
                     shell_approval_threshold: None,
                     model: None,
                     provider: None,
@@ -1610,7 +1407,6 @@ pub async fn update_agent_search_config(
                     max_iterations: None,
                     temperature: None,
                     system_prompt_override: None,
-                    active_tools: None,
                     shell_approval_threshold: None,
                     model: None,
                     provider: None,
@@ -1671,37 +1467,5 @@ mod tests {
         };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("Agent started"));
-    }
-
-    #[test]
-    fn test_normalize_shell_tools_bash_to_shell() {
-        let tools = vec!["bash".to_string(), "file_read".to_string()];
-        let result = normalize_shell_tools(&tools);
-        assert!(result.contains(&"shell".to_string()));
-        assert!(!result.contains(&"bash".to_string()));
-        assert!(result.contains(&"file_read".to_string()));
-    }
-
-    #[test]
-    fn test_normalize_shell_tools_powershell_to_shell() {
-        let tools = vec!["powershell".to_string(), "http_request".to_string()];
-        let result = normalize_shell_tools(&tools);
-        assert!(result.contains(&"shell".to_string()));
-        assert!(!result.contains(&"powershell".to_string()));
-    }
-
-    #[test]
-    fn test_normalize_shell_tools_deduplicate_both() {
-        let tools = vec!["bash".to_string(), "powershell".to_string()];
-        let result = normalize_shell_tools(&tools);
-        // Should only have one "shell" entry
-        assert_eq!(result.iter().filter(|t| *t == "shell").count(), 1);
-    }
-
-    #[test]
-    fn test_normalize_shell_tools_no_shell_variant() {
-        let tools = vec!["file_read".to_string(), "http_request".to_string()];
-        let result = normalize_shell_tools(&tools);
-        assert_eq!(result, tools);
     }
 }

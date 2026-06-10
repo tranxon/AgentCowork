@@ -9,9 +9,9 @@
     },
     "time": {
         "justNow": "たった今",
-        "minutesAgo": "{count}分前",
-        "hoursAgo": "{count}時間前",
-        "daysAgo": "{count}日前"
+        "minutesAgo": "{{count}}分前",
+        "hoursAgo": "{{count}}時間前",
+        "daysAgo": "{{count}}日前"
     },
     "errorBoundary": {
         "title": "問題が発生しました",
@@ -23,8 +23,8 @@
     "chatPanel": {
         "sessionLoadFailed": "セッションの読み込みに失敗しました",
         "retry": "再試行",
-        "taskList": "タスクリスト（{completed}/{total}）",
-        "messageQueue": "メッセージキュー（{count}）",
+        "taskList": "タスクリスト（{{completed}}/{{total}}）",
+        "messageQueue": "メッセージキュー（{{count}}）",
         "uploadFile": "ファイルをアップロード",
         "selectImage": "画像を選択",
         "selectImageTitle": "画像を選択",
@@ -55,8 +55,8 @@
     },
     "agentList": {
         "searchPlaceholder": "Agentを検索...",
-        "stopConfirm": "{agent} を停止しますか？現在の会話状態は保持されます。",
-        "uninstallConfirm": "{agent} をアンインストールしますか？この操作は元に戻せません。"
+        "stopConfirm": "{{agent}} を停止しますか？現在の会話状態は保持されます。",
+        "uninstallConfirm": "{{agent}} をアンインストールしますか？この操作は元に戻せません。"
     },
     "cloneDialog": {
         "skeleton": "スケルトン",
@@ -134,10 +134,10 @@
         "logFileSize": "ログファイルサイズ（MB）",
         "logFileSizeHint": "0 = 分割無効。ファイル名は YYYYMMDD_HHMMSS.log",
         "noSplit": "分割しない",
-        "autoSplit": "{size} MBで自動分割",
+        "autoSplit": "{{size}} MBで自動分割",
         "maxLogFiles": "最大ログファイル数",
         "unlimited": "無制限",
-        "keepFiles": "{count} ファイルを保持",
+        "keepFiles": "{{count}} ファイルを保持",
         "maxLogFilesHint": "0 = 無制限。制限を超えると最も古いファイルが削除されます。",
         "deleteAllLogs": "すべてのログを削除",
         "deleting": "削除中...",
@@ -161,7 +161,7 @@
         "leaveEmptyDefault": "空欄の場合はランタイムのデフォルト値を使用",
         "maxIterations": "最大反復回数（実行ごと）",
         "defaultIterations": "50（デフォルト）",
-        "temperature": "温度：{value}",
+        "temperature": "温度：{{value}}",
         "deterministic": "0（確定的）",
         "creative": "2（創造的）",
         "shellCommandApproval": "シェルコマンド承認",
@@ -172,13 +172,9 @@
         "approvalDesc": "ユーザー確認が必要なシェルコマンドを制御します。デフォルト：中。",
         "approvalTimeout": "承認タイムアウト（秒）",
         "approvalTimeoutDesc": "空欄の場合はデフォルト値（300秒 = 5分）を使用。ツール承認はタイムアウト後に自動拒否されます。",
-        "activeTools": "有効なツール",
-        "loading": "読み込み中...",
-        "noToolsAvailable": "利用可能なツールはありません",
-        "uncheckAllHint": "すべてのチェックを外すと全ツールを無効化。空欄の場合はマニフェストのデフォルトを使用",
         "webSearchProviders": "ウェブ検索プロバイダー",
         "noSearchKeys": "検索APIキーが設定されていません。Harness > 検索タブでキーを追加してください。",
-        "priority": "優先度：{value}",
+        "priority": "優先度：{{value}}",
         "noKey": "キーなし",
         "moveUp": "上に移動（優先度を上げる）",
         "searchProvidersDesc": "このAgentの検索プロバイダーを選択して優先順位を付けます。優先度が高いほど先に試行されます。",
@@ -206,7 +202,7 @@
         "key": "キー",
         "edit": "編集",
         "remove": "削除",
-        "removeKeyConfirm": "{provider} のキーを削除しますか？",
+        "removeKeyConfirm": "{{provider}} のキーを削除しますか？",
         "availableProviders": "利用可能なプロバイダー",
         "refreshing": "更新中...",
         "clearCache": "キャッシュをクリア",
@@ -272,7 +268,7 @@
         "key": "キー",
         "edit": "編集",
         "remove": "削除",
-        "removeKeyConfirm": "{provider} の検索キーを削除しますか？",
+        "removeKeyConfirm": "{{provider}} の検索キーを削除しますか？",
         "availableSearchProviders": "利用可能な検索プロバイダー",
         "allConfigured": "すべての検索プロバイダーが設定済み",
         "addKey": "キーを追加",
@@ -372,20 +368,20 @@
         "close": "閉じる",
         "closeOthers": "その他を閉じる",
         "closeAll": "すべて閉じる",
-        "batchCloseOthersConfirm": "他の {count} 個のタブに未保存の変更があります。破棄して閉じますか？",
-        "batchCloseAllConfirm": "{count} 個のタブに未保存の変更があります。すべて破棄して閉じますか？"
+        "batchCloseOthersConfirm": "他の {{count}} 個のタブに未保存の変更があります。破棄して閉じますか？",
+        "batchCloseAllConfirm": "{{count}} 個のタブに未保存の変更があります。すべて破棄して閉じますか？"
     },
     "sessionPanel": {
         "loadingSessions": "セッションを読み込み中...",
         "noSessions": "セッションはまだありません",
         "untitledSession": "無題のセッション",
-        "messages": "{count} メッセージ",
+        "messages": "{{count}} メッセージ",
         "deleteSession": "セッションを削除",
         "newConversation": "新しい会話"
     },
     "documentChip": {
         "uploadFailed": "アップロードに失敗しました",
-        "removeFile": "{filename} を削除"
+        "removeFile": "{{filename}} を削除"
     },
     "language": {
         "zhCN": "中国語（簡体字）",

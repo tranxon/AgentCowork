@@ -32,26 +32,8 @@ type = "MemoryRead"
 [[permissions]]
 type = "MemoryWrite"
 
-[[tools]]
-name = "file_read"
-
-[[tools]]
-name = "doc_reader"
-
-[[tools]]
-name = "file_write"
-
-[[tools]]
-name = "shell"
-
-[[tools]]
-name = "http_request"
-
-[[tools]]
-name = "memory_store"
-
-[[tools]]
-name = "memory_recall"
+# Builtin tools are always active — no need to declare them here.
+# The [[tools]] section is reserved for future scope-limiting (optional).
 
 [llm]
 temperature = 0.3

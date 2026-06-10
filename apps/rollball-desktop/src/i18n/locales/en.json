@@ -9,9 +9,9 @@
     },
     "time": {
         "justNow": "Just now",
-        "minutesAgo": "{count} min ago",
-        "hoursAgo": "{count}h ago",
-        "daysAgo": "{count} days ago"
+        "minutesAgo": "{{count}} min ago",
+        "hoursAgo": "{{count}}h ago",
+        "daysAgo": "{{count}} days ago"
     },
     "errorBoundary": {
         "title": "Something went wrong",
@@ -23,8 +23,8 @@
     "chatPanel": {
         "sessionLoadFailed": "Session failed to load",
         "retry": "Retry",
-        "taskList": "Tasks ({completed}/{total})",
-        "messageQueue": "Message queue ({count})",
+        "taskList": "Tasks ({{completed}}/{{total}})",
+        "messageQueue": "Message queue ({{count}})",
         "uploadFile": "Upload file",
         "selectImage": "Select image",
         "selectImageTitle": "Select Image",
@@ -55,8 +55,8 @@
     },
     "agentList": {
         "searchPlaceholder": "Search agents...",
-        "stopConfirm": "Stop {agent}? Current conversation state will be preserved.",
-        "uninstallConfirm": "Uninstall {agent}? This action cannot be undone."
+        "stopConfirm": "Stop {{agent}}? Current conversation state will be preserved.",
+        "uninstallConfirm": "Uninstall {{agent}}? This action cannot be undone."
     },
     "cloneDialog": {
         "skeleton": "Skeleton",
@@ -134,10 +134,10 @@
         "logFileSize": "Log File Size (MB)",
         "logFileSizeHint": "0 = disable split. Files named as YYYYMMDD_HHMMSS.log",
         "noSplit": "No split",
-        "autoSplit": "Auto-split at {size} MB",
+        "autoSplit": "Auto-split at {{size}} MB",
         "maxLogFiles": "Max Log Files",
         "unlimited": "Unlimited",
-        "keepFiles": "Keep {count} files",
+        "keepFiles": "Keep {{count}} files",
         "maxLogFilesHint": "0 = unlimited. Oldest files are deleted when limit is exceeded.",
         "deleteAllLogs": "Delete all logs",
         "deleting": "Deleting...",
@@ -161,7 +161,7 @@
         "leaveEmptyDefault": "Leave empty to use runtime default",
         "maxIterations": "Max Iterations (per run)",
         "defaultIterations": "50 (default)",
-        "temperature": "Temperature: {value}",
+        "temperature": "Temperature: {{value}}",
         "deterministic": "0 (deterministic)",
         "creative": "2 (creative)",
         "shellCommandApproval": "Shell Command Approval",
@@ -172,13 +172,9 @@
         "approvalDesc": "Controls which shell commands require user confirmation. Default: Medium.",
         "approvalTimeout": "Approval Timeout (seconds)",
         "approvalTimeoutDesc": "Leave empty to use default (300s = 5 min). Tool approval will auto-deny after timeout.",
-        "activeTools": "Active Tools",
-        "loading": "Loading...",
-        "noToolsAvailable": "No tools available",
-        "uncheckAllHint": "Uncheck all to disable all tools; empty = use manifest defaults",
         "webSearchProviders": "Web Search Providers",
         "noSearchKeys": "No search API keys configured. Add keys in Harness > Search tab first.",
-        "priority": "Prio: {value}",
+        "priority": "Prio: {{value}}",
         "noKey": "No key",
         "moveUp": "Move up (higher priority)",
         "searchProvidersDesc": "Select and prioritize search providers for this agent. Higher priority = tried first.",
@@ -206,7 +202,7 @@
         "key": "Key",
         "edit": "Edit",
         "remove": "Remove",
-        "removeKeyConfirm": "Remove key for {provider}?",
+        "removeKeyConfirm": "Remove key for {{provider}}?",
         "availableProviders": "Available Providers",
         "refreshing": "refreshing...",
         "clearCache": "Clear Cache",
@@ -272,7 +268,7 @@
         "key": "Key",
         "edit": "Edit",
         "remove": "Remove",
-        "removeKeyConfirm": "Remove search key for {provider}?",
+        "removeKeyConfirm": "Remove search key for {{provider}}?",
         "availableSearchProviders": "Available Search Providers",
         "allConfigured": "All search providers configured",
         "addKey": "Add Key",
@@ -373,20 +369,20 @@
         "close": "Close",
         "closeOthers": "Close Others",
         "closeAll": "Close All",
-        "batchCloseOthersConfirm": "{count} other tab(s) have unsaved changes. Discard and close?",
-        "batchCloseAllConfirm": "{count} tab(s) have unsaved changes. Discard and close all?"
+        "batchCloseOthersConfirm": "{{count}} other tab(s) have unsaved changes. Discard and close?",
+        "batchCloseAllConfirm": "{{count}} tab(s) have unsaved changes. Discard and close all?"
     },
     "sessionPanel": {
         "loadingSessions": "Loading sessions...",
         "noSessions": "No sessions yet",
         "untitledSession": "Untitled session",
-        "messages": "{count} messages",
+        "messages": "{{count}} messages",
         "deleteSession": "Delete session",
         "newConversation": "New Conversation"
     },
     "documentChip": {
         "uploadFailed": "Upload failed",
-        "removeFile": "Remove {filename}"
+        "removeFile": "Remove {{filename}}"
     },
     "language": {
         "zhCN": "Chinese (Simplified)",
