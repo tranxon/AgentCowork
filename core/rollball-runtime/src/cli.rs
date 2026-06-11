@@ -3125,15 +3125,24 @@ fn handle_memory_nodes_query(
     };
     let graph = store.db().graph_store();
 
-    // time_range filtering is not yet implemented (P1).
-    // Proto carries the field for future use; warn if a non-empty value
-    // was supplied so the caller doesn't silently expect filtering.
-    if !query.time_range.is_empty() {
-        tracing::warn!(
-            time_range = %query.time_range,
-            "MemoryNodesQuery: time_range filtering not yet implemented, ignoring"
-        );
+    // Parse time_range into a cutoff timestamp.
+    // Supported values: "1h", "1d", "7d", "30d".
+    // Nodes with created_at before the cutoff are excluded.
+    let cutoff: Option<i64> = match query.time_range.as_str() {
+        "" | "all" => None,
+        "1h" => Some(chrono::Utc::now() - chrono::Duration::hours(1)),
+        "1d" => Some(chrono::Utc::now() - chrono::Duration::days(1)),
+        "7d" => Some(chrono::Utc::now() - chrono::Duration::days(7)),
+        "30d" => Some(chrono::Utc::now() - chrono::Duration::days(30)),
+        other => {
+            tracing::warn!(
+                time_range = %other,
+                "MemoryNodesQuery: unknown time_range value, ignoring filter"
+            );
+            None
+        }
     }
+    .map(|ts| ts.timestamp());
 
     // Collect nodes from all memory labels
     let labels = ["Episodic", "Knowledge", "Procedural", "Autobiographical"];
@@ -3143,7 +3152,7 @@ fn handle_memory_nodes_query(
     // and builds a full Vec in memory before paginating.  This is safe
     // for small databases but becomes a denial-of-service vector when
     // the node count grows into the tens of thousands.
-    let has_filter = !query.keyword.is_empty() || !query.r#type.is_empty();
+    let has_filter = !query.keyword.is_empty() || !query.r#type.is_empty() || !query.time_range.is_empty() && query.time_range != "all";
     if !has_filter {
         let total_nodes: usize = labels.iter().map(|l| graph.nodes_by_label(l).len()).sum();
         if total_nodes > MAX_UNFILTERED_MEMORY_SCAN {
@@ -3195,6 +3204,12 @@ fn handle_memory_nodes_query(
                     .and_then(|v| v.as_timestamp())
                     .map(|ts| ts.as_secs())
                     .unwrap_or(0) as i64;
+                // Time range filter: skip nodes older than the cutoff.
+                if let Some(cutoff_ts) = cutoff {
+                    if created_at < cutoff_ts {
+                        continue;
+                    }
+                }
                 let last_accessed_at = n
                     .get_property("last_accessed_at")
                     .and_then(|v| v.as_timestamp())
