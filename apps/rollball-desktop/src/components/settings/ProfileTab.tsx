@@ -6,6 +6,7 @@ import { fetchActiveUser, updateUser } from "../../lib/gateway-api";
 import type { BackendUserProfile } from "../../lib/types";
 import { useTranslation } from "../../i18n/useTranslation";
 import { StyledInput } from "../common/StyledInput";
+import { Tooltip } from "../common/Tooltip";
 import i18n from "../../i18n";
 
 const TIMEZONES = [
@@ -131,13 +132,14 @@ export function ProfileTab() {
         {/* Live avatar preview — click to open icon picker */}
         <div className="flex items-center gap-4">
           <div className="relative" ref={iconRef}>
-            <button
-              onClick={() => setIconOpen(!iconOpen)}
-              className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
-              title={t("settings.chooseIcon")}
-            >
-              <UserAvatar size={64} />
-            </button>
+            <Tooltip content={t("settings.chooseIcon")} variant="plain">
+              <button
+                onClick={() => setIconOpen(!iconOpen)}
+                className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
+              >
+                <UserAvatar size={64} />
+              </button>
+            </Tooltip>
             {iconOpen && (
               <div className="absolute left-0 z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
                 <div className="grid grid-cols-4 gap-1">

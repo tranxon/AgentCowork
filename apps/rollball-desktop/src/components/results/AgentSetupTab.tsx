@@ -7,6 +7,7 @@ import { ConfirmDialog } from "../common/ConfirmDialog";
 import { useMcpStore } from "../../stores/mcpStore";
 import { useTranslation } from "../../i18n/useTranslation";
 import { StyledInput } from "../common/StyledInput";
+import { Tooltip } from "../common/Tooltip";
 import type { SearchProviderListItem, AgentSearchProvider } from "../../lib/types";
 
 interface SearchProvidersResponse {
@@ -232,18 +233,19 @@ export function AgentSetupTab() {
       {/* Avatar preview — click to open icon picker */}
       <div className="mb-4 flex items-center gap-3">
         <div className="relative" ref={iconRef}>
-          <button
-            onClick={() => setIconOpen(!iconOpen)}
-            className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
-            title={t("agentSetup.chooseIcon")}
-          >
-            <UserAvatar
-              displayName={agentName}
-              avatarType="icon"
-              avatarIcon={profile.avatarIconId ?? undefined}
-              size={64}
-            />
-          </button>
+          <Tooltip content={t("agentSetup.chooseIcon")} variant="plain">
+            <button
+              onClick={() => setIconOpen(!iconOpen)}
+              className="rounded-lg border border-transparent p-0.5 transition-colors hover:border-zinc-300 dark:hover:border-zinc-600"
+            >
+              <UserAvatar
+                displayName={agentName}
+                avatarType="icon"
+                avatarIcon={profile.avatarIconId ?? undefined}
+                size={64}
+              />
+            </button>
+          </Tooltip>
           {iconOpen && (
             <div className="absolute left-0 z-50 mt-1 w-max rounded-lg border border-zinc-200 bg-white p-1.5 shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
               <div className="grid grid-cols-4 gap-1">
@@ -447,57 +449,58 @@ export function AgentSetupTab() {
               const hasKey = !!sp.id; // Providers listed here already have vault keys
               const activeIdx = activeSearch.findIndex((p) => p.provider === sp.id);
               return (
-                <div
-                  key={sp.id}
-                  className={`flex items-center gap-2 py-1 px-1.5 rounded ${hasKey
-                    ? "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                    : "opacity-50"
-                    }`}
-                  title={hasKey ? undefined : "No API key configured. Add in Harness \u2192 Search."}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isChecked}
-                    onChange={() => toggleSearchProvider(sp.id)}
-                    disabled={searchSaving || !hasKey}
-                    className="h-3.5 w-3.5 shrink-0 rounded accent-[var(--color-accent)]"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-1.5">
-                      <span className={`text-[11px] font-medium ${hasKey
-                        ? "text-zinc-700 dark:text-zinc-300"
-                        : "text-zinc-400 dark:text-zinc-500"
-                        }`}>
-                        {sp.name || sp.id}
+                <Tooltip key={sp.id} content={hasKey ? "" : "No API key configured. Add in Harness → Search."} variant="plain">
+                  <div
+                    className={`flex items-center gap-2 py-1 px-1.5 rounded ${hasKey
+                      ? "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                      : "opacity-50"
+                      }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isChecked}
+                      onChange={() => toggleSearchProvider(sp.id)}
+                      disabled={searchSaving || !hasKey}
+                      className="h-3.5 w-3.5 shrink-0 rounded accent-[var(--color-accent)]"
+                    />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-[11px] font-medium ${hasKey
+                          ? "text-zinc-700 dark:text-zinc-300"
+                          : "text-zinc-400 dark:text-zinc-500"
+                          }`}>
+                          {sp.name || sp.id}
+                        </span>
+                        {isChecked && priority !== undefined && (
+                          <span className="rounded bg-zinc-100 px-1 py-0.5 text-[9px] text-zinc-400 dark:bg-zinc-700">
+                            {t("agentSetup.priority", { value: priority })}
+                          </span>
+                        )}
+                        {!hasKey && (
+                          <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
+                            {t("agentSetup.noKey")}
+                          </span>
+                        )}
+                      </div>
+                      <span className="block text-[9px] text-zinc-400 dark:text-zinc-500 leading-tight">
+                        {sp.description || sp.base_url || ""}
                       </span>
-                      {isChecked && priority !== undefined && (
-                        <span className="rounded bg-zinc-100 px-1 py-0.5 text-[9px] text-zinc-400 dark:bg-zinc-700">
-                          {t("agentSetup.priority", { value: priority })}
-                        </span>
-                      )}
-                      {!hasKey && (
-                        <span className="rounded bg-amber-50 px-1 py-0.5 text-[9px] text-amber-600 dark:bg-amber-900/30 dark:text-amber-400">
-                          {t("agentSetup.noKey")}
-                        </span>
-                      )}
                     </div>
-                    <span className="block text-[9px] text-zinc-400 dark:text-zinc-500 leading-tight">
-                      {sp.description || sp.base_url || ""}
-                    </span>
+                    {isChecked && activeIdx > 0 && (
+                      <Tooltip content={t("agentSetup.moveUp")} variant="plain">
+                        <button
+                          onClick={() => moveSearchProviderUp(sp.id)}
+                          disabled={searchSaving}
+                          className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+                        >
+                          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="m18 15-6-6-6 6" />
+                          </svg>
+                        </button>
+                      </Tooltip>
+                    )}
                   </div>
-                  {isChecked && activeIdx > 0 && (
-                    <button
-                      onClick={() => moveSearchProviderUp(sp.id)}
-                      disabled={searchSaving}
-                      className="shrink-0 rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-                      title={t("agentSetup.moveUp")}
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="m18 15-6-6-6 6" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
+                </Tooltip>
               );
             })}
           </div>

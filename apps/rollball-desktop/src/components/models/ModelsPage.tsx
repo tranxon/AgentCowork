@@ -5,6 +5,7 @@ import { Key, Home, Plus, Trash2, Star, Pencil, Loader2 } from "lucide-react";
 import { needsApiKey, keyPlaceholder } from "../../lib/providers";
 import { fetchProviderModels, fetchProviders } from "../../lib/gateway-api";
 import { getGatewayUrl } from "../../lib/config";
+import { Tooltip } from "../common/Tooltip";
 
 type ProviderWithStatus = {
   id: string;
@@ -229,20 +230,22 @@ export function ModelsPage() {
                     <div className="flex items-center gap-1">
                       {keyEntry && (
                         <>
-                          <button
-                            onClick={() => handleSetDefaultProvider(provider.id)}
-                            className={`rounded p-1.5 ${config?.default_provider === provider.id ? "text-amber-500" : "text-zinc-400 hover:bg-zinc-100 hover:text-amber-500 dark:hover:bg-zinc-800"}`}
-                            title={config?.default_provider === provider.id ? "Default provider" : "Set as default provider"}
-                          >
-                            <Star className="h-4 w-4" />
-                          </button>
-                          <button
-                            onClick={() => handleRemove(provider.id)}
-                            className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
-                            title="Remove key"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          <Tooltip content={config?.default_provider === provider.id ? "Default provider" : "Set as default provider"} variant="plain">
+                            <button
+                              onClick={() => handleSetDefaultProvider(provider.id)}
+                              className={`rounded p-1.5 ${config?.default_provider === provider.id ? "text-amber-500" : "text-zinc-400 hover:bg-zinc-100 hover:text-amber-500 dark:hover:bg-zinc-800"}`}
+                            >
+                              <Star className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
+                          <Tooltip content="Remove key" variant="plain">
+                            <button
+                              onClick={() => handleRemove(provider.id)}
+                              className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-red-500 dark:hover:bg-zinc-800"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </Tooltip>
                         </>
                       )}
                     </div>
@@ -315,14 +318,15 @@ export function ModelsPage() {
                         </option>
                       ))}
                     </select>
-                    <button
-                      type="button"
-                      onClick={() => setCustomModelInput(true)}
-                      className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
-                      title="Enter custom model name"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
+                    <Tooltip content="Enter custom model name" variant="plain">
+                      <button
+                        type="button"
+                        onClick={() => setCustomModelInput(true)}
+                        className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </button>
+                    </Tooltip>
                   </div>
                 ) : (
                   <div className="flex items-center gap-1">

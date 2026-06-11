@@ -10,6 +10,7 @@ import { FolderOpen, FolderPlus, Trash2, Shield, ShieldOff, Home } from "lucide-
 import * as dialog from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
 import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
+import { Tooltip } from "../common/Tooltip";
 
 export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "up" | "down" }) {
   const { t } = useTranslation();
@@ -220,9 +221,11 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
                             <div className={cn("truncate text-xs", isCurrent ? "font-semibold" : "text-zinc-800 dark:text-zinc-200")} style={isCurrent ? { color: "var(--color-accent)" } : undefined}>
                               {displayName}
                             </div>
-                            <div className="truncate text-[10px] text-zinc-500 dark:text-zinc-400" title={dir.path}>
-                              {dir.path}
-                            </div>
+                            <Tooltip content={dir.path} variant="plain" position="bottom">
+                              <div className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
+                                {dir.path}
+                              </div>
+                            </Tooltip>
                           </div>
                         </button>
 
@@ -253,41 +256,43 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
                               </button>
                             </div>
                           ) : (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setConfirmDelete(dir.id);
-                              }}
-                              disabled={deletingId !== null}
-                              className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                              style={{}}
-                              title="Remove workspace"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
+                            <Tooltip content="Remove workspace" variant="plain">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDelete(dir.id);
+                                }}
+                                disabled={deletingId !== null}
+                                className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-zinc-100 dark:hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                                style={{}}
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            </Tooltip>
                           )}
 
                           {/* Access toggle button */}
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handleToggleAccess(dir);
-                            }}
-                            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-600"
-                            title={dir.access === "read-write" ? "Change to read-only" : "Change to read-write"}
-                          >
-                            {dir.access === "read-write" ? (
-                              <>
-                                <ShieldOff className="h-3 w-3 text-orange-600 dark:text-orange-400" />
-                                <span className="font-medium text-orange-700 dark:text-orange-400">RW</span>
-                              </>
-                            ) : (
-                              <>
-                                <Shield className="h-3 w-3 text-zinc-500" />
-                                <span className="font-medium text-zinc-600 dark:text-zinc-400">RO</span>
-                              </>
-                            )}
-                          </button>
+                          <Tooltip content={dir.access === "read-write" ? "Change to read-only" : "Change to read-write"} variant="plain">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handleToggleAccess(dir);
+                              }}
+                              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors hover:bg-zinc-200 dark:hover:bg-zinc-600"
+                            >
+                              {dir.access === "read-write" ? (
+                                <>
+                                  <ShieldOff className="h-3 w-3 text-orange-600 dark:text-orange-400" />
+                                  <span className="font-medium text-orange-700 dark:text-orange-400">RW</span>
+                                </>
+                              ) : (
+                                <>
+                                  <Shield className="h-3 w-3 text-zinc-500" />
+                                  <span className="font-medium text-zinc-600 dark:text-zinc-400">RO</span>
+                                </>
+                              )}
+                            </button>
+                          </Tooltip>
                         </div>
                       </div>
                     );

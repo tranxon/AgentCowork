@@ -2,6 +2,7 @@ import { type ReactNode } from "react";
 import { ChevronDown } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { toolbarButton } from "../../lib/ui-styles";
+import { Tooltip } from "./Tooltip";
 
 /**
  * Shared toolbar dropdown trigger — icon + text + chevron + hover tooltip.
@@ -34,29 +35,22 @@ export function ToolbarDropdownTrigger({
     children: ReactNode;
 }) {
     return (
-        <div ref={wrapperRef} className="relative inline-block group">
-            <button
-                type="button"
-                onClick={onToggle}
-                className={cn(
-                    toolbarButton,
-                    open && "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100",
-                    buttonClassName,
-                )}
-            >
-                {icon}
-                <span className={cn(collapseClass, "max-w-[120px] truncate")}>{label}</span>
-                <ChevronDown className={cn("h-3 w-3 text-zinc-400", collapseClass)} />
-            </button>
-            {/* Tooltip — visible on hover when text is collapsed (CSS-controlled) */}
-            <div className={cn(
-                tipClass,
-                "pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50",
-            )}>
-                <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg max-w-[200px] truncate">
-                    {label}
-                </div>
-            </div>
+        <div ref={wrapperRef} className="relative inline-block">
+            <Tooltip content={label} tipClass={tipClass}>
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className={cn(
+                        toolbarButton,
+                        open && "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100",
+                        buttonClassName,
+                    )}
+                >
+                    {icon}
+                    <span className={cn(collapseClass, "max-w-[120px] truncate")}>{label}</span>
+                    <ChevronDown className={cn("h-3 w-3 text-zinc-400", collapseClass)} />
+                </button>
+            </Tooltip>
             {children}
         </div>
     );

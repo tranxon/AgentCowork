@@ -1,6 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useSettingsStore } from "../../stores/settingsStore";
+import { Tooltip } from "../common/Tooltip";
 
 // ── VS Code style panel toggle icon ──────────────────────────────────
 /** VS Code style panel toggle: a box divided by a vertical line into left/right halves.
@@ -88,15 +89,16 @@ export function TitleBar({ panelExpanded, onTogglePanel }: TitleBarProps) {
       {/* Right: Panel toggle + Window controls */}
       <div className="flex items-center gap-1">
         {/* Right panel toggle — VS Code style, left of window controls */}
-        <button
-          className="flex h-8 w-8 items-center justify-center rounded text-zinc-500 hover:text-zinc-700 hover:bg-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-700"
-          style={{ "-webkit-app-region": "no-drag" } as React.CSSProperties}
-          onClick={onTogglePanel}
-          aria-label={panelExpanded ? "Collapse right panel" : "Expand right panel"}
-          title={panelExpanded ? "Collapse Right Panel" : "Expand Right Panel"}
-        >
-          <PanelToggleIcon expanded={panelExpanded} />
-        </button>
+        <Tooltip content={panelExpanded ? "Collapse Right Panel" : "Expand Right Panel"} variant="plain">
+          <button
+            className="flex h-8 w-8 items-center justify-center rounded text-zinc-500 hover:text-zinc-700 hover:bg-zinc-300 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-700"
+            style={{ "-webkit-app-region": "no-drag" } as React.CSSProperties}
+            onClick={onTogglePanel}
+            aria-label={panelExpanded ? "Collapse right panel" : "Expand right panel"}
+          >
+            <PanelToggleIcon expanded={panelExpanded} />
+          </button>
+        </Tooltip>
 
         {/* Minimize */}
         <button

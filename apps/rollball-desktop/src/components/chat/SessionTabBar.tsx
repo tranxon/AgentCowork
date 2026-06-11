@@ -9,6 +9,7 @@ import { Plus, Clock, Loader2, X, MessageCircle, Trash2, ChevronLeft, ChevronRig
 import { StyledInput } from "../common/StyledInput";
 import { ScrollableTabBar, type ScrollableTabBarHandle } from "../common/ScrollableTabBar";
 import { TabItem } from "../common/tab";
+import { Tooltip } from "../common/Tooltip";
 
 // ── Relative time formatter ──────────────────────────────────────────────
 
@@ -181,14 +182,15 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
                   </button>
                 </div>
               ) : (
-                <button
-                  onClick={(e) => { e.stopPropagation(); setConfirmDelete(session.session_id); }}
-                  disabled={deletingId !== null}
-                  className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50"
-                  title="Delete session"
-                >
-                  <Trash2 className="h-3 w-3" />
-                </button>
+                <Tooltip content="Delete session" variant="plain">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setConfirmDelete(session.session_id); }}
+                    disabled={deletingId !== null}
+                    className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50"
+                  >
+                    <Trash2 className="h-3 w-3" />
+                  </button>
+                </Tooltip>
               )}
             </div>
           );
@@ -317,36 +319,37 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
           const isProcessing = isSessionActive(status);
 
           return (
-            <TabItem
-              key={sessionId}
-              data-session-id={sessionId}
-              onClick={() => handleTabClick(sessionId)}
-              active={isActive}
-              title={getTitle(sessionId)}
-            >
-              {/* Streaming indicator dot (only when processing and not active) */}
-              {isProcessing && !isActive && (
-                <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500 animate-pulse" />
-              )}
-              {/* Title */}
-              <span className={cn(
-                "min-w-0 flex-1 truncate text-[length:var(--tab-font-size)] leading-[var(--tab-line-height)]",
-                isProcessing && isActive && "text-zinc-700 dark:text-zinc-200",
-              )}>
-                {getTitle(sessionId)}
-              </span>
-              {/* Close button */}
-              <button
-                onClick={(e) => handleClose(e, sessionId)}
-                className={cn(
-                  "shrink-0 rounded p-0.5 transition-opacity",
-                  isActive ? "opacity-60 hover:opacity-100 hover:bg-zinc-200 dark:hover:bg-zinc-600" : "opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-zinc-300 dark:hover:bg-zinc-600",
-                )}
-                title="Close tab"
+            <Tooltip content={getTitle(sessionId)} variant="plain" key={sessionId}>
+              <TabItem
+                data-session-id={sessionId}
+                onClick={() => handleTabClick(sessionId)}
+                active={isActive}
               >
-                <X className="h-3 w-3" />
-              </button>
-            </TabItem>
+                {/* Streaming indicator dot (only when processing and not active) */}
+                {isProcessing && !isActive && (
+                  <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-zinc-400 dark:bg-zinc-500 animate-pulse" />
+                )}
+                {/* Title */}
+                <span className={cn(
+                  "min-w-0 flex-1 truncate text-[length:var(--tab-font-size)] leading-[var(--tab-line-height)]",
+                  isProcessing && isActive && "text-zinc-700 dark:text-zinc-200",
+                )}>
+                  {getTitle(sessionId)}
+                </span>
+                {/* Close button */}
+                <Tooltip content="Close tab" variant="plain">
+                  <button
+                    onClick={(e) => handleClose(e, sessionId)}
+                    className={cn(
+                      "shrink-0 rounded p-0.5 transition-opacity",
+                      isActive ? "opacity-60 hover:opacity-100 hover:bg-zinc-200 dark:hover:bg-zinc-600" : "opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-zinc-300 dark:hover:bg-zinc-600",
+                    )}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </Tooltip>
+              </TabItem>
+            </Tooltip>
           );
         })}
       </ScrollableTabBar>
@@ -354,28 +357,30 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
       {/* Action buttons */}
       <div className="flex items-center shrink-0 px-1 gap-0.5">
         {/* New session button */}
-        <button
-          onClick={handleNew}
-          className="flex items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300 transition-colors"
-          title="New conversation"
-        >
-          <Plus className="h-3.5 w-3.5 shrink-0" />
-        </button>
+        <Tooltip content="New conversation" variant="plain">
+          <button
+            onClick={handleNew}
+            className="flex items-center justify-center rounded p-1 text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300 transition-colors"
+          >
+            <Plus className="h-3.5 w-3.5 shrink-0" />
+          </button>
+        </Tooltip>
 
         {/* Session list dropdown */}
         <div className="relative">
-          <button
-            onClick={() => setListOpen(!listOpen)}
-            className={cn(
-              "flex items-center justify-center rounded p-1 transition-colors",
-              listOpen
-                ? "text-[var(--color-accent)] bg-zinc-200 dark:bg-zinc-700"
-                : "text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300",
-            )}
-            title="Session history"
-          >
-            <Clock className="h-3.5 w-3.5" />
-          </button>
+          <Tooltip content="Session history" variant="plain">
+            <button
+              onClick={() => setListOpen(!listOpen)}
+              className={cn(
+                "flex items-center justify-center rounded p-1 transition-colors",
+                listOpen
+                  ? "text-[var(--color-accent)] bg-zinc-200 dark:bg-zinc-700"
+                  : "text-zinc-400 hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300",
+              )}
+            >
+              <Clock className="h-3.5 w-3.5" />
+            </button>
+          </Tooltip>
 
           {listOpen && (
             <SessionListDropdown

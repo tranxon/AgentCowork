@@ -8,6 +8,7 @@ import { FileTree } from "./FileTree/FileTree";
 import { WorkspaceSelector } from "./WorkspaceSelector";
 import type { TreeEntry } from "../../stores/workspaceStore";
 import { useTranslation } from "../../i18n/useTranslation";
+import { Tooltip } from "../common/Tooltip";
 
 export function WorkspaceExplorer() {
     const { t } = useTranslation();
@@ -182,24 +183,26 @@ export function WorkspaceExplorer() {
             <div className="flex items-center gap-0.5 border-b border-zinc-200 px-1.5 py-1.5 dark:border-zinc-800">
                 <WorkspaceSelector dropDirection="down" />
                 <div className="ml-auto flex items-center gap-0.5">
-                    <button
-                        onClick={handleNewFile}
-                        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-[var(--color-accent)] dark:hover:bg-zinc-800"
-                        title={t("workspace.explorer.newFile")}
-                    >
-                        <FilePlus className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                        onClick={handleNewFolder}
-                        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-yellow-600 dark:hover:bg-zinc-800 dark:hover:text-yellow-400"
-                        title={t("workspace.explorer.newFolder")}
-                    >
-                        <FolderPlus className="h-3.5 w-3.5" />
-                    </button>
+                    <Tooltip content="New file" variant="plain">
+                        <button
+                            onClick={handleNewFile}
+                            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-[var(--color-accent)] dark:hover:bg-zinc-800"
+                        >
+                            <FilePlus className="h-3.5 w-3.5" />
+                        </button>
+                    </Tooltip>
+                    <Tooltip content="New folder" variant="plain">
+                        <button
+                            onClick={handleNewFolder}
+                            className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-yellow-600 dark:hover:bg-zinc-800 dark:hover:text-yellow-400"
+                        >
+                            <FolderPlus className="h-3.5 w-3.5" />
+                        </button>
+                    </Tooltip>
                     <button
                         onClick={handleRefresh}
                         className="rounded p-0.5 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-800 dark:hover:text-zinc-300"
-                        title={t("workspace.explorer.refresh")}
+
                     >
                         <RefreshCw className="h-3 w-3" />
                     </button>

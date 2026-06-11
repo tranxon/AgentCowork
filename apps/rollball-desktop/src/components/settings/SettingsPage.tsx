@@ -12,6 +12,7 @@ import { inputReadonly, inputBase } from "../../lib/ui-styles";
 import { StyledInput } from "../common/StyledInput";
 import { ProfileTab } from "./ProfileTab";
 import { TabButton } from "../common/tab";
+import { Tooltip } from "../common/Tooltip";
 
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
 
@@ -419,21 +420,21 @@ function AppearanceTab() {
             { label: "Amber", value: "#f59e0b" },
             { label: "Pink", value: "#ec4899" },
           ].map((c) => (
-            <button
-              key={c.value}
-              onClick={() => setAccentColor(c.value)}
-              className={cn(
-                "flex h-9 w-9 items-center justify-center rounded-full transition-transform",
-                accentColor === c.value
-                  ? "scale-110 ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
-                  : "hover:scale-105",
-              )}
-              style={{
-                backgroundColor: c.value,
-                "--tw-ring-color": c.value,
-              } as React.CSSProperties}
-              title={c.label}
-            />
+            <Tooltip content={c.label} variant="plain" key={c.value}>
+              <button
+                onClick={() => setAccentColor(c.value)}
+                className={cn(
+                  "flex h-9 w-9 items-center justify-center rounded-full transition-transform",
+                  accentColor === c.value
+                    ? "scale-110 ring-2 ring-offset-2 ring-offset-white dark:ring-offset-zinc-900"
+                    : "hover:scale-105",
+                )}
+                style={{
+                  backgroundColor: c.value,
+                  "--tw-ring-color": c.value,
+                } as React.CSSProperties}
+              />
+            </Tooltip>
           ))}
         </div>
       </div>

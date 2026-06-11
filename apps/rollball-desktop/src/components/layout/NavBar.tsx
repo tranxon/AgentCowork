@@ -2,6 +2,7 @@ import { useId, type ComponentType } from "react";
 import type { NavView } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { UserAvatar } from "../common/UserAvatar";
+import { Tooltip } from "../common/Tooltip";
 import { useUserProfileStore } from "../../stores/userProfileStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 
@@ -181,55 +182,56 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
       } as React.CSSProperties}
     >
       {/* User avatar — click to edit profile (WeChat-style top placement) */}
-      <button
-        onClick={onAvatarClick}
-        className="mb-3 flex items-center justify-center rounded-md transition-colors duration-150 hover:ring-2 hover:ring-zinc-400 dark:hover:ring-zinc-500"
-        title="Edit Profile"
-        aria-label="Edit Profile"
-      >
-        <UserAvatar
-          displayName={profile.displayName}
-          size={40}
-          className="shrink-0"
-        />
-      </button>
+      <Tooltip content="Edit Profile" variant="plain" position="right">
+        <button
+          onClick={onAvatarClick}
+          className="mb-3 flex items-center justify-center rounded-md transition-colors duration-150 hover:ring-2 hover:ring-zinc-400 dark:hover:ring-zinc-500"
+          aria-label="Edit Profile"
+        >
+          <UserAvatar
+            displayName={profile.displayName}
+            size={40}
+            className="shrink-0"
+          />
+        </button>
+      </Tooltip>
 
       {/* Top navigation items */}
       {topNavItems.map(({ view, icon: Icon, label }) => (
-        <button
-          key={view}
-          onClick={() => onViewChange(view)}
-          className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-150",
-            currentView === view
-              ? "hover:bg-[#D8D9DC] dark:hover:bg-[#3D3D3F]"
-              : "text-zinc-500 hover:text-zinc-600 hover:bg-[#D8D9DC] dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-[#3D3D3F]",
-          )}
-          style={currentView === view ? { color: "var(--color-accent)" } : undefined}
-          title={label}
-          aria-label={label}
-          aria-current={currentView === view ? "page" : undefined}
-        >
-          {currentView === view ? (
-            view === "chat" ? (
-              <FilledChatIcon className="h-6 w-6" />
-            ) : view === "harness" ? (
-              <FilledHarnessIcon className="h-6 w-6" />
-            ) : view === "docs" ? (
-              <FilledDocsIcon className="h-6 w-6" />
-            ) : view === "projects" ? (
-              <FilledProjectsIcon className="h-6 w-6" />
+        <Tooltip key={view} content={label} variant="plain" position="right">
+          <button
+            onClick={() => onViewChange(view)}
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-150",
+              currentView === view
+                ? "hover:bg-[#D8D9DC] dark:hover:bg-[#3D3D3F]"
+                : "text-zinc-500 hover:text-zinc-600 hover:bg-[#D8D9DC] dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-[#3D3D3F]",
+            )}
+            style={currentView === view ? { color: "var(--color-accent)" } : undefined}
+            aria-label={label}
+            aria-current={currentView === view ? "page" : undefined}
+          >
+            {currentView === view ? (
+              view === "chat" ? (
+                <FilledChatIcon className="h-6 w-6" />
+              ) : view === "harness" ? (
+                <FilledHarnessIcon className="h-6 w-6" />
+              ) : view === "docs" ? (
+                <FilledDocsIcon className="h-6 w-6" />
+              ) : view === "projects" ? (
+                <FilledProjectsIcon className="h-6 w-6" />
+              ) : (
+                <FilledSettingsIcon className="h-6 w-6" />
+              )
             ) : (
-              <FilledSettingsIcon className="h-6 w-6" />
-            )
-          ) : (
-            view === "projects" ? (
-              <OutlineProjectsIcon className="h-6 w-6" isDark={isDark} />
-            ) : (
-              <Icon className="h-6 w-6" />
-            )
-          )}
-        </button>
+              view === "projects" ? (
+                <OutlineProjectsIcon className="h-6 w-6" isDark={isDark} />
+              ) : (
+                <Icon className="h-6 w-6" />
+              )
+            )}
+          </button>
+        </Tooltip>
       ))}
 
       {/* Spacer */}
@@ -237,26 +239,26 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
 
       {/* Bottom navigation items */}
       {bottomNavItems.map(({ view, icon: Icon, label }) => (
-        <button
-          key={view}
-          onClick={() => onViewChange(view)}
-          className={cn(
-            "flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-150",
-            currentView === view
-              ? "hover:bg-[#D8D9DC] dark:hover:bg-[#3D3D3F]"
-              : "text-zinc-500 hover:text-zinc-600 hover:bg-[#D8D9DC] dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-[#3D3D3F]",
-          )}
-          style={currentView === view ? { color: "var(--color-accent)" } : undefined}
-          title={label}
-          aria-label={label}
-          aria-current={currentView === view ? "page" : undefined}
-        >
-          {currentView === view ? (
-            <FilledSettingsIcon className="h-6 w-6" />
-          ) : (
-            <Icon className="h-6 w-6" />
-          )}
-        </button>
+        <Tooltip key={view} content={label} variant="plain" position="right">
+          <button
+            onClick={() => onViewChange(view)}
+            className={cn(
+              "flex h-10 w-10 items-center justify-center rounded-lg transition-colors duration-150",
+              currentView === view
+                ? "hover:bg-[#D8D9DC] dark:hover:bg-[#3D3D3F]"
+                : "text-zinc-500 hover:text-zinc-600 hover:bg-[#D8D9DC] dark:text-zinc-400 dark:hover:text-zinc-300 dark:hover:bg-[#3D3D3F]",
+            )}
+            style={currentView === view ? { color: "var(--color-accent)" } : undefined}
+            aria-label={label}
+            aria-current={currentView === view ? "page" : undefined}
+          >
+            {currentView === view ? (
+              <FilledSettingsIcon className="h-6 w-6" />
+            ) : (
+              <Icon className="h-6 w-6" />
+            )}
+          </button>
+        </Tooltip>
       ))}
     </nav>
   );

@@ -53,6 +53,7 @@ import { AgentAvatar } from "../common/AgentAvatar";
 import { DocumentChip } from "./DocumentChip";
 import { AttachedContextChips } from "./AttachedContextChips";
 import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
+import { Tooltip } from "../common/Tooltip";
 
 // Module-level: persists across ChatPanel mount/unmount cycles
 // so nav-back (Settings→Chat) doesn't trigger full reinit
@@ -847,16 +848,17 @@ export function ChatPanel() {
     return (
       <div className="flex flex-1 items-center justify-center bg-zinc-50 dark:bg-zinc-900">
         <div className="text-center">
-          <button
-            onClick={async () => {
-              await startAgent(selectedAgent.agent_id);
-              await syncAgentUI(selectedAgent.agent_id);
-            }}
-            className="mx-auto flex h-20 w-20 items-center justify-center rounded-full btn-solid"
-            title="Start Agent"
-          >
-            <Play className="h-8 w-8" />
-          </button>
+          <Tooltip content="Start Agent" variant="plain">
+            <button
+              onClick={async () => {
+                await startAgent(selectedAgent.agent_id);
+                await syncAgentUI(selectedAgent.agent_id);
+              }}
+              className="mx-auto flex h-20 w-20 items-center justify-center rounded-full btn-solid"
+            >
+              <Play className="h-8 w-8" />
+            </button>
+          </Tooltip>
           <p className="mt-3 text-xs text-zinc-400 dark:text-zinc-500">{agentDisplayName} is sleeping</p>
         </div>
       </div>
@@ -1287,7 +1289,7 @@ export function ChatPanel() {
               {/* Skills dropdown */}
               <SkillsPanel />
               {/* File upload button */}
-              <div className="group relative">
+              <Tooltip content={t("chatPanel.uploadHint")}>
                 <button
                   className={toolbarButton}
                   onClick={handleFileUpload}
@@ -1296,15 +1298,9 @@ export function ChatPanel() {
                 >
                   <Paperclip size={14} />
                 </button>
-                {/* Tooltip */}
-                <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
-                  <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                    {t("chatPanel.uploadHint")}
-                  </div>
-                </div>
-              </div>
+              </Tooltip>
               {/* Image upload button */}
-              <div className="group relative">
+              <Tooltip content={t("chatPanel.uploadImageHint")}>
                 <button
                   className={toolbarButton}
                   onClick={handleImageSelect}
@@ -1313,13 +1309,7 @@ export function ChatPanel() {
                 >
                   <Image size={14} />
                 </button>
-                {/* Tooltip */}
-                <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
-                  <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                    {t("chatPanel.uploadImageHint")}
-                  </div>
-                </div>
-              </div>
+              </Tooltip>
             </div>
 
             {/* Right: send/stop button + context usage icon */}
@@ -1329,8 +1319,14 @@ export function ChatPanel() {
               {currentSessionId && <ContextUsageIcon />}
 
               {/* Send/Stop button with tooltip above */}
-              <div className="group relative">
-                <button
+              <Tooltip content={sending
+                ? (inputValue.trim()
+                  ? t("chatPanel.addToQueue")
+                  : queuedMessages.length > 0
+                    ? t("chatPanel.sendQueuedAndStop")
+                    : t("chatPanel.stop"))
+                : t("chatPanel.sendMessage")}>
+<button
                   className={`rounded-lg p-1.5 transition-colors ${sending
                     ? "text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
                     : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-50"
@@ -1347,19 +1343,7 @@ export function ChatPanel() {
                 >
                   {sending ? <Square size={16} fill="currentColor" /> : <Send size={16} />}
                 </button>
-                {/* Tooltip — shown above the button on hover */}
-                <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover:block z-50">
-                  <div className="whitespace-nowrap rounded-md bg-zinc-800 dark:bg-zinc-200 px-2.5 py-1.5 text-[11px] leading-tight text-white dark:text-zinc-800 shadow-lg">
-                    {sending
-                      ? (inputValue.trim()
-                        ? t("chatPanel.addToQueue")
-                        : queuedMessages.length > 0
-                          ? t("chatPanel.sendQueuedAndStop")
-                          : t("chatPanel.stop"))
-                      : t("chatPanel.sendMessage")}
-                  </div>
-                </div>
-              </div>
+              </Tooltip>
             </div>
           </div>
         </div>

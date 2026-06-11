@@ -133,6 +133,12 @@ window.addEventListener("keydown", (e: KeyboardEvent) => {
     }
   }
 
+  // Block Ctrl+Shift+P — browser Print dialog (same key as VS Code Command Palette).
+  if (e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey && e.key.toLowerCase() === "p") {
+    e.preventDefault();
+    return;
+  }
+
   // Block Ctrl+<key> combinations (but not Ctrl+Alt, Ctrl+Meta, or Ctrl+Shift)
   if (e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey) {
     if (BLOCKED_SHORTCUTS.has(e.key.toLowerCase())) {

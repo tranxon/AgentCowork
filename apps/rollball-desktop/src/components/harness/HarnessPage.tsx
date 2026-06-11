@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesMap, ProviderListEntry, McpServerConfigDef, McpTransportDef, McpPresetDef } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { inputBase, selectBase } from "../../lib/ui-styles";
-import { StyledInput, StyledTextarea } from "../common/StyledInput";
+import { StyledInput } from "../common/StyledInput";
 import { needsApiKey, keyPlaceholder, isLocalProvider } from "../../lib/providers";
 import { fetchProviderModels } from "../../lib/gateway-api";
 import { getGatewayUrl } from "../../lib/config";
@@ -13,6 +13,7 @@ import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
 import { EmbeddingModelTab } from "./EmbeddingModelTab";
 import { useTranslation } from "../../i18n/useTranslation";
+import { Tooltip } from "../common/Tooltip";
 import { TabButton } from "../common/tab";
 
 type HarnessTab = "providers" | "search" | "mcp" | "embedding";
@@ -469,23 +470,26 @@ function ProvidersTab() {
                     <div className="flex items-center justify-between gap-2">
                       <span className="shrink-0 text-xs font-medium">{providerName}</span>
                       <div className="flex items-center gap-2 shrink-0">
-                        <button
-                          onClick={() => handleSetDefaultProvider(keyEntry.provider)}
-                          className={cn(
-                            "rounded p-0.5",
-                            config?.default_provider === keyEntry.provider
-                              ? "text-amber-500"
-                              : "text-zinc-400 hover:text-amber-500 dark:hover:text-amber-400",
-                          )}
-                          title={config?.default_provider === keyEntry.provider ? t("harness.defaultProvider") : t("harness.setDefaultProvider")}
-                        >
-                          <Star className="h-3.5 w-3.5" />
-                        </button>
+                        <Tooltip content={config?.default_provider === keyEntry.provider ? t("harness.defaultProvider") : t("harness.setDefaultProvider")} variant="plain">
+                          <button
+                            onClick={() => handleSetDefaultProvider(keyEntry.provider)}
+                            className={cn(
+                              "rounded p-0.5",
+                              config?.default_provider === keyEntry.provider
+                                ? "text-amber-500"
+                                : "text-zinc-400 hover:text-amber-500 dark:hover:text-amber-400",
+                            )}
+                          >
+                            <Star className="h-3.5 w-3.5" />
+                          </button>
+                        </Tooltip>
                         <span className="text-xs" style={{ color: "var(--color-accent)" }}>{t("harness.active")}</span>
                         {isLocal ? (
-                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" title="Local provider — no API key needed">
-                            🏠 {t("harness.local")}
-                          </span>
+                          <Tooltip content="Local provider — no API key needed" variant="plain">
+                            <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400">
+                              🏠 {t("harness.local")}
+                            </span>
+                          </Tooltip>
                         ) : (
                           <span className="text-xs text-zinc-400">{t("harness.key")}: {keyEntry.key_preview}</span>
                         )}
@@ -512,9 +516,11 @@ function ProvidersTab() {
                         <span className="text-xs text-zinc-400">—</span>
                       )}
                       {keyEntry.compact_model && (
-                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400" title="Compact model for summarization">
-                          {t("harness.compact")}: {keyEntry.compact_model}
-                        </span>
+                        <Tooltip content="Compact model for summarization" variant="plain">
+                          <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs text-zinc-600 dark:bg-zinc-700 dark:text-zinc-400">
+                            {t("harness.compact")}: {keyEntry.compact_model}
+                          </span>
+                        </Tooltip>
                       )}
                     </div>
                   </div>

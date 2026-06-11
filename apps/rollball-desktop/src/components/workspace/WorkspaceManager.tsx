@@ -189,7 +189,7 @@ export function WorkspaceManager({ agentId, onClose }: WorkspaceManagerProps) {
                     <button
                       onClick={() => setDeleteConfirm({ open: true, id: dir.id, name: dir.alias || dir.path.split(/[\/\\]/).filter(Boolean).pop() || dir.path })}
                       className="rounded-md p-1.5 text-zinc-400 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400"
-                      title="Remove workspace"
+                      
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>

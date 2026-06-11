@@ -4,6 +4,7 @@ import { useChatStore } from "../../stores/chatStore";
 import { MessageSquarePlus, Clock, MessageCircle, ChevronDown, Loader2, Trash2 } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { useTranslation } from "../../i18n/useTranslation";
+import { Tooltip } from "../common/Tooltip";
 
 interface SessionPanelProps {
   agentId: string;
@@ -190,17 +191,18 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setConfirmDelete(session.session_id);
-                      }}
-                      disabled={deletingId !== null}
-                      className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                      title={t("sessionPanel.deleteSession")}
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
+                    <Tooltip content={t("sessionPanel.deleteSession")} variant="plain">
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setConfirmDelete(session.session_id);
+                        }}
+                        disabled={deletingId !== null}
+                        className="rounded p-1 text-zinc-400 opacity-0 transition-all group-hover:opacity-100 hover:bg-red-50 hover:text-red-600 dark:hover:bg-red-900/20 dark:hover:text-red-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </Tooltip>
                   )}
                 </div>
               );

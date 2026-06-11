@@ -17,6 +17,7 @@ import { LspDocumentTracker } from "./LspDocumentTracker";
 import type { IDisposable } from "monaco-editor";
 import { GoToFilePalette } from "./GoToFilePalette";
 import { GlobalSearchPanel } from "./GlobalSearchPanel";
+import { Tooltip } from "../common/Tooltip";
 
 // ── LSP Install Hints ─────────────────────────────────────────────────
 
@@ -169,10 +170,12 @@ function LspIndicator({ status, statusMessage, language }: { status: LspStatus; 
         // error
         const tooltip = statusMessage || "unknown error";
         content = (
-            <span className="flex items-center gap-1 text-[10px] text-amber-500" title={tooltip}>
-                <Circle className="h-2 w-2" />
-                <span>{language} LSP unavailable</span>
-            </span>
+            <Tooltip content={tooltip} variant="plain">
+                <span className="flex items-center gap-1 text-[10px] text-amber-500">
+                    <Circle className="h-2 w-2" />
+                    <span>{language} LSP unavailable</span>
+                </span>
+            </Tooltip>
         );
     }
 
@@ -199,14 +202,15 @@ function LspIndicator({ status, statusMessage, language }: { status: LspStatus; 
                         <span className="flex-1 select-all break-all text-zinc-700 dark:text-zinc-300">
                             {hint.command}
                         </span>
-                        <button
-                            type="button"
-                            onClick={copyToClipboard}
-                            title="Copy"
-                            className="shrink-0 rounded p-0.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
-                        >
-                            {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
-                        </button>
+                        <Tooltip content="Copy" variant="plain">
+                            <button
+                                type="button"
+                                onClick={copyToClipboard}
+                                className="shrink-0 rounded p-0.5 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200 transition-colors"
+                            >
+                                {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                            </button>
+                        </Tooltip>
                     </div>
                     {hint.url && (
                         <a
@@ -543,6 +547,23 @@ export function FileEditorPanel({ width }: { width: number }) {
                 setShowGoToFile(true);
             },
         );
+
+        // Ctrl+Shift+P / Cmd+Shift+P — Command Palette (Go to File).
+        // In VS Code this opens the Command Palette; here we reuse the
+        // GoToFilePalette since a dedicated command palette doesn't exist yet.
+        // Without this, the event bubbles to the browser and triggers Print.
+        // KeyCode.KeyP = 46 in monaco-editor 0.55.x.
+        editor.addAction({
+            id: "rollball.commandPalette",
+            label: "Command Palette",
+            keybindings: [
+                // eslint-disable-next-line no-bitwise
+                monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
+            ],
+            run: () => {
+                setShowGoToFile(true);
+            },
+        });
 
         // Ctrl+Shift+F / Cmd+Shift+F — Search in files (ripgrep backend).
         // Same visual style as GoToFilePalette.
@@ -1074,61 +1095,63 @@ export function FileEditorPanel({ width }: { width: number }) {
                     {openFiles.map((file) => {
                         const isActive = file.id === activeFileId;
                         return (
-                            <TabItem
-                                key={file.id}
-                                data-file-id={file.id}
-                                onClick={() => setActiveFile(file.id)}
-                                onContextMenu={(e) => handleTabContextMenu(e, file)}
-                                active={isActive}
-                                title={file.relPath}
-                            >
-                                {/* Dirty indicator / loading */}
-                                {file.loading ? (
-                                    <Loader2 className="h-3 w-3 shrink-0 animate-spin text-zinc-400" />
-                                ) : file.dirty ? (
-                                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
-                                ) : null}
-                                {/* File name */}
-                                <span className="min-w-0 flex-1 truncate text-[length:var(--tab-font-size)] leading-[var(--tab-line-height)]">
-                                    {file.fileName}
-                                </span>
-                                {/* Close button */}
-                                <button
-                                    onClick={(e) => handleClose(e, file)}
-                                    className={cn(
-                                        "shrink-0 rounded p-0.5 transition-opacity",
-                                        isActive
-                                            ? "opacity-60 hover:opacity-100 hover:bg-zinc-200 dark:hover:bg-zinc-600"
-                                            : "opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-zinc-300 dark:hover:bg-zinc-600",
-                                    )}
-                                    title="Close"
+                            <Tooltip content={file.relPath} variant="plain" key={file.id}>
+                                <TabItem
+                                    data-file-id={file.id}
+                                    onClick={() => setActiveFile(file.id)}
+                                    onContextMenu={(e) => handleTabContextMenu(e, file)}
+                                    active={isActive}
                                 >
-                                    <X className="h-3 w-3" />
-                                </button>
-                            </TabItem>
+                                    {/* Dirty indicator / loading */}
+                                    {file.loading ? (
+                                        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-zinc-400" />
+                                    ) : file.dirty ? (
+                                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--color-accent)]" />
+                                    ) : null}
+                                    {/* File name */}
+                                    <span className="min-w-0 flex-1 truncate text-[length:var(--tab-font-size)] leading-[var(--tab-line-height)]">
+                                        {file.fileName}
+                                    </span>
+                                    {/* Close button */}
+                                    <Tooltip content="Close" variant="plain">
+                                        <button
+                                            onClick={(e) => handleClose(e, file)}
+                                            className={cn(
+                                                "shrink-0 rounded p-0.5 transition-opacity",
+                                                isActive
+                                                    ? "opacity-60 hover:opacity-100 hover:bg-zinc-200 dark:hover:bg-zinc-600"
+                                                    : "opacity-0 group-hover:opacity-60 hover:!opacity-100 hover:bg-zinc-300 dark:hover:bg-zinc-600",
+                                            )}
+                                        >
+                                            <X className="h-3 w-3" />
+                                        </button>
+                                    </Tooltip>
+                                </TabItem>
+                            </Tooltip>
                         );
                     })}
                 </ScrollableTabBar>
 
                 {/* Save button */}
                 {activeFile && !activeFile.loading && (
-                    <button
-                        onClick={() => activeFile.dirty && void saveFile(activeFile.id)}
-                        disabled={!activeFile.dirty || activeFile.saving}
-                        className={cn(
-                            "flex items-center justify-center rounded p-1 transition-colors shrink-0",
-                            activeFile.dirty
-                                ? "text-[var(--color-accent)] hover:bg-zinc-200 dark:hover:bg-zinc-700"
-                                : "text-zinc-300 dark:text-zinc-600 cursor-default",
-                        )}
-                        title="Save (Ctrl+S)"
-                    >
-                        {activeFile.saving ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                            <Save className="h-3.5 w-3.5" />
-                        )}
-                    </button>
+                    <Tooltip content="Save (Ctrl+S)" variant="plain">
+                        <button
+                            onClick={() => activeFile.dirty && void saveFile(activeFile.id)}
+                            disabled={!activeFile.dirty || activeFile.saving}
+                            className={cn(
+                                "flex items-center justify-center rounded p-1 transition-colors shrink-0",
+                                activeFile.dirty
+                                    ? "text-[var(--color-accent)] hover:bg-zinc-200 dark:hover:bg-zinc-700"
+                                    : "text-zinc-300 dark:text-zinc-600 cursor-default",
+                            )}
+                        >
+                            {activeFile.saving ? (
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                                <Save className="h-3.5 w-3.5" />
+                            )}
+                        </button>
+                    </Tooltip>
                 )}
             </div>
 

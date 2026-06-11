@@ -364,7 +364,7 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
                             <button
                                 onClick={(e) => { e.preventDefault(); setCaseSensitive((p) => !p); }}
                                 onMouseDown={(e) => e.preventDefault()}
-                                title="Match Case"
+
                                 style={{
                                     width: 20, height: 20,
                                     display: "flex", alignItems: "center", justifyContent: "center",
@@ -388,7 +388,6 @@ export function GlobalSearchPanel({ agentId, workspaceId, onClose }: GlobalSearc
                             <button
                                 onClick={(e) => { e.preventDefault(); setWholeWord((p) => !p); }}
                                 onMouseDown={(e) => e.preventDefault()}
-                                title="Match Whole Word"
                                 style={{
                                     width: 20, height: 20,
                                     display: "flex", alignItems: "center", justifyContent: "center",

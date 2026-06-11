@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useDebugStore } from "../../stores/debugStore";
 import { cn } from "../../lib/utils";
+import { Tooltip } from "../common/Tooltip";
 import {
   Play,
   Pause,
@@ -307,21 +308,22 @@ export function ControlButton({
   disabled?: boolean;
 }) {
   return (
-    <button
-      onClick={onClick}
-      title={title}
-      disabled={disabled}
-      className={cn(
-        "rounded p-1.5 transition-colors",
-        disabled
-          ? "cursor-not-allowed text-zinc-300 dark:text-zinc-600"
-          : active
-            ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
-            : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
-      )}
-    >
-      {children}
-    </button>
+    <Tooltip content={title} variant="plain">
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={cn(
+          "rounded p-1.5 transition-colors",
+          disabled
+            ? "cursor-not-allowed text-zinc-300 dark:text-zinc-600"
+            : active
+              ? "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400"
+              : "text-zinc-500 hover:bg-zinc-200 hover:text-zinc-700 dark:text-zinc-400 dark:hover:bg-zinc-700 dark:hover:text-zinc-200"
+        )}
+      >
+        {children}
+      </button>
+    </Tooltip>
   );
 }
 
@@ -403,16 +405,17 @@ export function SnapshotNode({
         <span className="ml-1 text-[10px] text-zinc-400 dark:text-zinc-500">
           ~{snapshot.total_token_estimate} tok
         </span>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onRewind(snapshot.iteration);
-          }}
-          title={`Rewind to iteration ${snapshot.iteration}`}
-          className="ml-auto rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
-        >
+        <Tooltip content={`Rewind to iteration ${snapshot.iteration}`} variant="plain">
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onRewind(snapshot.iteration);
+            }}
+            className="ml-auto rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-100 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
+          >
           <Rewind className="h-3 w-3" />
         </button>
+        </Tooltip>
       </div>
 
       {/* Sections */}
@@ -447,6 +450,7 @@ export function SnapshotNode({
                     </span>
                   </button>
                   {/* Edit button — opens inline editor with the section's full content */}
+                  <Tooltip content="Edit section" variant="plain">
                   <button
                     onClick={async () => {
                       const cacheKey = `${snapshot.iteration}:${sectionKey}`;
@@ -461,11 +465,11 @@ export function SnapshotNode({
                         }
                       }
                     }}
-                    title="Edit section"
                     className="rounded p-0.5 text-zinc-400 transition-colors hover:bg-zinc-200 hover:text-zinc-600 dark:hover:bg-zinc-700 dark:hover:text-zinc-300"
                   >
                     <Edit3 className="h-2.5 w-2.5" />
                   </button>
+                  </Tooltip>
                 </div>
 
                 {/* Section content (lazy-loaded or inline-editing) */}
@@ -497,14 +501,15 @@ export function SnapshotNode({
                             <X className="h-2.5 w-2.5" />
                             Cancel
                           </button>
-                          <button
-                            onClick={() => navigator.clipboard.writeText(editingSection.current)}
-                            title="Copy content"
-                            className="ml-auto flex items-center gap-0.5 rounded px-2 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-700"
-                          >
+                          <Tooltip content="Copy content" variant="plain">
+                            <button
+                              onClick={() => navigator.clipboard.writeText(editingSection.current)}
+                              className="ml-auto flex items-center gap-0.5 rounded px-2 py-0.5 text-[10px] text-zinc-500 transition-colors hover:bg-zinc-200 dark:text-zinc-400 dark:hover:bg-zinc-700"
+                            >
                             <Copy className="h-2.5 w-2.5" />
                             Copy
                           </button>
+                          </Tooltip>
                         </div>
                       </div>
                     ) : cachedContent ? (

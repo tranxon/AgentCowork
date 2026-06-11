@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import { useUserProfileStore } from "../../stores/userProfileStore";
 import type { BoringAvatarVariant } from "../../lib/types";
+import { Tooltip } from "./Tooltip";
 
 // ── Built-in icons (bundled JPG assets) ────────────────────────────────
 // JPG files live at src/assets/builtin-icons/icon-XX.jpg.
@@ -49,20 +50,21 @@ function LetterAvatar({ name, size, palette }: { name: string; size: number; pal
   const bgColor = pickColor(name, palette);
   const textColor = "#ffffff";
   return (
-    <div
-      className="rounded-full ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 flex items-center justify-center font-bold select-none"
-      style={{
-        width: size,
-        height: size,
-        backgroundColor: bgColor,
-        color: textColor,
-        fontSize: size * 0.42,
-        lineHeight: 1,
-      }}
-      title={name}
-    >
-      {initial}
-    </div>
+    <Tooltip content={name} variant="plain">
+      <div
+        className="rounded-full ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 flex items-center justify-center font-bold select-none"
+        style={{
+          width: size,
+          height: size,
+          backgroundColor: bgColor,
+          color: textColor,
+          fontSize: size * 0.42,
+          lineHeight: 1,
+        }}
+      >
+        {initial}
+      </div>
+    </Tooltip>
   );
 }
 
