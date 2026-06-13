@@ -66,6 +66,17 @@ pub struct Cli {
     #[arg(long, env = "ROLLBALL_GATEWAY_CONFIG")]
     pub config_path: Option<String>,
 
+    /// Gateway home (application root) directory.
+    ///
+    /// Contains `config/` and `data/` subdirectories. Default:
+    /// - Linux/macOS: `$HOME/.rollball/rollball-gateway/`
+    /// - Windows:     `%USERPROFILE%\.rollball\rollball-gateway\`
+    ///
+    /// Overrides the `ROLLBALL_HOME` environment variable. Useful for
+    /// tests and running multiple isolated instances side-by-side.
+    #[arg(long, env = "ROLLBALL_HOME")]
+    pub home: Option<String>,
+
     /// LSP config directory (contains lsp_servers.json and lsp_install/)
     ///
     /// In local mode (Desktop App), Desktop App passes its Tauri resource_dir
@@ -137,7 +148,22 @@ impl Cli {
         // Print RollBall logo with green color
         print_logo();
 
-        // Load config first (needed for log file settings)
+        // Apply --home flag to ROLLBALL_HOME so config path resolution
+        // picks it up consistently (CLI > env > default).
+        if let Some(home) = &self.home {
+            if !home.is_empty() {
+                // SAFETY: single-threaded at this point in startup.
+                unsafe { std::env::set_var("ROLLBALL_HOME", home); }
+            }
+        }
+
+        // One-time migration from the legacy split layout. Must run BEFORE
+        // init_tracing creates the log dir, otherwise `new_root.exists()`
+        // would be true (the freshly-created log dir counts) and migration
+        // would skip. Uses eprintln! because tracing isn't set up yet.
+        GatewayConfig::migrate_legacy_layout();
+
+        // Load config (paths now reflect the migrated layout).
         let config = GatewayConfig::from_cli(&self)?;
         // Initialize tracing with reload support
         let log_reload_handle = init_tracing(&config.log_level, config.log_file_size_mb, config.log_file_count);
@@ -227,7 +253,8 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CrlfStderr {
     }
 }
 ///
-/// Logs are written to stderr AND to `~/.config/rollball-gateway/logs/gateway.log`.
+/// Logs are written to stderr AND to `<root>/data/logs/gateway-<timestamp>.log`
+/// (sibling of `embed.log`; both gateway and embed logs live under `data/logs/`).
 ///
 /// Returns the reload handle so the Gateway can dynamically change
 /// the log level at runtime via the HTTP config API.
@@ -240,8 +267,8 @@ fn init_tracing(level: &str, log_file_size_mb: u64, log_file_count: u64) -> Opti
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new(level));
 
-    // Log directory: ~/.config/rollball-gateway/logs/
-    let log_dir = GatewayConfig::project_config_dir().join("logs");
+    // Log directory: <root>/data/logs/  (sibling of embed.log)
+    let log_dir = GatewayConfig::project_data_dir().join("logs");
 
     if let Err(e) = std::fs::create_dir_all(&log_dir) {
         eprintln!(

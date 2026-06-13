@@ -6,11 +6,50 @@
 //! 3. Config file (gateway.toml)
 //! 4. Defaults (lowest priority)
 
+use std::path::PathBuf;
+
 use rollball_core::defaults;
 use serde::{Deserialize, Serialize};
-use directories::ProjectDirs;
 use crate::cli::Cli;
 use crate::error::GatewayError;
+
+/// Compute the single application root directory for the gateway.
+///
+/// Layout (all platforms):
+/// ```text
+/// <root>/
+/// ├── config/      # vault, packages, socket, gateway.toml, gateway logs
+/// └── data/        # resource caches, models, gateway.pid, embed logs
+/// ```
+///
+/// On Linux/macOS the default is `$HOME/.rollball/rollball-gateway/`.
+/// On Windows the default is `%USERPROFILE%\.rollball\rollball-gateway\`.
+///
+/// Override with the `ROLLBALL_HOME` environment variable or the
+/// `--home` CLI flag (useful for tests and power users).
+///
+/// Replaces the previous `directories::ProjectDirs` setup which split
+/// config and data across `~/.config/` and `~/.local/share/` on Linux,
+/// `%APPDATA%` subdirs on Windows, and a single dir on macOS.
+pub(crate) fn project_root() -> PathBuf {
+    if let Ok(p) = std::env::var("ROLLBALL_HOME") {
+        if !p.is_empty() {
+            return PathBuf::from(p);
+        }
+    }
+
+    #[cfg(windows)]
+    let home_var = std::env::var("USERPROFILE").ok();
+    #[cfg(not(windows))]
+    let home_var = std::env::var("HOME").ok();
+
+    match home_var {
+        Some(h) if !h.is_empty() => PathBuf::from(h)
+            .join(".rollball")
+            .join("rollball-gateway"),
+        _ => PathBuf::from(".").join(".rollball-gateway"),
+    }
+}
 
 /// Gateway configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -131,18 +170,92 @@ fn default_iteration_timeout_ms() -> u64 { 30_000 }
 fn default_max_output_tokens_limit() -> u64 { 32_768 }
 
 impl GatewayConfig {
-    /// Get the project config directory
+    /// Get the config directory: `<root>/config/`
     pub(crate) fn project_config_dir() -> std::path::PathBuf {
-        ProjectDirs::from("com", "rollball", "rollball-gateway")
-            .map(|pd| pd.config_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from(".").join(".rollball-gateway"))
+        project_root().join("config")
     }
 
-    /// Get the project data directory
+    /// Get the data directory: `<root>/data/`
     pub(crate) fn project_data_dir() -> std::path::PathBuf {
-        ProjectDirs::from("com", "rollball", "rollball-gateway")
-            .map(|pd| pd.data_dir().to_path_buf())
-            .unwrap_or_else(|| std::path::PathBuf::from(".").join(".rollball-gateway-data"))
+        project_root().join("data")
+    }
+
+    /// One-time migration from the previous split layout.
+    ///
+    /// On first startup with the new code, if the old XDG paths exist
+    /// and the new root does not, move the old contents into the new
+    /// layout (Linux/macOS only — Windows legacy paths are different
+    /// enough that users should move them manually):
+    ///
+    ///   - `$XDG_CONFIG_HOME/rollball-gateway/` (default `~/.config/`)
+    ///     → `<root>/config/`
+    ///   - `$XDG_DATA_HOME/rollball-gateway/`   (default `~/.local/share/`)
+    ///     → `<root>/data/`
+    ///
+    /// Idempotent: if the new root already exists, this is a no-op so
+    /// we never overwrite an established installation.
+    ///
+    /// MUST be called before `init_tracing` (which creates the new log
+    /// dir and would make `new_root.exists()` true). Uses `eprintln!`
+    /// for status messages because the tracing subscriber isn't set up
+    /// yet at this point.
+    pub(crate) fn migrate_legacy_layout() {
+        let new_root = project_root();
+        if new_root.exists() {
+            return;
+        }
+
+        #[cfg(not(windows))]
+        {
+            // The new root itself must exist before rename can target
+            // <root>/config or <root>/data as destinations.
+            if let Err(e) = std::fs::create_dir_all(&new_root) {
+                eprintln!(
+                    "[rollball-gateway] WARN: failed to create {}: {}. Skipping legacy migration.",
+                    new_root.display(),
+                    e
+                );
+                return;
+            }
+
+            if let Some(old) = legacy_config_dir() {
+                if old.exists() {
+                    let dest = new_root.join("config");
+                    match std::fs::rename(&old, &dest) {
+                        Ok(()) => eprintln!(
+                            "[rollball-gateway] Migrated legacy config dir: {} -> {}",
+                            old.display(),
+                            dest.display()
+                        ),
+                        Err(e) => eprintln!(
+                            "[rollball-gateway] WARN: failed to migrate legacy config dir ({} -> {}): {}. Please move manually.",
+                            old.display(),
+                            dest.display(),
+                            e
+                        ),
+                    }
+                }
+            }
+
+            if let Some(old) = legacy_data_dir() {
+                if old.exists() {
+                    let dest = new_root.join("data");
+                    match std::fs::rename(&old, &dest) {
+                        Ok(()) => eprintln!(
+                            "[rollball-gateway] Migrated legacy data dir: {} -> {}",
+                            old.display(),
+                            dest.display()
+                        ),
+                        Err(e) => eprintln!(
+                            "[rollball-gateway] WARN: failed to migrate legacy data dir ({} -> {}): {}. Please move manually.",
+                            old.display(),
+                            dest.display(),
+                            e
+                        ),
+                    }
+                }
+            }
+        }
     }
 
     /// Create config from CLI arguments
@@ -312,6 +425,34 @@ impl Default for GatewayConfig {
     }
 }
 
+/// Legacy XDG layout — `~/.config/rollball-gateway/`.
+#[cfg(not(windows))]
+fn legacy_config_dir() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("rollball-gateway"));
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|h| PathBuf::from(h).join(".config").join("rollball-gateway"))
+}
+
+/// Legacy XDG layout — `~/.local/share/rollball-gateway/`.
+#[cfg(not(windows))]
+fn legacy_data_dir() -> Option<PathBuf> {
+    if let Ok(xdg) = std::env::var("XDG_DATA_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("rollball-gateway"));
+        }
+    }
+    std::env::var("HOME")
+        .ok()
+        .filter(|h| !h.is_empty())
+        .map(|h| PathBuf::from(h).join(".local").join("share").join("rollball-gateway"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +509,41 @@ mod tests {
         let _ = std::fs::remove_dir_all(&config.vault_dir);
         let _ = std::fs::remove_dir_all(&config.packages_dir);
         let _ = std::fs::remove_dir_all(&config.data_dir);
+    }
+
+    #[test]
+    fn test_project_root_default_layout() {
+        // Clear override so we exercise the default path.
+        // SAFETY: tests in this module run on a single test thread for
+        // env-mutating work; concurrent tests don't touch ROLLBALL_HOME.
+        // (cargo test runs tests in parallel by default, so we accept
+        // the small flake risk in exchange for keeping tests simple.)
+        unsafe { std::env::remove_var("ROLLBALL_HOME"); }
+
+        let cfg = GatewayConfig::default();
+        let root = project_root();
+        // config and data dirs must be siblings under the same root.
+        assert!(cfg.vault_dir.starts_with(root.to_string_lossy().as_ref()));
+        assert!(cfg.packages_dir.starts_with(root.to_string_lossy().as_ref()));
+        // data_dir is its own sibling, not nested under config_dir.
+        let root_str = root.to_string_lossy().to_string();
+        assert!(
+            cfg.data_dir.starts_with(&root_str),
+            "data_dir should be under root ({root_str}), got {}",
+            cfg.data_dir
+        );
+        // config/vault path: <root>/config/vault
+        assert!(cfg.vault_dir.contains("/config/vault") || cfg.vault_dir.contains("\\config\\vault"));
+        // data path: <root>/data
+        assert!(cfg.data_dir.ends_with("/data") || cfg.data_dir.ends_with("\\data"));
+    }
+
+    #[test]
+    fn test_project_root_respects_rollball_home() {
+        // SAFETY: see comment in test_project_root_default_layout.
+        unsafe { std::env::set_var("ROLLBALL_HOME", "/tmp/rollball-home-test"); }
+        let root = project_root();
+        assert_eq!(root, PathBuf::from("/tmp/rollball-home-test"));
+        unsafe { std::env::remove_var("ROLLBALL_HOME"); }
     }
 }

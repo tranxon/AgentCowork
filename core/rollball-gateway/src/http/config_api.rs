@@ -335,12 +335,17 @@ pub async fn delete_logs(
 
     // ── Phase 2: Delete Gateway's own log files ───────────────────────
     {
-        let log_dir = crate::config::GatewayConfig::project_config_dir().join("logs");
+        // Only `gateway-*.log`; leave `embed.log` and any other sibling
+        // log files alone (they belong to other processes).
+        let log_dir = crate::config::GatewayConfig::project_data_dir().join("logs");
         if log_dir.exists() {
             if let Ok(entries) = std::fs::read_dir(&log_dir) {
                 for entry in entries.flatten() {
                     let path = entry.path();
-                    if path.extension().map_or(false, |ext| ext == "log") {
+                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if name.starts_with("gateway-")
+                        && path.extension().map_or(false, |ext| ext == "log")
+                    {
                         if let Err(e) = std::fs::remove_file(&path) {
                             tracing::warn!("Failed to delete Gateway log {:?}: {}", path, e);
                         } else {
