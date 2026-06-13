@@ -53,7 +53,8 @@
         "inputParams": "Enter params... (Enter to send, Shift+Enter for new line)",
         "inputParamsConnecting": "Enter params... (Connecting to agent...)",
         "selectModel": "Select model",
-        "startAgent": "Start Agent"
+        "startAgent": "Start Agent",
+        "llmNotConfigured": "No LLM provider configured. Please add an API key in Harness → Providers."
     },
     "sessionTabBar": {
         "llmReasoning": "LLM is reasoning",

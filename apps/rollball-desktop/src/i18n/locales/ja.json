@@ -53,7 +53,8 @@
         "inputParams": "パラメータを入力...（Enterで送信、Shift+Enterで改行）",
         "inputParamsConnecting": "パラメータを入力...（Agentに接続中...）",
         "selectModel": "Select model",
-        "startAgent": "Start Agent"
+        "startAgent": "Start Agent",
+        "llmNotConfigured": "LLM プロバイダーが設定されていません。Harness → Providers で API キーを追加してください。"
     },
     "sessionTabBar": {
         "llmReasoning": "LLM推論中",

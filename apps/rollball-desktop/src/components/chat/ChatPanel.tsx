@@ -878,7 +878,7 @@ export function ChatPanel() {
           <div className="flex items-center gap-2 border-b border-amber-200 bg-amber-50 px-4 py-2 dark:border-amber-900 dark:bg-amber-950">
             <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
             <span className="text-xs text-amber-700 dark:text-amber-300">
-              No LLM provider configured. Please add an API key in Settings → Providers.
+              {t("chatPanel.llmNotConfigured")}
             </span>
           </div>
         )}
@@ -1326,7 +1326,7 @@ export function ChatPanel() {
                     ? t("chatPanel.sendQueuedAndStop")
                     : t("chatPanel.stop"))
                 : t("chatPanel.sendMessage")}>
-<button
+                <button
                   className={`rounded-lg p-1.5 transition-colors ${sending
                     ? "text-[var(--color-accent)] hover:bg-[var(--color-accent)]/10"
                     : "text-zinc-500 hover:bg-zinc-200 dark:hover:bg-zinc-700 hover:text-zinc-700 dark:hover:text-zinc-200 disabled:opacity-50"
