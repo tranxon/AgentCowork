@@ -91,18 +91,16 @@ Agent Runtime (统一二进制)
 
 ## CONVENTIONS (THIS PROJECT)
 
-- Design docs in **Chinese** (中文); code comments (Rust `//`, `//!`, `///`) **MUST be in English**
-- Multi-language doc translations will be produced after project completion
+- Design docs in both Chinese and English; code comments (Rust `//`, `//!`, `///`) **MUST be in English**
 - `.agent` bundles are **declarative only** — no executable code
-- Version v3.x terminology only — no mixing with older versions
 - ref-repo is **reference only** — not source of truth for RollBall design
 - Rust implementation follows workspace pattern under `core/`: `rollball-core`, `rollball-runtime`, `rollball-gateway`, `rollball-grafeo`, `rollball-vault`, `rollball-sign`
 
 ## ANTI-PATTERNS (THIS PROJECT)
 
 - Do NOT edit `ref-repo/` — it is a separate reference project
-- Do NOT mix v2.x terminology with v3.x design
 - Do NOT implement executable code in `.agent` packages
+- Do NOT commit in Chinese
 
 ## COMMANDS
 
@@ -118,4 +116,3 @@ cd core && cargo test
 
 - Rust crate structure defined in `docs/module-design/00-overview.md`
 - Code reviews follow [.opencode/style-guide.md](./.opencode/style-guide.md)
-- Implementation status: **Design phase — not yet implemented**
