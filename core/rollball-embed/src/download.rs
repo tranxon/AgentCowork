@@ -318,27 +318,37 @@ impl Downloader {
             if let Ok(mut name) = progress.current_file.lock() {
                 *name = onnx_ext_data_local.to_string();
             }
-            // External data is optional — one-shot download, no race
-            // or retries. If the file doesn't exist, the server returns
-            // 404 and we move on immediately.
-            match download_single(
-                &self.http_client,
-                &hf_file_url(hf_repo, &onnx_ext_data_remote, &sources[0]),
-                &ext_data_path,
-                0,
-                progress,
-            ).await {
-                Ok(()) => {
-                    downloaded_files.push(onnx_ext_data_local);
+            // External data is optional — try up to 3 times from the
+            // primary source, but skip the multi-source race and stop
+            // immediately on a permanent error (404).
+            let ext_url = hf_file_url(hf_repo, &onnx_ext_data_remote, &sources[0]);
+            let mut ext_err = None;
+            for attempt in 1..=3u32 {
+                match download_single(&self.http_client, &ext_url, &ext_data_path, 0, progress).await {
+                    Ok(()) => {
+                        downloaded_files.push(onnx_ext_data_local.clone());
+                        ext_err = None;
+                        break;
+                    }
+                    Err(e) => {
+                        ext_err = Some(e);
+                        let is_retryable = match &ext_err {
+                            Some(DownloadError::Http(req_err)) => {
+                                req_err.is_timeout() || req_err.is_connect()
+                                    || req_err.status().is_some_and(|s| s.is_server_error())
+                            }
+                            _ => false,
+                        };
+                        if !is_retryable || attempt == 3 {
+                            break;
+                        }
+                        tracing::warn!(attempt, error = %ext_err.as_ref().unwrap(), "Retrying external data download");
+                        tokio::time::sleep(std::time::Duration::from_secs(attempt as u64 * 2)).await;
+                    }
                 }
-                Err(e) => {
-                    // External data is optional — some models embed weights directly
-                    tracing::info!(
-                        path = %onnx_ext_data_remote,
-                        error = %e,
-                        "External data file not found (model may have embedded weights)"
-                    );
-                }
+            }
+            if let Some(e) = ext_err {
+                tracing::info!(path = %onnx_ext_data_remote, error = %e, "External data file not found (model may have embedded weights)");
             }
         } // else: external data file already exists
 
