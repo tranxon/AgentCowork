@@ -139,15 +139,6 @@ impl DownloadProgress {
         };
         (pct, downloaded, total)
     }
-
-    /// Reset progress for a new file.
-    fn reset_for_file(&self, file_name: &str) {
-        self.bytes_downloaded.store(0, Ordering::Relaxed);
-        self.total_bytes.store(0, Ordering::Relaxed);
-        if let Ok(mut name) = self.current_file.lock() {
-            *name = file_name.to_string();
-        }
-    }
 }
 
 // ── Downloader ──────────────────────────────────────────────────────────
@@ -275,7 +266,12 @@ impl Downloader {
                 return Err(DownloadError::Cancelled);
             }
 
-            progress.reset_for_file(local_name);
+            // Update the current-file label without resetting the
+            // byte counters, so the progress bar moves monotonically
+            // across files instead of jumping back to 0 each time.
+            if let Ok(mut name) = progress.current_file.lock() {
+                *name = local_name.to_string();
+            }
             let local_path = tmp_dir.join(local_name);
             download_file_race(
                 &self.http_client,
@@ -306,7 +302,9 @@ impl Downloader {
             .to_string();
         let ext_data_path = tmp_dir.join(&onnx_ext_data_local);
 
-        progress.reset_for_file(&onnx_ext_data_local);
+        if let Ok(mut name) = progress.current_file.lock() {
+            *name = onnx_ext_data_local.to_string();
+        }
         match download_file_race(
             &self.http_client,
             hf_repo,
