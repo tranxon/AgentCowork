@@ -16,7 +16,7 @@
 use serde::Serialize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::time;
 
@@ -46,20 +46,7 @@ pub enum State {
     },
 }
 
-impl State {
-    /// Stable status string for the SSE `state` event payload.
-    pub fn status(&self) -> &'static str {
-        match self {
-            State::Starting => "starting",
-            State::DownloadingRecommended { .. } => "downloading_recommended",
-            State::Loading { .. } => "loading",
-            State::Ready { .. } => "ready",
-            State::Error { .. } => "error",
-        }
-    }
-}
-
-/// Event flowing over the bus. Both kinds carry an optional `seq` for
+/// Event flowing over the bus. Both kinds carry a `seq` for
 /// client-side ordering checks.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
@@ -67,7 +54,6 @@ pub enum Event {
     /// Periodic liveness signal.
     Heartbeat {
         seq: u64,
-        ts_ms: u128,
     },
     /// High-level state transition.
     State {
@@ -78,9 +64,11 @@ pub enum Event {
 
 /// Bus for broadcasting events to all subscribers.
 ///
-/// Cheap to clone (cheap to share via `Arc`). The underlying
-/// `tokio::sync::broadcast` channel keeps a small ring of recent events
-/// so late subscribers immediately receive the current state.
+/// Cheap to clone (cheap to share via `Arc`). Uses `tokio::sync::broadcast`
+/// internally. Each new subscriber starts receiving events from the moment
+/// of subscription onwards — **broadcast does not replay historical events**.
+/// The gateway's supervisor compensates for this by bootstrapping from
+/// `/health` on connect.
 #[derive(Clone)]
 pub struct EventBus {
     tx: broadcast::Sender<Arc<Event>>,
@@ -117,13 +105,7 @@ impl EventBus {
     /// Publish a heartbeat. Internal — the heartbeat task calls this.
     fn publish_heartbeat(&self) -> u64 {
         let seq = self.seq.fetch_add(1, Ordering::Relaxed);
-        let event = Arc::new(Event::Heartbeat {
-            seq,
-            ts_ms: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| d.as_millis())
-                .unwrap_or(0),
-        });
+        let event = Arc::new(Event::Heartbeat { seq });
         let _ = self.tx.send(event);
         seq
     }

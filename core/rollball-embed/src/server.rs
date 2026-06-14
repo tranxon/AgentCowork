@@ -890,39 +890,31 @@ pub async fn events(
             match rx.recv().await {
                 Ok(event) => {
                     let sse_event = match &*event {
-                        BusEvent::Heartbeat { seq, ts_ms } => {
+                        BusEvent::Heartbeat { seq } => {
                             Event::default()
                                 .event("heartbeat")
-                                .data(format!(r#"{{"seq":{seq},"ts_ms":{ts_ms}}}"#))
+                                .data(serde_json::json!({"seq": seq}).to_string())
                         }
                         BusEvent::State { seq, state } => {
                             let payload = match state {
                                 BusState::Starting => {
-                                    r#"{"status":"starting","model_id":null,"dimension":0}"#.to_string()
+                                    serde_json::json!({"status":"starting","model_id":null,"dimension":0})
                                 }
                                 BusState::DownloadingRecommended { model_id, progress } => {
-                                    format!(
-                                        r#"{{"status":"downloading_recommended","model_id":"{model_id}","dimension":0,"progress":{progress}}}"#
-                                    )
+                                    serde_json::json!({"status":"downloading_recommended","model_id":model_id,"dimension":0,"progress":progress})
                                 }
                                 BusState::Loading { model_id } => {
-                                    format!(
-                                        r#"{{"status":"loading","model_id":"{model_id}","dimension":0}}"#
-                                    )
+                                    serde_json::json!({"status":"loading","model_id":model_id,"dimension":0})
                                 }
                                 BusState::Ready { model_id, dimension } => {
-                                    format!(
-                                        r#"{{"status":"ready","model_id":"{model_id}","dimension":{dimension}}}"#
-                                    )
+                                    serde_json::json!({"status":"ready","model_id":model_id,"dimension":dimension})
                                 }
                                 BusState::Error { message } => {
-                                    format!(
-                                        r#"{{"status":"error","model_id":null,"dimension":0,"message":{}}}"#,
-                                        serde_json::json!(message)
-                                    )
+                                    serde_json::json!({"status":"error","model_id":null,"dimension":0,"message":message})
                                 }
                             };
-                            Event::default().event("state").data(format!(r#"{{"seq":{seq},"state":{payload}}}"#))
+                            let data = serde_json::json!({"seq": seq, "state": payload});
+                            Event::default().event("state").data(data.to_string())
                         }
                     };
                     yield Ok(sse_event);

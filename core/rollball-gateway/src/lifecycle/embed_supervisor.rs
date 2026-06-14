@@ -45,13 +45,8 @@ use super::embed::spawn_embed_process;
 pub type SharedState = Arc<RwLock<GatewayState>>;
 
 /// Heartbeat cadence from embed (must match `event_bus::spawn_heartbeat`).
-const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(2);
-/// Process declared dead if no heartbeat for this long. 5× the interval
-/// — generous enough to absorb transient hiccups (GC pause, CPU contention)
-/// without taking minutes to notice a real hang.
 const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Connect / reconnect backoff bounds.
-const RECONNECT_MIN: Duration = Duration::from_secs(1);
 const RECONNECT_MAX: Duration = Duration::from_secs(30);
 /// Restart backoff bounds (separate from reconnect — this is for the
 /// process itself after a confirmed failure).
@@ -94,16 +89,6 @@ struct StateEventEnvelope {
     state: StateEvent,
 }
 
-/// Parsed `heartbeat` event payload: `{"seq": N, "ts_ms": N}`.
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
-struct HeartbeatEvent {
-    #[serde(default)]
-    seq: Option<u64>,
-    #[serde(default)]
-    ts_ms: Option<u64>,
-}
-
 /// Tracks consecutive restart attempts to enforce `MAX_RESTART_ATTEMPTS`.
 struct RestartHistory {
     /// Timestamps of recent restarts within the last `RESTART_WINDOW`.
@@ -122,11 +107,6 @@ impl RestartHistory {
         self.attempts.retain(|t| now.duration_since(*t) < RESTART_WINDOW);
         self.attempts.push(now);
         self.attempts.len()
-    }
-
-    #[allow(dead_code)]
-    fn clear(&mut self) {
-        self.attempts.clear();
     }
 }
 
@@ -306,7 +286,7 @@ async fn run_supervisor(
                 let new_child_pid = new_state.pid;
                 let state_for_reaper = state.clone();
                 tokio::spawn(async move {
-                    let mut child = child;
+                    let mut child = child; // wait() needs &mut
                     let _ = child.wait().await;
                     tracing::warn!(pid = new_child_pid, "Embed (respawned) exited");
                     let mut gw = state_for_reaper.write().await;
@@ -328,6 +308,32 @@ async fn run_supervisor(
             Err(e) => {
                 tracing::error!(error = %e, "Failed to restart embed process");
                 // Loop will retry per backoff policy.
+            }
+        }
+
+        // After a restart, give the new embed child a short grace
+        // window to boot before we attempt to connect. This is the
+        // same logic as the initial startup grace, but inlined here
+        // so it runs after every restart, not just the first one.
+        {
+            let deadline = Instant::now() + STARTUP_GRACE;
+            loop {
+                if try_connect_events(port).await {
+                    tracing::info!("Restarted embed is serving /events");
+                    break;
+                }
+                if state.read().await.embed_process.is_none() {
+                    tracing::warn!("Restarted embed died during grace window");
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    tracing::warn!(
+                        "Restarted embed did not respond within {:?}; entering monitor anyway",
+                        STARTUP_GRACE
+                    );
+                    break;
+                }
+                sleep(STARTUP_POLL).await;
             }
         }
     }
@@ -435,8 +441,7 @@ async fn run_monitor_session(
                         while let Some(idx) = buffer.find("\n\n") {
                             let frame: String = buffer.drain(..idx + 2).collect();
                             match parse_sse_frame(&frame) {
-                                Some(SseFrame::Heartbeat(hb)) => {
-                                    let _ = hb; // ack via timestamp
+                                Some(SseFrame::Heartbeat) => {
                                     last_heartbeat = Instant::now();
                                 }
                                 Some(SseFrame::State(s)) => {
@@ -465,10 +470,9 @@ async fn run_monitor_session(
 }
 
 enum SseFrame {
-    Heartbeat(HeartbeatEvent),
+    Heartbeat,
     State(StateEvent),
-    /// SSE comment line (e.g. `:lagged:3`). Field unused; preserved for
-    /// variant stability in case the caller wants to log it.
+    /// SSE comment line (e.g. `:lagged:3`).
     #[allow(dead_code)]
     Comment(String),
 }
@@ -497,9 +501,7 @@ fn parse_sse_frame(frame: &str) -> Option<SseFrame> {
 
     let payload = data_lines.join("\n");
     match event_name.as_deref() {
-        Some("heartbeat") => serde_json::from_str(&payload)
-            .map(SseFrame::Heartbeat)
-            .ok(),
+        Some("heartbeat") => Some(SseFrame::Heartbeat),
         Some("state") => serde_json::from_str::<StateEventEnvelope>(&payload)
             .map(|env| SseFrame::State(env.state))
             .ok(),
