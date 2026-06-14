@@ -261,33 +261,60 @@ pub async fn start_local_gateway(
 
 /// Spawn the Gateway process without waiting for readiness.
 /// Used by both `start_local_gateway` command and Rust-side early startup.
+///
+/// # Concurrency
+///
+/// This function is safe to call concurrently from multiple Tauri commands.
+/// The entire decision pipeline (`check in-process handle → probe port →
+/// kill stale → spawn → store`) runs under a single `Mutex` critical
+/// section, so React StrictMode's dev double-invocation, or any other
+/// race, results in **at most one** child Gateway process. Late callers
+/// see the freshly-spawned child stored in `state.gateway_process` and
+/// return immediately. A port probe additionally detects Gateway
+/// instances started outside of Tauri (e.g. a leftover from a crashed
+/// previous run still holding the port) and skips spawning in that case
+/// as well.
 pub async fn spawn_gateway(
     state: &AppState,
     app_handle: &tauri::AppHandle,
 ) -> Result<(), String> {
     tracing::info!("[BOOT] spawn_gateway entered");
 
-    // Check if already running (tracked by our process handle)
-    {
-        let proc = state.gateway_process.lock().await;
-        if let Some(ref child) = *proc {
-            if child_output_is_alive(child) {
-                tracing::info!("[BOOT] Gateway already running, skipping spawn");
-                return Ok(());
-            }
+    // ── Single critical section: serialise check → spawn → store ─────
+    // Holding the lock across the spawn guarantees that any concurrent
+    // caller observes either `None` (and waits) or a valid `Child`
+    // (and skips the work entirely).
+    let mut proc_guard = state.gateway_process.lock().await;
+
+    // 1) In-process handle check: did we already spawn one?
+    if let Some(ref child) = *proc_guard {
+        if child_output_is_alive(child) {
+            tracing::info!("[BOOT] Gateway already running (in-process handle), skipping spawn");
+            return Ok(());
         }
     }
 
-    // Kill any stale Gateway process left from a previous run.
-    // When Ctrl+C kills the Desktop App, the Gateway child process is orphaned
-    // and keeps holding port 19876. We must kill it before spawning a new one.
+    // 2) Port probe: is there already a Gateway listening on the default
+    //    URL? Covers the case of a stale process from a previous run that
+    //    is reachable but was never tracked in our handle.
+    let base_url = defaults::GATEWAY_HTTP_URL;
+    if is_gateway_reachable(base_url).await {
+        tracing::info!(
+            "[BOOT] Gateway already reachable at {} (external), skipping spawn",
+            base_url
+        );
+        return Ok(());
+    }
+
+    // 3) Kill any stale local Gateway from a previous run.
+    //    We only get here if no in-process handle AND port is free, so
+    //    anything left holding the port is genuinely stale.
     tracing::info!("[BOOT] Checking for stale Gateway processes...");
     kill_stale_gateway_process();
     tracing::info!("[BOOT] Stale Gateway cleanup done");
 
-    // Find gateway binary next to current executable
+    // 4) Find binary + spawn the new child.
     let gateway_bin = find_gateway_binary(app_handle.clone())?;
-
     tracing::info!("[BOOT] Starting local Gateway: {}", gateway_bin.display());
 
     // Get Tauri resource directory — where bundled assets (lsp_servers.json,
@@ -300,7 +327,6 @@ pub async fn spawn_gateway(
         .map_err(|e| format!("Failed to get resource dir: {}", e))?;
     tracing::info!("[BOOT] Tauri resource_dir: {}", resource_dir.display());
 
-    // Spawn the gateway process
     let child = Command::new(&gateway_bin)
         .env("ACOWORK_GATEWAY_DAEMON", "true")
         .env("ACOWORK_GATEWAY_LOG_LEVEL", "info")
@@ -310,11 +336,9 @@ pub async fn spawn_gateway(
 
     tracing::info!("[BOOT] Gateway process spawned, pid: {:?}", child.id());
 
-    // Store the child handle
-    {
-        let mut proc = state.gateway_process.lock().await;
-        *proc = Some(child);
-    }
+    // 5) Store the handle. The next concurrent caller will see this
+    //    inside the same lock and return early at step 1.
+    *proc_guard = Some(child);
 
     Ok(())
 }
@@ -446,6 +470,22 @@ async fn wait_for_gateway_ready(base_url: &str) -> Result<(), String> {
         "Gateway at {} did not become ready within 10 seconds",
         base_url
     ))
+}
+
+/// One-shot health probe used inside `spawn_gateway` to detect a Gateway
+/// already listening on the default port (e.g. orphaned by a previous
+/// crash). Returns `true` as soon as `/health` responds once; returns
+/// `false` on any error or timeout. Intentionally short timeout to keep
+/// the spawn path snappy.
+async fn is_gateway_reachable(base_url: &str) -> bool {
+    let health_url = format!("{}/health", base_url);
+    let probe = reqwest::Client::builder()
+        .timeout(Duration::from_millis(300))
+        .build();
+    let Ok(client) = probe else {
+        return false;
+    };
+    matches!(client.get(&health_url).send().await, Ok(resp) if resp.status().is_success())
 }
 
 /// Check if a child process output indicates it is alive.
