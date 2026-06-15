@@ -1,23 +1,30 @@
 /**
- * Centralized Gateway configuration and default values.
- * All settings default values should be defined here, not scattered across components/stores.
+ * Centralized Gateway configuration helpers.
+ *
+ * Default values are defined in `./defaults.ts` (a pure-constants module with
+ * no runtime imports) and re-exported here for backward compatibility with
+ * existing callers that import `DEFAULT_*` from `./config`.
  */
 
 import { useSettingsStore } from "../stores/settingsStore";
-import type { GatewayMode, Theme } from "./types";
+import {
+  DEFAULT_GATEWAY_URL,
+  DEFAULT_GATEWAY_MODE,
+} from "./defaults";
+import type { GatewayMode } from "./types";
 
-// ── Global defaults ─────────────────────────────────────────────────────
-
-export const DEFAULT_GATEWAY_URL = "http://127.0.0.1:19876";
-export const DEFAULT_GATEWAY_MODE: GatewayMode = "local";
-export const DEFAULT_THEME: Theme = "system";
-export const DEFAULT_FONT_SIZE = 0.875;
-export const DEFAULT_LOG_LEVEL = "info";
-export const DEFAULT_CONTENT_WIDTH = 90;
-export const DEFAULT_OPACITY = 0.5;
-export const DEFAULT_ACCENT_COLOR = "#3b82f6";
-export const DEFAULT_LOG_FILE_SIZE_MB = 10;
-export const DEFAULT_LOG_FILE_COUNT = 20;
+export {
+  DEFAULT_GATEWAY_URL,
+  DEFAULT_GATEWAY_MODE,
+  DEFAULT_THEME,
+  DEFAULT_FONT_SIZE,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_CONTENT_WIDTH,
+  DEFAULT_OPACITY,
+  DEFAULT_ACCENT_COLOR,
+  DEFAULT_LOG_FILE_SIZE_MB,
+  DEFAULT_LOG_FILE_COUNT,
+} from "./defaults";
 
 /**
  * Get the current Gateway URL.

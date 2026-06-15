@@ -12,7 +12,7 @@ import {
   DEFAULT_GATEWAY_MODE,
   DEFAULT_LOG_FILE_SIZE_MB,
   DEFAULT_LOG_FILE_COUNT,
-} from "../lib/config";
+} from "../lib/defaults";
 
 /**
  * Push the current gateway config to the Rust backend so that:
