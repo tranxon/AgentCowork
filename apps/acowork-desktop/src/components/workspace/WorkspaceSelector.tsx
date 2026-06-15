@@ -13,6 +13,11 @@ import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 import { Tooltip } from "../common/Tooltip";
 import { RemoteFolderPicker } from "./RemoteFolderPicker";
 
+function workspaceDisplayName(dir: WorkspaceDir) {
+  const name = (dir.alias?.trim() || dir.path).split(/[\\/]+/).filter(Boolean).pop() || dir.path;
+  return name;
+}
+
 export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "up" | "down" }) {
   const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
@@ -149,7 +154,7 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
       ? (() => {
         const w = workspaces.find((ws) => ws.id === currentWsId);
         if (!w) return "Workspace";
-        const name = w.alias || w.path.split(/[\/\\]/).filter(Boolean).pop() || w.path;
+        const name = workspaceDisplayName(w);
         return name.length > 24 ? name.slice(0, 24) + "..." : name;
       })()
       : "Workspace";
@@ -213,7 +218,7 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
                   {filteredWorkspaces.map((dir) => {
                     const isCurrent = dir.id === currentWsId;
                     const isDeleting = confirmDelete === dir.id;
-                    const displayName = dir.alias || dir.path.split(/[\\/]/).filter(Boolean).pop() || dir.path;
+                    const displayName = workspaceDisplayName(dir);
 
                     return (
                       <div
