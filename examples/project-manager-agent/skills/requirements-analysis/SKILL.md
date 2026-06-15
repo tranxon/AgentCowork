@@ -1,7 +1,7 @@
 ---
 name: requirements-analysis
-description: Collect, prioritize, and validate requirements into a structured Product Requirements Document
-version: "1.0.0"
+description: Collect, clarify, prioritize, validate, and control requirements into an approval-ready PRD with testable acceptance criteria and change gates
+version: "1.1.0"
 author: developer
 triggers:
   - analyze requirements
@@ -18,90 +18,123 @@ tool_deps:
 
 # Requirements Analysis Skill
 
+## Core Rule
+
+No plan without validated requirements. A requirement is not ready until it has an owner, priority, acceptance criteria, dependencies, and explicit non-goals.
+
+If a requirement is ambiguous, ask one focused question before turning it into scope.
+
 ## Execution Steps
 
-1. **Collect requirements**
-   - Use `memory_recall` to retrieve any existing project context, stakeholder preferences, and prior requirements
-   - Use `file_read` to examine any existing documentation, user stories, or meeting notes
-   - Identify all requirement sources: stakeholders, market research, technical constraints, regulatory needs
-   - Distinguish between stated requirements (what people say they want) and latent requirements (what they actually need)
-   - Document each requirement with a unique ID (REQ-001, REQ-002, etc.)
+1. **Collect context and sources**
+   - Use `memory_recall` to retrieve project context, stakeholder preferences, prior requirements, decisions, and constraints
+   - Use `file_read` to inspect docs, meeting notes, backlog items, roadmap, support issues, and customer feedback
+   - Identify sources: users, business stakeholders, engineering, operations, compliance, support, market, and dependencies
+   - Separate facts, assumptions, opinions, and open questions
 
-2. **Prioritize requirements**
-   - Apply MoSCoW prioritization to each requirement:
-     - **Must Have**: Non-negotiable for launch (without these, the product fails)
-     - **Should Have**: Important but not critical (workarounds exist)
-     - **Could Have**: Nice-to-have if time and resources allow
-     - **Won't Have**: Explicitly out of scope for this release
-   - Validate priorities with stakeholders — ensure alignment between business and technical perspectives
-   - Identify dependencies between requirements (some Must-Haves may depend on others)
+2. **Clarify intent one question at a time**
+   - Identify the problem, target users, success criteria, constraints, and urgency
+   - Ask one focused question when missing information changes scope, priority, or feasibility
+   - Prefer multiple-choice questions when they reduce ambiguity
+   - Do not hide unresolved ambiguity inside the PRD
 
-3. **Assess feasibility**
-   - For each requirement, evaluate:
-     - **Technical feasibility**: Can it be built with current technology and team skills?
-     - **Schedule feasibility**: Can it be delivered within the timeline?
-     - **Cost feasibility**: Is the investment justified by the expected return?
-   - Flag high-risk requirements that need proof-of-concept or spike investigation
-   - Identify requirements that conflict with each other
+3. **Define scope boundaries**
+   - Write goals and non-goals explicitly
+   - Separate stated requirements from inferred requirements
+   - Identify what is in scope for this release and what is deferred
+   - Flag scope spanning independent subsystems and recommend decomposition when needed
 
-4. **Write the PRD**
-   - Use `file_write` to create a structured Product Requirements Document
-   - Include all sections per the output format below
-   - Each functional requirement should have clear acceptance criteria
-   - Use `memory_store` to persist the PRD location and key decisions for future reference
+4. **Make requirements testable**
+   - Assign stable IDs: REQ-001, NFR-001, etc.
+   - Define acceptance criteria that can be tested or demonstrated
+   - Include negative and edge-case acceptance criteria for high-risk behavior
+   - Define metrics for non-functional requirements: latency, reliability, scale, security, cost, accessibility, operability
 
-5. **Review and confirm**
-   - Present the PRD for stakeholder review
-   - Track open questions and unresolved items
-   - Document sign-off: who approved, when, and any conditions
+5. **Prioritize and assess feasibility**
+   - Apply MoSCoW prioritization: Must, Should, Could, Won't
+   - Validate each Must Have against launch success criteria
+   - Identify dependencies, conflicts, uncertainty, external blockers, and approval gates
+   - For high-uncertainty items, recommend spike, prototype, or stakeholder decision before commitment
+
+6. **Create the PRD and review gate**
+   - Use `file_write` to save the PRD when requested
+   - Include owners, decision-makers, sign-off status, and unresolved questions
+   - Present the PRD for stakeholder review before task decomposition or sprint commitment
+   - Use `memory_store` to persist requirement decisions, changes, rationale, and PRD location
+
+7. **Self-review before handoff**
+   - Check that every Must Have has acceptance criteria
+   - Check that non-goals prevent scope creep
+   - Check for placeholders, contradictions, duplicate requirements, vague words, and missing owners
+   - Check that open questions are explicit and not hidden as assumptions
 
 ## Output Format
 
 ```markdown
 # PRD: [Product/Feature Name]
 
-## 1. Overview
-### 1.1 Problem Statement
-[What problem are we solving? For whom?]
+## 1. Executive Summary
+[Problem, target users, recommended scope, and launch definition]
 
-### 1.2 Goals & Non-Goals
-**Goals:**
-- [What this project will achieve]
+## 2. Context
+### Facts
+- [Verified fact]
+### Assumptions
+- [Assumption requiring validation]
+### Constraints
+- [Constraint]
 
-**Non-Goals:**
-- [What this project explicitly will NOT address]
+## 3. Goals and Non-Goals
+### Goals
+- [Goal]
+### Non-Goals
+- [Explicitly out of scope]
 
-## 2. Requirements
+## 4. Requirements
 ### Functional Requirements
-| ID | Requirement | Priority | Acceptance Criteria | Dependency |
-|----|------------|----------|---------------------|------------|
-| REQ-001 | [Description] | Must | [Testable criteria] | — |
-| REQ-002 | [Description] | Should | [Testable criteria] | REQ-001 |
+| ID | Requirement | Priority | Owner | Acceptance Criteria | Dependencies | Status |
+|----|-------------|----------|-------|---------------------|--------------|--------|
+| REQ-001 | [Description] | Must | [Role] | [Testable criteria] | — | Proposed |
 
 ### Non-Functional Requirements
-| ID | Requirement | Metric | Target |
-|----|------------|--------|--------|
-| NFR-001 | Performance | Page load time | < 2s |
+| ID | Requirement | Metric | Target | Validation |
+|----|-------------|--------|--------|------------|
+| NFR-001 | Performance | P95 latency | < 200ms | Load test |
 
-## 3. User Stories
-- As a [role], I want to [action], so that [benefit]
+## 5. User Stories
+- As a [role], I want [action], so that [benefit]
 
-## 4. Assumptions & Constraints
-- [List of assumptions made and known constraints]
+## 6. Dependencies and Conflicts
+| Item | Type | Impact | Resolution |
+|------|------|--------|------------|
+| ... | ... | ... | ... |
 
-## 5. Open Questions
-- [ ] [Unresolved question requiring stakeholder input]
+## 7. Risks and Open Questions
+### Risks
+- [Risk and mitigation]
+### Open Questions
+- [ ] [Question] — Owner: [role] — Needed by: [date]
 
-## 6. Approval
-| Role | Name | Date | Status |
-|------|------|------|--------|
-| PM | | | Pending |
-| Tech Lead | | | Pending |
+## 8. Approval Gate
+| Role | Name/Owner | Decision | Date | Conditions |
+|------|------------|----------|------|------------|
+| PM | | Pending | | |
+| Tech Lead | | Pending | | |
+
+## 9. Change Log
+| Date | Change | Reason | Approved By |
+|------|--------|--------|-------------|
+| ... | ... | ... | ... |
 ```
 
-## Notes
+## Red Flags
 
-- Requirements should be testable — if you can't write an acceptance criterion, the requirement is too vague
-- Separate "what" from "how" — the PRD describes what the product does, not how it's implemented
-- Always document non-goals explicitly to prevent scope creep
-- Use `memory_store` to track requirement changes and their rationale over time
+Stop and clarify if you see:
+
+- Must Have without acceptance criteria
+- Requirements that describe implementation before user value
+- "ASAP", "easy", "simple", "fast", or "robust" without measurable definition
+- No explicit non-goals
+- Conflicting stakeholder priorities with no decision owner
+- Scope spanning multiple independent systems without decomposition
+- PRD treated as final while open questions still affect scope or estimates

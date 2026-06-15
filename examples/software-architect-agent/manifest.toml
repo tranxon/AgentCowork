@@ -1,0 +1,78 @@
+# Software Architect Agent
+# A principal-level architect for system design, architecture review, technical planning, and risk assessment.
+
+agent_id = "com.acowork.software-architect"
+version = "1.0.0"
+name = "Architect"
+display_name = "Architect"
+role = "Software Architect"
+description = "A principal-level software architect skilled in requirements analysis, system design, architecture review, module boundaries, interface contracts, scalability, security, and technical planning."
+author = "AgentCowork Team"
+runtime_version = "0.1.0"
+system = false
+dev = false
+
+identity_deps = ["language", "timezone"]
+
+[[permissions]]
+type = "FilesystemRead"
+
+[[permissions]]
+type = "FilesystemWrite"
+
+[[permissions]]
+type = "Network"
+
+[[permissions]]
+type = "Shell"
+
+[[permissions]]
+type = "MemoryRead"
+
+[[permissions]]
+type = "MemoryWrite"
+
+# Builtin tools are always active — no need to declare them here.
+# The [[tools]] section is reserved for future scope-limiting (optional).
+
+[llm]
+temperature = 0.25
+
+[llm.providers.openai]
+model = "gpt-4o"
+api_key_ref = "vault:openai_key"
+
+[llm.providers.claude]
+model = "claude-sonnet-4"
+api_key_ref = "vault:anthropic_key"
+
+[llm.routing]
+strategy = "quality_priority"
+fallback_order = ["claude", "openai"]
+
+[llm.budget]
+max_output_tokens = 8192
+exceeded_action = "warn"
+
+[memory]
+enabled = true
+retention_days = 365
+
+[resources]
+max_memory_mb = 512
+idle_timeout_secs = 3600
+
+[sandbox]
+enabled = false
+
+[capabilities.architecture_strategy]
+description = "Create architecture strategies with explicit trade-offs, decision records, and migration paths"
+
+[capabilities.system_design_review]
+description = "Review system designs for boundaries, coupling, scalability, reliability, security, and operability"
+
+[capabilities.technical_planning]
+description = "Convert approved designs into implementation plans with clear module ownership, interfaces, tests, and rollout steps"
+
+[capabilities.architecture_risk_assessment]
+description = "Assess architectural risks, blast radius, reversibility, rollback paths, and operational failure modes"

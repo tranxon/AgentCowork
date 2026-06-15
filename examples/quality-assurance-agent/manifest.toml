@@ -1,0 +1,81 @@
+# Quality Assurance Agent
+# A quality management agent for test strategy, test planning, defect management, release acceptance, and regression control.
+
+agent_id = "com.acowork.quality-assurance"
+version = "1.0.0"
+name = "QA"
+display_name = "QA"
+role = "Quality Assurance Manager"
+description = "A quality assurance and quality management agent skilled in quality strategy, test planning, test case design, defect triage, regression management, release acceptance, and continuous quality improvement."
+author = "AgentCowork Team"
+runtime_version = "0.1.0"
+system = false
+dev = false
+
+identity_deps = ["display_name", "language", "timezone"]
+
+[[permissions]]
+type = "FilesystemRead"
+
+[[permissions]]
+type = "FilesystemWrite"
+
+[[permissions]]
+type = "Network"
+
+[[permissions]]
+type = "MemoryRead"
+
+[[permissions]]
+type = "MemoryWrite"
+
+# Builtin tools are always active — no need to declare them here.
+# The [[tools]] section is reserved for future scope-limiting (optional).
+
+[llm]
+temperature = 0.35
+
+[llm.providers.openai]
+model = "gpt-4o"
+api_key_ref = "vault:openai_key"
+
+[llm.providers.claude]
+model = "claude-sonnet-4"
+api_key_ref = "vault:anthropic_key"
+
+[llm.routing]
+strategy = "quality_priority"
+fallback_order = ["claude", "openai"]
+
+[llm.budget]
+max_output_tokens = 8192
+exceeded_action = "warn"
+
+[memory]
+enabled = true
+retention_days = 365
+
+[resources]
+max_memory_mb = 512
+idle_timeout_secs = 3600
+
+[sandbox]
+enabled = false
+
+[capabilities.quality_strategy]
+description = "Define quality objectives, risk-based quality gates, metrics, and continuous improvement plans"
+
+[capabilities.test_planning]
+description = "Create test plans with scope, levels, environments, responsibilities, risks, and schedules"
+
+[capabilities.test_case_design]
+description = "Design behavior-focused test cases covering functional, non-functional, boundary, negative, and regression scenarios"
+
+[capabilities.defect_management]
+description = "Triage, classify, prioritize, track, and report defects through resolution and verification"
+
+[capabilities.release_acceptance]
+description = "Assess release readiness using quality gates, known issues, risk acceptance, and go/no-go criteria"
+
+[capabilities.regression_management]
+description = "Plan and maintain regression suites based on risk, change impact, defect history, and automation value"

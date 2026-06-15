@@ -1,7 +1,7 @@
 ---
 name: architecture-design
-description: Design system architecture with requirement analysis, technology selection, module decomposition, and interface definition
-version: "1.0.0"
+description: Design system architecture through context discovery, requirements clarification, alternatives, approval gates, module decomposition, and implementation handoff
+version: "1.1.0"
 author: developer
 triggers:
   - design
@@ -18,86 +18,135 @@ tool_deps:
 
 # Architecture Design Skill
 
+## Core Rule
+
+Do not jump from an idea directly to implementation. First understand context, clarify requirements, present alternatives, and get the design direction approved.
+
+Architecture is trade-off management. Always document the choice, rejected alternatives, rationale, risks, and rollback path.
+
 ## Execution Steps
 
-1. **Requirement analysis**
-   - Use `memory_recall` to retrieve any prior context about the project, constraints, and decisions
-   - Use `file_read` to examine existing codebase structure if the project already exists
-   - Identify functional requirements: what must the system do?
-   - Identify non-functional requirements: performance, scalability, security, reliability
-   - Identify constraints: technology stack, team skills, timeline, budget
-   - List explicit requirements and inferred requirements separately
+1. **Explore project context**
+   - Use `memory_recall` to retrieve prior architectural decisions, constraints, conventions, and known risks
+   - Use `file_read` to inspect existing docs, source structure, module boundaries, interfaces, tests, and deployment assumptions
+   - Identify whether this is a new system, an extension, a migration, or a redesign
+   - If the request spans multiple independent subsystems, propose decomposition before designing details
 
-2. **Technology selection**
-   - Evaluate candidate technologies against requirements
-   - Consider team familiarity and ecosystem maturity
-   - Assess trade-offs: e.g., Rust for safety vs. Python for speed of development
-   - Document the selection rationale — why this technology over alternatives?
-   - Identify integration points between selected technologies
+2. **Clarify requirements one question at a time**
+   - Identify functional requirements, non-functional requirements, constraints, assumptions, and open questions
+   - Ask focused questions for missing information that materially changes the architecture
+   - Prefer multiple-choice questions when they help the user decide quickly
+   - Do not overwhelm the user with a long questionnaire
 
-3. **Module decomposition**
-   - Identify bounded contexts and domain boundaries
-   - Define module responsibilities using single-responsibility principle
-   - Map data flow between modules
-   - Identify shared infrastructure concerns (logging, error handling, configuration)
-   - Document module dependency graph (which module depends on which)
+3. **Present alternatives before choosing**
+   - Propose 2-3 viable approaches
+   - Compare trade-offs: simplicity, delivery speed, scalability, reliability, security, cost, operability, and reversibility
+   - Lead with the recommended option and explain why
+   - Ask for confirmation before proceeding when the choice changes scope or risk
 
-4. **Interface design**
-   - Define public APIs for each module (function signatures, data types, protocols)
-   - Specify communication patterns: synchronous vs. asynchronous, request-response vs. event-driven
-   - Define error contracts: what errors each interface can return and what they mean
-   - Design configuration interfaces: how modules are configured and initialized
-   - Sketch the data models and their relationships
+4. **Design for boundaries and clarity**
+   - Define bounded contexts, module responsibilities, ownership, and dependency direction
+   - Each module should have one clear responsibility and a narrow public interface
+   - Prefer contract-first dependencies: concrete modules depend on shared contracts, not each other’s internals
+   - Avoid speculative extension points until there is a concrete current use case
+   - Keep changes incremental and compatible with existing patterns
 
-5. **Output the design document**
-   - Use `file_write` to save the architecture document
-   - Use `memory_store` to persist key architectural decisions for future reference
+5. **Define interfaces and data flow**
+   - Define public APIs, traits, commands, events, schemas, protocols, and error contracts
+   - Specify synchronous vs asynchronous communication and request-response vs event-driven flows
+   - Define state ownership, consistency model, persistence boundaries, and migration needs
+   - Define configuration, initialization, permissions, and trust boundaries
+
+6. **Plan validation, rollout, and rollback**
+   - Define tests needed to validate the design
+   - Define observability: logs, metrics, traces, health checks, and debugging signals
+   - Define rollout phases and compatibility strategy
+   - Define rollback path for risky changes and public contracts
+   - If rollback is unclear, mark the design incomplete
+
+7. **Write and self-review the design**
+   - Use `file_write` to save the architecture document when requested
+   - Use `memory_store` to persist accepted decisions, rejected alternatives, risks, and assumptions
+   - Self-review the design for placeholders, contradictions, ambiguous requirements, missing tests, and oversized scope
+   - If the design has unresolved material questions, surface them before implementation planning
 
 ## Output Format
 
 ```markdown
 # Architecture Design: [System Name]
 
-## 1. Overview
-[One-paragraph description of the system and its purpose]
+## 1. Executive Summary
+[Recommended approach and why]
 
-## 2. Requirements
+## 2. Context
+### Facts
+- [Verified fact]
+### Assumptions
+- [Assumption]
+### Constraints
+- [Constraint]
+
+## 3. Requirements
 ### Functional Requirements
 - FR-1: [description]
 ### Non-Functional Requirements
 - NFR-1: [description]
-### Constraints
-- C-1: [description]
+### Non-Goals
+- [Explicitly out of scope]
 
-## 3. Technology Stack
-| Layer | Technology | Rationale |
-|-------|-----------|-----------|
-| ...   | ...       | ...       |
+## 4. Alternatives Considered
+| Option | Summary | Pros | Cons | Risk | Reversibility |
+|--------|---------|------|------|------|---------------|
+| A | ... | ... | ... | ... | ... |
 
-## 4. Module Architecture
-[Module diagram or description]
+## 5. Recommended Architecture
+[Mermaid diagram or concise description]
 
 ### Module: [Name]
-- **Responsibility**: [what it does]
+- **Responsibility**: [what it owns]
 - **Dependencies**: [what it depends on]
-- **Public Interface**: [key APIs]
+- **Public Interface**: [APIs/traits/events/schemas]
+- **Failure Modes**: [timeouts, retries, partial failure]
 
-## 5. Data Flow
-[Description of how data moves through the system]
+## 6. Data Flow
+[How data moves through the system]
 
-## 6. Key Decisions
-| Decision | Choice | Rationale | Trade-offs |
-|----------|--------|-----------|------------|
-| ...      | ...    | ...       | ...        |
+## 7. Security and Operability
+- Trust boundaries: [description]
+- Permissions: [description]
+- Observability: [description]
+- Operational risks: [description]
 
-## 7. Open Questions
-- [Unresolved items requiring further discussion]
+## 8. Delivery Plan
+| Phase | Goal | Validation | Rollback |
+|-------|------|------------|----------|
+| 1 | ... | ... | ... |
+
+## 9. Key Decisions
+| Decision | Choice | Rationale | Rejected Alternatives | Trade-offs |
+|----------|--------|-----------|-----------------------|------------|
+| ... | ... | ... | ... | ... |
+
+## 10. Open Questions
+- [Question]
+
+## 11. Self-Review
+- [x] Requirements covered
+- [x] No placeholders
+- [x] Interfaces explicit
+- [x] Tests and rollout defined
+- [x] Rollback path defined
 ```
 
-## Notes
+## Red Flags
 
-- Architecture is about trade-offs — always document what you chose AND what you chose not to do
-- Prefer simple architectures over elegant ones; complexity should be earned, not assumed
-- When existing code is present, design incrementally — minimize disruption to working systems
-- Store architectural decisions in `memory_store` so they persist across sessions
-- If requirements are ambiguous, list assumptions explicitly and flag them for validation
+Stop and revise the design if you see:
+
+- A large design with no incremental delivery path
+- Components without clear ownership or public contracts
+- Concrete modules depending on each other’s internals
+- New abstractions with only one speculative caller
+- Public API, schema, or config changes without compatibility and migration notes
+- No test strategy for critical paths
+- No rollback path for risky changes
+- Ambiguous requirements hidden as implementation details

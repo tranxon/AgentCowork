@@ -1,7 +1,7 @@
 ---
 name: meeting-notes
-description: Capture, organize, and distribute structured meeting notes with decisions and action items
-version: "1.0.0"
+description: Capture structured meeting notes with purpose, decisions, dissent, action items, owners, due dates, confirmations, and follow-up tracking
+version: "1.1.0"
 author: developer
 triggers:
   - meeting
@@ -18,46 +18,48 @@ tool_deps:
 
 # Meeting Notes Skill
 
+## Core Rule
+
+The value of meeting notes is decisions and follow-through, not transcription.
+
+Every decision needs rationale. Every action item needs one owner, due date, and success condition.
+
 ## Execution Steps
 
-1. **Record the agenda**
-   - Use `memory_recall` to retrieve context about ongoing projects and previous action items
-   - Document the meeting purpose and expected outcomes
-   - List the agenda items with allocated time for each
-   - Record all attendees and their roles
-   - Note any invitees who could not attend (absent stakeholders)
+1. **Prepare context**
+   - Use `memory_recall` to retrieve project context, prior decisions, open action items, stakeholder preferences, and unresolved questions
+   - Use `file_read` to inspect agenda, prior notes, status report, risk register, or relevant project docs
+   - Document meeting purpose, desired outcomes, attendees, decision-makers, and absent stakeholders
+   - Bring forward unresolved action items from prior meetings
 
-2. **Summarize discussion points**
-   - For each agenda item, capture the key discussion points
-   - Distinguish between facts presented, opinions expressed, and questions raised
-   - Note areas of agreement and disagreement
-   - Capture the reasoning behind significant points (not just conclusions)
-   - If technical details are discussed, record enough context for non-attendees to understand
+2. **Capture structured discussion**
+   - Organize notes by agenda item
+   - Separate facts, opinions, decisions, risks, questions, and action items
+   - Capture disagreement or dissent when it affects decisions or risk
+   - Record enough context for absent stakeholders to understand outcomes
+   - Avoid full transcript unless explicitly requested
 
-3. **Document decisions**
-   - For each decision made, record:
-     - **What was decided**: The specific decision and its scope
-     - **Why**: The rationale and key factors considered
-     - **Who decided**: Who was involved in making the decision
-     - **Conditions**: Any conditions, caveats, or review dates attached
-   - Flag decisions that are provisional (need confirmation from absent stakeholders)
-   - Note decisions that were explicitly deferred to a future meeting
+3. **Confirm decisions in the meeting**
+   - For each decision, record what was decided, why, who decided, alternatives considered, and conditions
+   - Mark provisional decisions that require absent stakeholder approval
+   - Mark deferred decisions with owner and due date
+   - Confirm important decisions before the meeting ends
 
-4. **Assign action items**
-   - For each action item, specify:
-     - **What**: Clear description of the task
-     - **Who**: Single responsible owner (not "the team")
-     - **When**: Specific due date (not "soon" or "ASAP")
-     - **Context**: Why this action is needed and what it depends on
-   - Number action items for easy tracking (AI-001, AI-002, etc.)
-   - Check that every action item has an owner present in the meeting
-   - Use `memory_store` to persist action items for follow-up tracking
+4. **Create actionable follow-up**
+   - For each action item, define:
+     - What must be done
+     - One accountable owner
+     - Due date
+     - Success condition
+     - Dependencies or context
+   - Do not assign action items to "the team"
+   - Confirm owners and due dates before meeting ends
 
-5. **Distribute the notes**
-   - Use `file_write` to save the formatted meeting notes
-   - Distribute within 24 hours of the meeting (sooner is better)
-   - Highlight decisions and action items at the top for quick scanning
-   - Include a link to any related documents or follow-up meetings
+5. **Distribute and persist**
+   - Use `file_write` to save formatted notes when requested
+   - Put decisions and action items near the top
+   - Distribute notes within 24 hours
+   - Use `memory_store` to persist decisions, action items, owner commitments, and follow-up dates
 
 ## Output Format
 
@@ -66,48 +68,47 @@ tool_deps:
 
 **Date**: [YYYY-MM-DD]
 **Time**: [Start] — [End]
-**Attendees**: [List of attendees with roles]
-**Absent**: [List of absent invitees]
+**Purpose**: [Why this meeting happened]
+**Desired Outcome**: [Decision/alignment/output expected]
+**Attendees**: [List with roles]
+**Absent Stakeholders**: [List and impact]
 
-## Agenda
-1. [Topic 1] — [Time allocation]
-2. [Topic 2] — [Time allocation]
-3. [Topic 3] — [Time allocation]
+## Summary
+[3-5 bullets with outcomes]
 
 ## Decisions
-| # | Decision | Rationale | Decided By | Conditions |
-|---|----------|-----------|------------|------------|
-| D-001 | [Decision] | [Why] | [Who] | [Any caveats] |
-| D-002 | [Decision] | [Why] | [Who] | [Any caveats] |
-
-## Discussion Summary
-### [Agenda Item 1]
-- [Key point 1]
-- [Key point 2]
-- [Dissenting opinion or concern raised]
-
-### [Agenda Item 2]
-- [Key point 1]
-- [Key point 2]
+| ID | Decision | Rationale | Decider(s) | Alternatives Considered | Conditions | Status |
+|----|----------|-----------|------------|-------------------------|------------|--------|
+| D-001 | [Decision] | [Why] | [Who] | [A/B/C] | [Condition] | Confirmed/Provisional |
 
 ## Action Items
-| # | Action | Owner | Due Date | Status |
-|---|--------|-------|----------|--------|
-| AI-001 | [Task description] | [Name] | [Date] | Open |
-| AI-002 | [Task description] | [Name] | [Date] | Open |
+| ID | Action | Owner | Due Date | Success Condition | Dependencies | Status |
+|----|--------|-------|----------|-------------------|--------------|--------|
+| AI-001 | [Task] | [One owner] | [Date] | [Done means] | [Dependency] | Open |
 
-## Next Meeting
-- **Date**: [Next meeting date]
-- **Carry-over items**: [Items deferred from this meeting]
+## Discussion Notes
+### [Agenda Item]
+- **Facts**: [facts]
+- **Opinions/Concerns**: [opinions]
+- **Open Questions**: [questions]
 
-## Appendix
-- [Links to documents, diagrams, or references mentioned]
+## Deferred Items
+| Item | Owner | Needed By | Next Step |
+|------|-------|-----------|-----------|
+| ... | ... | ... | ... |
+
+## Next Meeting / Follow-up
+- [Date or trigger]
 ```
 
-## Notes
+## Red Flags
 
-- Write notes during the meeting, not after — memory degrades rapidly
-- Focus on decisions and action items — these are the most valuable outputs
-- If you're unsure about a decision or action item, confirm it before the meeting ends
-- Keep discussion summaries concise — the goal is understanding, not transcription
-- Use `memory_store` to track action item completion rates across meetings
+Stop and clarify if you see:
+
+- Decision without rationale
+- Action item without one owner
+- Due date written as "soon" or "ASAP"
+- Important disagreement omitted
+- Absent decision-maker needed but decision marked final
+- Notes that are a transcript but do not show outcomes
+- Action item success condition unclear

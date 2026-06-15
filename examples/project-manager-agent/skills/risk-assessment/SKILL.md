@@ -1,7 +1,7 @@
 ---
 name: risk-assessment
-description: Identify, evaluate, and plan mitigation for project risks using structured risk analysis
-version: "1.0.0"
+description: Identify, score, mitigate, monitor, and escalate project risks with owners, triggers, residual risk, contingency plans, and review cadence
+version: "1.1.0"
 author: developer
 triggers:
   - risk
@@ -18,84 +18,99 @@ tool_deps:
 
 # Risk Assessment Skill
 
+## Core Rule
+
+A risk is an uncertain future event. An issue is already happening. Do not mix them.
+
+Every High or Medium risk needs an owner, trigger, mitigation, contingency, residual risk, and review cadence.
+
 ## Execution Steps
 
-1. **Identify risks**
-   - Use `memory_recall` to retrieve historical risk data from past projects and known issues
-   - Use `file_read` to examine project plans, technical architecture, and dependency lists
-   - Brainstorm risks across categories:
-     - **Technical**: Technology uncertainty, integration complexity, performance risks, security vulnerabilities
-     - **Schedule**: Optimistic estimates, dependency delays, scope creep
-     - **Resource**: Key person dependency, skill gaps, team turnover
-     - **External**: Third-party changes, regulatory shifts, market conditions
-   - Involve team members — risks are often known to those closest to the work
-   - Document each risk with a unique ID (RSK-001, RSK-002, etc.)
+1. **Load context and history**
+   - Use `memory_recall` to retrieve historical risks, incidents, estimate misses, dependency failures, and mitigation patterns
+   - Use `file_read` to inspect PRD, sprint plan, task breakdown, architecture/design docs, dependency lists, and status reports
+   - Identify assumptions that, if false, would threaten scope, schedule, quality, cost, or trust
 
-2. **Evaluate impact × probability**
-   - For each identified risk, rate **Impact** and **Probability** on a 1-5 scale:
-     - **Impact**: 1=Negligible, 2=Minor, 3=Moderate, 4=Major, 5=Critical
-     - **Probability**: 1=Very Unlikely, 2=Unlikely, 3=Possible, 4=Likely, 5=Very Likely
-   - Calculate **Risk Score** = Impact × Probability (range 1-25)
-   - Classify risks:
-     - **High** (15-25): Requires active mitigation and monitoring
-     - **Medium** (6-14): Requires mitigation plan, monitor periodically
-     - **Low** (1-5): Accept and monitor; no active mitigation needed
+2. **Identify risks by category**
+   - Technical: uncertainty, integration complexity, performance, security, data migration, reliability
+   - Schedule: optimistic estimates, dependency delays, review bottlenecks, scope creep
+   - Resource: key-person dependency, skill gaps, availability, onboarding, burnout
+   - Product: ambiguous requirements, weak validation, stakeholder disagreement, adoption risk
+   - External: vendor changes, compliance, market, customer commitments, platform changes
+   - Operational: deployment, monitoring, support load, rollback, incident response
 
-3. **Develop mitigation strategies**
-   - For each High and Medium risk:
-     - **Avoid**: Change the plan to eliminate the risk
-     - **Transfer**: Shift the risk to another party (insurance, outsourcing, contract)
-     - **Mitigate**: Reduce probability (preventive action) or reduce impact (contingency plan)
-     - **Accept**: Acknowledge the risk and set a trigger for action if it materializes
-   - Define specific, actionable mitigation steps with owners and deadlines
-   - For each mitigation, estimate the residual risk (risk after mitigation is applied)
+3. **Convert vague risks into actionable risks**
+   - Write risks as: "If [event], then [impact], because [cause]"
+   - Remove generic risks like "things may take longer" unless tied to a cause and trigger
+   - Separate active issues into an issue log with owner and resolution plan
 
-4. **Create monitoring plan**
-   - Define risk triggers: observable indicators that a risk is materializing
-   - Assign risk owners responsible for monitoring each risk
-   - Set review cadence: High risks weekly, Medium risks bi-weekly, Low risks monthly
-   - Define escalation criteria: when does a risk owner need to involve others?
-   - Schedule risk review as a standing agenda item in team meetings
+4. **Score and classify**
+   - Rate Impact and Probability from 1-5
+   - Calculate Score = Impact × Probability
+   - Classify:
+     - High: 15-25, active mitigation and weekly review
+     - Medium: 6-14, mitigation or contingency and bi-weekly review
+     - Low: 1-5, accept and monitor monthly
+   - Estimate residual risk after mitigation
 
-5. **Output the risk matrix**
-   - Use `file_write` to save the risk register
-   - Use `memory_store` to persist risk data for ongoing monitoring
+5. **Plan response and monitoring**
+   - Choose response: Avoid, Mitigate, Transfer, Accept
+   - Define preventive actions, contingency actions, triggers, escalation criteria, owner, and deadline
+   - Assign a single risk owner responsible for monitoring and escalation
+   - Define when the risk can be closed or downgraded
+
+6. **Escalate decision risks**
+   - If risk response requires scope, timeline, budget, staffing, or quality trade-off, prepare decision options
+   - Present options with recommendation, impact, deadline, and consequence of no decision
+
+7. **Save and persist**
+   - Use `file_write` to save the risk register when requested
+   - Use `memory_store` to persist risk patterns, realized risks, mitigation outcomes, and estimation learnings
 
 ## Output Format
 
 ```markdown
 # Risk Register: [Project Name]
 
-## Risk Matrix Overview
-| | Low Impact (1-2) | Med Impact (3) | High Impact (4-5) |
-|---|---|---|---|
-| **High Prob (4-5)** | Medium | High | High |
-| **Med Prob (3)** | Low | Medium | High |
-| **Low Prob (1-2)** | Low | Low | Medium |
+## Risk Summary
+- **Overall status**: [Low / Medium / High]
+- **Top concern**: [Most important risk]
+- **Decision needed**: [Yes/No and by when]
 
-## Identified Risks
+## Risk Matrix
+| ID | Risk | Category | Impact | Probability | Score | Response | Owner | Trigger | Mitigation | Contingency | Residual Risk | Review Cadence | Status |
+|----|------|----------|--------|-------------|-------|----------|-------|---------|------------|-------------|---------------|----------------|--------|
+| RSK-001 | If [event], then [impact], because [cause] | Technical | 4 | 4 | 16 | Mitigate | [Role] | [Signal] | [Action] | [Fallback] | Medium | Weekly | Active |
 
-| ID | Risk Description | Category | Impact | Probability | Score | Strategy | Mitigation | Owner | Status |
-|----|-----------------|----------|--------|-------------|-------|----------|------------|-------|--------|
-| RSK-001 | [Description] | Technical | 4 | 3 | 12 | Mitigate | [Action] | [Name] | Active |
-| RSK-002 | [Description] | Schedule | 5 | 2 | 10 | Accept | Monitor trigger | [Name] | Watching |
-| RSK-003 | [Description] | Resource | 3 | 4 | 12 | Transfer | [Action] | [Name] | Mitigating |
+## Top Risks
+1. **RSK-001** — [why it matters, next action]
+2. **RSK-002** — [why it matters, next action]
+3. **RSK-003** — [why it matters, next action]
 
-## Top 3 Risks Requiring Attention
-1. **RSK-001**: [Why this risk is critical and what's being done]
-2. **RSK-00X**: [Why this risk is critical and what's being done]
-3. **RSK-00Y**: [Why this risk is critical and what's being done]
+## Issues Separated from Risks
+| Issue | Owner | Resolution Plan | Due Date |
+|-------|-------|-----------------|----------|
+| ... | ... | ... | ... |
 
-## Risk Triggers & Escalation
-| Risk | Trigger | Escalation Action |
-|------|---------|-------------------|
-| RSK-001 | [Observable indicator] | [Who to notify, what to do] |
+## Escalations
+| Decision | Options | Recommendation | Deadline | Consequence of No Decision |
+|----------|---------|----------------|----------|----------------------------|
+| ... | ... | ... | ... | ... |
+
+## Review Plan
+- High risks: weekly
+- Medium risks: bi-weekly
+- Low risks: monthly
 ```
 
-## Notes
+## Red Flags
 
-- Focus on risks that are specific and actionable — vague risks ("something might go wrong") are not useful
-- Update the risk register regularly — risks evolve as the project progresses
-- Don't confuse risks (uncertain future events) with issues (events that have already occurred)
-- Use `memory_store` to track how risks actually materialized in past projects — this improves future identification
-- Celebrate risks that were successfully mitigated — this reinforces proactive risk management behavior
+Stop and revise if you see:
+
+- Risk without owner
+- Risk without observable trigger
+- High risk with no mitigation or contingency
+- Risk described as a vague feeling instead of event and impact
+- Active issue incorrectly listed as a risk
+- Mitigation that has no deadline or responsible owner
+- No escalation path for risks requiring trade-off decisions

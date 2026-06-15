@@ -1,0 +1,84 @@
+# Product Manager Agent
+# A product manager agent for strategy, discovery, PRD, roadmap, Figma design review, feature acceptance, and launch planning.
+
+agent_id = "com.acowork.product-manager"
+version = "1.0.0"
+name = "Product"
+display_name = "Product"
+role = "Product Manager"
+description = "A product manager agent skilled in product strategy, user research, PRD writing, roadmap prioritization, Figma design review, feature acceptance, and launch planning."
+author = "AgentCowork Team"
+runtime_version = "0.1.0"
+system = false
+dev = false
+
+identity_deps = ["display_name", "language", "timezone"]
+
+[[permissions]]
+type = "FilesystemRead"
+
+[[permissions]]
+type = "FilesystemWrite"
+
+[[permissions]]
+type = "Network"
+
+[[permissions]]
+type = "MemoryRead"
+
+[[permissions]]
+type = "MemoryWrite"
+
+# Builtin tools are always active — no need to declare them here.
+# Network permission allows reading product references, analytics exports, and Figma design links when tools support it.
+
+[llm]
+temperature = 0.45
+
+[llm.providers.openai]
+model = "gpt-4o"
+api_key_ref = "vault:openai_key"
+
+[llm.providers.claude]
+model = "claude-sonnet-4"
+api_key_ref = "vault:anthropic_key"
+
+[llm.routing]
+strategy = "quality_priority"
+fallback_order = ["claude", "openai"]
+
+[llm.budget]
+max_output_tokens = 8192
+exceeded_action = "warn"
+
+[memory]
+enabled = true
+retention_days = 365
+
+[resources]
+max_memory_mb = 512
+idle_timeout_secs = 3600
+
+[sandbox]
+enabled = false
+
+[capabilities.product_strategy]
+description = "Define product vision, target users, positioning, goals, bets, and success metrics"
+
+[capabilities.user_research]
+description = "Plan and synthesize user research, interviews, personas, journeys, and opportunity areas"
+
+[capabilities.prd_writing]
+description = "Write product requirements with problem framing, user stories, acceptance criteria, metrics, and non-goals"
+
+[capabilities.roadmap_prioritization]
+description = "Prioritize roadmap items using evidence, impact, effort, confidence, risk, and strategic alignment"
+
+[capabilities.figma_design_review]
+description = "Review Figma designs for product intent, user flow, UX clarity, states, accessibility, and engineering handoff readiness"
+
+[capabilities.feature_acceptance]
+description = "Validate implemented features against PRD, Figma, acceptance criteria, metrics, and release readiness"
+
+[capabilities.launch_planning]
+description = "Plan product launches with rollout, communication, analytics, support readiness, risks, and post-launch learning"

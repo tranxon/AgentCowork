@@ -1,7 +1,7 @@
 ---
 name: progress-tracking
-description: Track project progress against plan, identify deviations, and produce status reports
-version: "1.0.0"
+description: Track project progress against plan using evidence, variance thresholds, blocker ownership, recovery options, and stakeholder-ready status reports
+version: "1.1.0"
 author: developer
 triggers:
   - track progress
@@ -18,41 +18,47 @@ tool_deps:
 
 # Progress Tracking Skill
 
+## Core Rule
+
+Status must be evidence-based. Do not report green if scope, schedule, quality, or risk evidence says otherwise.
+
+Bad news should be surfaced early with options and a recommended recovery path.
+
 ## Execution Steps
 
-1. **Collect progress from all sources**
-   - Use `memory_recall` to retrieve the project plan, task list, and previous status reports
-   - Use `file_read` to examine any project tracking files, changelogs, or commit logs
-   - Gather status from each team member or work stream:
-     - What was completed since the last check-in?
-     - What is currently in progress?
-     - What is blocked or at risk?
-   - Collect quantitative metrics: tasks completed, story points delivered, bugs resolved
+1. **Collect evidence from sources**
+   - Use `memory_recall` to retrieve plan, sprint commitment, previous status, velocity, risks, blockers, and decisions
+   - Use `file_read` to inspect tracking files, task lists, changelogs, PRs, release notes, test results, or meeting notes
+   - Collect completed, in-progress, blocked, at-risk, and newly discovered work
+   - Separate verified facts from estimates and self-reported status
 
-2. **Compare against plan**
-   - Compare actual progress to the planned schedule
-   - Calculate schedule variance: (Earned Value - Planned Value) / Planned Value
-   - Identify which tasks are on track, ahead, or behind
-   - Assess burndown/burnup status for the current sprint
-   - Track velocity trend: is the team delivering at the expected rate?
+2. **Compare actuals to plan**
+   - Compare planned vs actual delivery, quality, scope, and risk movement
+   - Calculate variance where possible: tasks, points, dates, defects, incidents, or milestone progress
+   - Identify trend: improving, stable, or degrading
+   - Do not average away critical blockers or high-risk outliers
 
-3. **Identify deviations**
-   - **Schedule deviation**: Tasks that are behind their planned completion date
-   - **Scope deviation**: New requirements or changes not in the original plan
-   - **Quality deviation**: Increase in bug rates or test failures
-   - **Resource deviation**: Team member availability changes, tooling issues
-   - For each deviation, determine the root cause and whether it's a one-time event or a trend
+3. **Classify project status**
+   - Green: on track, risks controlled, no decision needed
+   - Yellow: at risk, mitigation active, decision may be needed soon
+   - Red: off track, commitment likely missed, decision needed now
+   - Define thresholds explicitly for the project context
 
-4. **Formulate adjustment plan**
-   - For minor deviations (< 10%): adjust within the sprint, no escalation needed
-   - For moderate deviations (10-20%): re-prioritize backlog, adjust scope or timeline
-   - For major deviations (> 20%): escalate to stakeholders with options and trade-offs
-   - Always present multiple options: "We can do A (trade-off: X), B (trade-off: Y), or C (trade-off: Z)"
-   - Document the chosen adjustment and its expected impact
+4. **Analyze deviations and blockers**
+   - Identify root causes: scope change, dependency delay, estimate miss, quality issue, resource gap, unclear requirement
+   - Assign every blocker a single owner, next action, and due date
+   - Escalate blockers when the owner cannot resolve them within the needed timeframe
+   - Distinguish risks from active issues
 
-5. **Output the status report**
-   - Use `file_write` to save the status report
-   - Use `memory_store` to persist the status data and trend information
+5. **Prepare adjustment options**
+   - For minor deviation, adjust within the sprint or plan
+   - For moderate deviation, present scope, timeline, staffing, or quality trade-offs
+   - For major deviation, escalate with options and recommendation
+   - Always include impact of doing nothing
+
+6. **Publish and persist**
+   - Use `file_write` to save the status report when requested
+   - Use `memory_store` to persist status, metrics, decisions, velocity, estimation accuracy, and blockers
 
 ## Output Format
 
@@ -60,44 +66,53 @@ tool_deps:
 # Project Status Report — [Date]
 
 ## Executive Summary
-[2-3 sentence overview: on track / at risk / off track, and the #1 thing to know]
+- **Status**: [Green / Yellow / Red]
+- **Headline**: [One sentence]
+- **Decision needed**: [Yes/No — what and by when]
 
 ## Progress Overview
-| Metric | Plan | Actual | Variance |
-|--------|------|--------|----------|
-| Sprint completion | 80% | 65% | -15% |
-| Story points delivered | 21 | 17 | -4 |
-| Open bugs | 5 | 8 | +3 |
+| Metric | Plan | Actual | Variance | Trend |
+|--------|------|--------|----------|-------|
+| Sprint completion | 80% | 65% | -15% | Degrading |
 
 ## Completed This Period
-- [x] [Task/deliverable completed]
-- [x] [Task/deliverable completed]
+- [x] [Verified deliverable]
 
 ## In Progress
-- [ ] [Task in progress] — [Owner] — [Expected completion]
-- [ ] [Task in progress] — [Owner] — [Expected completion]
+| Item | Owner | Expected Completion | Confidence | Notes |
+|------|-------|---------------------|------------|-------|
+| ... | ... | ... | High/Med/Low | ... |
 
 ## Blocked / At Risk
-- [ ] [Task] — Blocker: [description] — Action needed: [what needs to happen]
+| Item | Blocker/Risk | Owner | Next Action | Due Date | Escalation Needed |
+|------|--------------|-------|-------------|----------|-------------------|
+| ... | ... | ... | ... | ... | Yes/No |
 
-## Adjustments Made
-- [Description of any scope, schedule, or resource changes]
+## Variance Analysis
+- **Schedule**: [status and cause]
+- **Scope**: [status and cause]
+- **Quality**: [status and cause]
+- **Resources**: [status and cause]
 
-## Key Risks & Actions
-| Risk | Likelihood | Impact | Mitigation |
-|------|-----------|--------|------------|
-| [Risk] | High/Med/Low | High/Med/Low | [Action] |
+## Recovery Options
+| Option | Impact | Trade-off | Recommendation |
+|--------|--------|-----------|----------------|
+| A | ... | ... | Recommended |
 
 ## Next Period Focus
-1. [Top priority for the next period]
-2. [Second priority]
-3. [Third priority]
+1. [Priority]
+2. [Priority]
+3. [Priority]
 ```
 
-## Notes
+## Red Flags
 
-- Status reports should be factual and concise — no burying bad news
-- Always include the "so what" — don't just report numbers, explain their implications
-- Red/yellow/green status indicators should be used consistently: define what each means for your project
-- Use `memory_store` to track velocity trends and estimation accuracy over time
-- When the project is off track, present the recovery plan alongside the bad news
+Stop and correct the report if you see:
+
+- Status color unsupported by evidence
+- Blocker without owner and next action
+- Bad news buried below low-priority details
+- No recovery options for Yellow or Red status
+- New scope included without change log
+- Active issue reported only as a risk
+- Metrics reported without explaining implications

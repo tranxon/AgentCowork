@@ -1,7 +1,7 @@
 ---
 name: testing
-description: Design and write comprehensive tests including unit, integration, and edge case coverage
-version: "1.0.0"
+description: Design and write behavior-focused tests using TDD, red-green-refactor, regression coverage, and deterministic validation
+version: "1.1.0"
 author: developer
 triggers:
   - test
@@ -9,60 +9,66 @@ triggers:
   - 编写测试
   - unit test
   - integration test
+  - TDD
 tool_deps:
   - file_read
   - file_write
   - shell
   - memory_recall
+  - memory_store
 ---
 
 # Testing Skill
 
+## Core Rule
+
+For new behavior, bug fixes, refactoring, or behavior changes: write the test first, watch it fail, then implement the minimal code to pass.
+
+If you did not see the test fail for the expected reason, you have not proven the test protects the behavior.
+
 ## Execution Steps
 
-1. **Analyze the test target**
-   - Use `file_read` to examine the code that needs tests
-   - Identify the public interface: what functions, methods, or APIs need testing?
-   - Understand the contract: what are the valid inputs, outputs, and error conditions?
-   - Use `memory_recall` to retrieve project-specific testing conventions and patterns
-   - Check for existing tests — avoid duplicating coverage
+1. **Analyze the target and conventions**
+   - Use `memory_recall` to retrieve project-specific testing conventions and known edge cases
+   - Use `file_read` to inspect the code under test, existing tests, fixtures, and test commands
+   - Identify the public contract: inputs, outputs, side effects, error conditions, and invariants
+   - Find similar tests in the codebase and follow their style
+   - Avoid adding new test libraries unless the project already uses them or the user approves
 
-2. **Design test cases**
-   - **Happy path**: Verify correct behavior with valid inputs
-   - **Boundary values**: Test at the edges of valid ranges (zero, max, empty, single element)
-   - **Error paths**: Verify correct error types and messages for invalid inputs
-   - **Edge cases**: Concurrent access, large inputs, missing optional fields, encoding issues
-   - **Regression tests**: Cover known bugs that have been fixed
-   - Prioritize test cases by risk: which failures would be most impactful?
+2. **Design behavior-focused cases**
+   - Cover one behavior per test
+   - Prefer tests that exercise real code over tests that only verify mocks
+   - Include happy paths, boundary values, error paths, regression cases, and critical edge cases
+   - Use descriptive names that state behavior and expected outcome
+   - Split tests whose names need "and" because they usually cover multiple behaviors
 
-3. **Write unit tests**
-   - Use `file_write` to create test files following project conventions:
-     - Rust: `#[cfg(test)] mod tests { }` in the same file, or `tests/` directory
-     - TypeScript: `*.test.ts` or `*.spec.ts` alongside source
-     - Python: `test_*.py` in the same package
-   - Follow the Arrange-Act-Assert pattern
-   - Each test should test one behavior — avoid assertion-heavy tests that hide failures
-   - Use descriptive test names: `test_parse_returns_error_on_empty_input` not `test_parse_1`
-   - Mock external dependencies — tests should be deterministic and fast
+3. **RED: write the failing test first**
+   - Use `file_write` to add the smallest test for the next behavior
+   - Run only the focused test first with `shell`
+   - Confirm it fails, not errors
+   - Confirm the failure message proves the intended missing behavior
+   - If the test passes immediately, fix the test because it is not testing new behavior
 
-4. **Write integration tests**
-   - Test the interaction between multiple modules or components
-   - Use realistic test fixtures and sample data
-   - Test the full request-response cycle for APIs
-   - Verify side effects: database writes, file system changes, message delivery
-   - Integration tests should be in a separate directory from unit tests
+4. **GREEN: implement the minimal code**
+   - Write only enough production code to make the focused test pass
+   - Do not add speculative options, abstractions, configuration, or unrelated cleanup
+   - Do not change the test to match an incorrect implementation
+   - Run the focused test again and confirm it passes
 
-5. **Run and verify**
-   - Use `shell` to execute the test suite: `cargo test`, `npm test`, `pytest`, etc.
-   - Verify that all new tests pass
-   - Verify that no existing tests break
-   - Check test output for any panics, flaky behavior, or warnings
-   - If the project supports coverage reporting, generate a coverage report
+5. **REFACTOR: clean while green**
+   - Improve names, reduce duplication, or extract helpers only after tests pass
+   - Keep behavior unchanged
+   - Re-run the focused test after each refactor
+   - If a refactor breaks tests, revert or make the step smaller
 
-6. **Coverage report**
-   - Identify untested code paths from coverage data
-   - Prioritize additional tests for uncovered critical paths
-   - Document the achieved coverage level and any known gaps
+6. **Repeat and broaden validation**
+   - Add the next failing test for the next behavior
+   - After focused tests pass, run relevant test suites
+   - Run lint/typecheck/build commands when available
+   - Check output for warnings, flakes, panics, and nondeterminism
+
+7. **Record useful findings**
+   - Use `memory_store` for recurring edge cases, testing patterns, flaky-test causes, and project-specific test commands
 
 ## Output Format
 
@@ -70,33 +76,49 @@ tool_deps:
 ## Test Report
 
 ### Test Target
-[Description of what was tested]
+[Description of contract tested]
 
-### Test Cases Designed
-| # | Category | Test Name | Covers |
-|---|----------|-----------|--------|
-| 1 | Happy Path | test_successful_parse | Valid JSON input |
-| 2 | Boundary | test_empty_array_input | Empty array handling |
-| 3 | Error | test_invalid_format_error | Malformed input rejection |
+### Test Cases
+| # | Category | Test Name | Behavior | Red Verified |
+|---|----------|-----------|----------|--------------|
+| 1 | Regression | test_rejects_empty_email | Empty email returns validation error | Yes |
 
-### Files Created
-- `src/module.rs` (added unit tests inline)
-- `tests/integration_module.rs` (integration tests)
+### Files Changed
+- `path/to/test`
+- `path/to/source`
 
-### Results
-- Unit tests: X passed, 0 failed
-- Integration tests: Y passed, 0 failed
-- Coverage: Z% (target: >= 80%)
+### Commands Run
+| Command | Result |
+|---------|--------|
+| `cargo test test_name` | PASS |
+
+### Verification Checklist
+- [x] Each new behavior had a failing test first
+- [x] Failure reason was expected
+- [x] Minimal implementation made test pass
+- [x] Relevant existing tests pass
+- [x] Lint/typecheck pass or skipped with reason
 
 ### Known Gaps
-- [ ] Async error paths not covered (requires mock runtime setup)
-- [ ] Concurrency edge case pending (needs stress test harness)
+- [Gap or none]
 ```
 
-## Notes
+## Good Test Criteria
 
-- Tests are first-class code — apply the same quality standards as production code
-- Prefer explicit assertions over error-swallowing patterns (`unwrap()` in Rust tests is fine, but `expect("reason")` is better)
-- Don't test implementation details — test behavior and contracts
-- If a test is flaky, fix it immediately — flaky tests erode trust in the entire suite
-- Use `memory_store` to record discovered edge cases and testing patterns for future reference
+- Minimal: one behavior per test
+- Clear: name describes expected behavior
+- Contract-focused: tests observable behavior, not implementation details
+- Deterministic: no uncontrolled time, randomness, network, or order dependence
+- Useful failure: failure message points to the broken contract
+
+## Red Flags
+
+Stop and correct the approach if any of these occur:
+
+- Production code before test for new behavior
+- Test passes immediately for behavior that should not exist yet
+- Test only proves mock behavior
+- Large setup makes the API hard to use
+- Test requires hidden global state or ordering
+- Fixing implementation by weakening the test
+- Marking work complete without running the relevant commands
