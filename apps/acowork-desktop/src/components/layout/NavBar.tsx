@@ -169,19 +169,14 @@ function FilledProjectsIcon({ className }: { className?: string }) {
 export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps) {
   const { t } = useTranslation();
   const profile = useUserProfileStore((s) => s.profile);
-  const { opacity, theme } = useSettingsStore();
+  const { theme } = useSettingsStore();
   const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  // Original gray: #E2E3E9 (light) / #292A2C (dark), modulated by opacity
-  const bgColor = isDark ? `rgba(41,42,44,${opacity})` : `rgba(226,227,233,${opacity})`;
 
   return (
     <nav
       className="flex w-[var(--spacing-nav)] flex-col items-center gap-2 py-2"
       role="navigation"
       aria-label="Main navigation"
-      style={{
-        backgroundColor: bgColor,
-      } as React.CSSProperties}
     >
       {/* User avatar — click to edit profile (WeChat-style top placement) */}
       <Tooltip content={t("navBar.editProfile")} variant="plain" position="right">

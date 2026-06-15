@@ -1,13 +1,7 @@
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useSettingsStore } from "../../stores/settingsStore";
 
 export function TitleBar() {
-  const { opacity, theme } = useSettingsStore();
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-  // Original gray: #E2E3E9 (light) / #292A2C (dark), modulated by opacity
-  const bgColor = isDark ? `rgba(41,42,44,${opacity})` : `rgba(226,227,233,${opacity})`;
-
   const handleMinimize = async () => {
     console.log("[TitleBar] Minimize clicked");
     try {
@@ -48,10 +42,7 @@ export function TitleBar() {
     <div
       data-tauri-drag-region
       className="flex h-8 w-full items-center justify-between select-none pl-3"
-      style={{
-        "-webkit-app-region": "drag",
-        backgroundColor: bgColor,
-      } as React.CSSProperties}
+      style={{ "-webkit-app-region": "drag" } as React.CSSProperties}
     >
       {/* Left: App title */}
       <div className="flex items-center gap-2">

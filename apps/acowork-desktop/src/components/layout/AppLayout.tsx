@@ -113,6 +113,25 @@ export function AppLayout() {
     prevIsDebugMode.current = isDebugMode;
   }, [isDebugMode]);
 
+  // ── Track last non-debug tab so we can restore it when leaving debug ─
+  const lastNonDebugTab = useRef<PanelTab>(activeTab);
+  useEffect(() => {
+    if (activeTab !== "debug") {
+      lastNonDebugTab.current = activeTab;
+    }
+  }, [activeTab]);
+
+  // ── When agent switches, restore last non-debug tab if new agent has no debug ─
+  const prevSelectedAgentId = useRef(selectedAgentId);
+  useEffect(() => {
+    if (prevSelectedAgentId.current !== selectedAgentId) {
+      prevSelectedAgentId.current = selectedAgentId;
+      if (activeTab === "debug" && !isDebugMode) {
+        setActiveTab(lastNonDebugTab.current);
+      }
+    }
+  }, [selectedAgentId, isDebugMode, activeTab]);
+
   // ── Switch to status tab when agent stops ────────────────────────
   const prevRunning = useRef(selectedAgent?.running);
   useEffect(() => {
@@ -338,7 +357,7 @@ export function AppLayout() {
 
         {/* Content area based on current view */}
         {currentView === "chat" && (
-          <div className="flex flex-1 overflow-hidden" style={{ backgroundColor: glassBg } as React.CSSProperties}>
+          <div className="flex flex-1 overflow-hidden">
             {/* Agent list — resizable */}
             <AgentList width={sidebarWidth} />
 
@@ -397,12 +416,20 @@ export function AppLayout() {
           />
         )}
 
-        {currentView === "settings" && <SettingsPage initialTab={settingsInitialTab} />}
+        {currentView === "settings" && (
+          <div className="flex flex-1 overflow-hidden rounded-xl bg-[#FAFAFA] dark:bg-zinc-900">
+            <SettingsPage initialTab={settingsInitialTab} />
+          </div>
+        )}
 
-        {currentView === "harness" && <HarnessPage />}
+        {currentView === "harness" && (
+          <div className="flex flex-1 overflow-hidden rounded-xl bg-[#FAFAFA] dark:bg-zinc-900">
+            <HarnessPage />
+          </div>
+        )}
 
         {(currentView === "projects" || currentView === "docs") && (
-          <div className="flex flex-1 items-center justify-center bg-zinc-100 dark:bg-zinc-900">
+          <div className="flex flex-1 items-center justify-center overflow-hidden rounded-xl bg-[#FAFAFA] dark:bg-zinc-900">
             <div className="rounded-lg border border-zinc-200 bg-white p-8 dark:border-zinc-700 dark:bg-zinc-800">
               <p className="text-sm text-zinc-400 dark:text-zinc-500">TODO</p>
             </div>
@@ -411,7 +438,7 @@ export function AppLayout() {
       </div>
 
       {/* Bottom status bar */}
-      <div className="flex h-5 shrink-0 items-center gap-3 px-3 text-[11px] select-none dark:text-zinc-400" style={{ backgroundColor: glassBg } as React.CSSProperties}>
+      <div className="flex h-5 shrink-0 items-center gap-3 px-3 text-[11px] select-none dark:text-zinc-400">
         {statusVisible && (
           <span className={cn(
             "truncate",

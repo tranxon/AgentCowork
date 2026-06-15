@@ -1,6 +1,5 @@
 import { NavButton } from "../common/NavButton";
 import { useTranslation } from "../../i18n/useTranslation";
-import { useSettingsStore } from "../../stores/settingsStore";
 import { Bug, Activity, Database, FolderKanban, Wrench } from "lucide-react";
 
 type PanelTab = "debug" | "status" | "setup" | "memory" | "workspace";
@@ -22,9 +21,6 @@ interface NavItem {
 
 export function RightNavBar({ activeTab, onTabChange, isDebugMode, agentRunning, collapsed }: RightNavBarProps) {
     const { t } = useTranslation();
-    const { opacity, theme } = useSettingsStore();
-    const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
-    const bgColor = isDark ? `rgba(41,42,44,${opacity})` : `rgba(226,227,233,${opacity})`;
 
     const items: NavItem[] = [
         { tab: "workspace", icon: FolderKanban, i18nKey: "resultsPanel.workspace", show: true },
@@ -35,12 +31,10 @@ export function RightNavBar({ activeTab, onTabChange, isDebugMode, agentRunning,
     ];
 
     return (
-        <nav className="flex w-10 shrink-0 flex-col items-center gap-2 py-2 dark:border-zinc-800"
-            style={{ backgroundColor: bgColor } as React.CSSProperties}
-        >
+        <nav className="flex w-10 shrink-0 flex-col items-center gap-2 py-2 dark:border-zinc-800">
             {items
                 .filter((item) => item.show)
-                .map(({ tab, icon: Icon, i18nKey }) => {
+                .map(({ tab, icon: Icon, i18nKey }, index) => {
                     const isActive = !collapsed && activeTab === tab;
                     return (
                         <NavButton
@@ -49,6 +43,8 @@ export function RightNavBar({ activeTab, onTabChange, isDebugMode, agentRunning,
                             onClick={() => onTabChange(tab)}
                             tooltip={t(i18nKey)}
                             tooltipPosition="left"
+                            // First button's top edge aligns with the SessionTabBar/ResultsPanel border-b (~33px)
+                            className={index === 0 ? "mt-[25px]" : undefined}
                         >
                             <Icon
                                 className="h-5 w-5"
