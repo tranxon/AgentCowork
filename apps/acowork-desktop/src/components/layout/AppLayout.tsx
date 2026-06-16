@@ -25,13 +25,13 @@ import { useTranslation } from "../../i18n/useTranslation";
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
 type PanelTab = "debug" | "status" | "setup" | "memory" | "workspace";
 
-const MIN_SIDEBAR_WIDTH = 160;
+const MIN_SIDEBAR_WIDTH = 100;
 const AVATAR_SIDEBAR_WIDTH = 64;
 const MAX_SIDEBAR_WIDTH = 400;
 const DEFAULT_SIDEBAR_WIDTH = 240;
 const SIDEBAR_WIDTH_KEY = "acowork-sidebar-width";
 
-const MIN_RIGHT_WIDTH = 260;
+const MIN_RIGHT_WIDTH = 200;
 const MAX_RIGHT_WIDTH = 600;
 const DEFAULT_RIGHT_WIDTH = 340;
 const RIGHT_WIDTH_KEY = "acowork-right-width";
@@ -40,6 +40,7 @@ const MIN_FILE_WIDTH = 200;
 const MAX_FILE_WIDTH = 900;
 const DEFAULT_FILE_WIDTH = 450;
 const FILE_WIDTH_KEY = "acowork-file-width";
+const MIN_CHAT_WIDTH = 288;
 
 export function AppLayout() {
   const [currentView, setCurrentView] = useState<NavView>("chat");
@@ -378,11 +379,10 @@ export function AppLayout() {
     startXFile.current = e.clientX;
     startWidthFile.current = fileWidth;
     currentWidthRefFile.current = fileWidth;
-    // Calculate dynamic max to ensure ChatPanel retains at least 200px
-    const minChatWidth = 200;
+    // Calculate dynamic max to ensure ChatPanel retains enough width for the collapsed toolbar
     const navWidth = 48;
     const actualRightWidth = resultsCollapsed ? 0 : rightWidth;
-    const dynamicMax = Math.max(window.innerWidth - sidebarWidth - actualRightWidth - navWidth - minChatWidth, MIN_FILE_WIDTH);
+    const dynamicMax = Math.max(window.innerWidth - sidebarWidth - actualRightWidth - navWidth - MIN_CHAT_WIDTH, MIN_FILE_WIDTH);
     maxFileWidthRef.current = Math.min(MAX_FILE_WIDTH, dynamicMax);
     document.addEventListener("mousemove", handleMouseMoveFile);
     document.addEventListener("mouseup", handleMouseUpFile);
@@ -496,20 +496,20 @@ export function AppLayout() {
           </span>
         )}
         {(resultsCollapsed || activeTab !== "status") && selectedAgent?.running && agentDisplayName && (
-          <span className="flex items-center gap-3 truncate">
-            <span>
+          <span className="flex items-center gap-[22px] truncate">
+            <span className="pl-1">
               <span className="text-zinc-500 dark:text-zinc-500">{t("statusBar.agent")}: </span>
-              <span className="font-medium text-zinc-700 dark:text-zinc-200">{agentDisplayName}</span>
+              <span className="font-medium text-zinc-500 dark:text-zinc-400">{agentDisplayName}</span>
             </span>
             <span>
               <span className="text-zinc-500 dark:text-zinc-500">{t("statusBar.sessions")}: </span>
-              <span className="font-mono text-zinc-700 dark:text-zinc-200">{openSessionCount}</span>
+              <span className="font-mono text-zinc-500 dark:text-zinc-400">{openSessionCount}</span>
             </span>
             {contextUsage && (
               <span>
                 <span className="text-zinc-500 dark:text-zinc-500">{t("statusBar.context")}: </span>
                 <span
-                  className="font-mono text-zinc-700 dark:text-zinc-200"
+                  className="font-mono text-zinc-500 dark:text-zinc-400"
                   style={{
                     color:
                       contextUsage.usage_percent >= 90
@@ -520,7 +520,7 @@ export function AppLayout() {
                   {contextUsage.usage_percent}%
                 </span>
                 <span className="text-zinc-400 dark:text-zinc-500"> | </span>
-                <span className="font-mono text-zinc-700 dark:text-zinc-200">
+                <span className="font-mono text-zinc-500 dark:text-zinc-400">
                   {formatTokenCount(contextUsage.total_tokens)}/{formatTokenCount(contextUsage.context_window)}
                 </span>
               </span>

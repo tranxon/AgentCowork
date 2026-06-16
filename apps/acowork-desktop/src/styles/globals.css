@@ -959,11 +959,7 @@ input[type="radio"]:checked {
   letter-spacing: 0.04em;
 }
 
-/* ── Chat toolbar responsive collapse (container queries) ──
-   Left-to-right order: Model → Workspace → Skills.
-   Each button's text + chevron hides when the toolbar narrows past its threshold. */
-
-/* Model: collapse below 420px */
+/* ── Chat toolbar responsive collapse (container queries) ── */
 @container tb (max-width: 420px) {
 
   .tb-model-text,
@@ -972,7 +968,6 @@ input[type="radio"]:checked {
   }
 }
 
-/* Workspace: collapse below 360px */
 @container tb (max-width: 360px) {
 
   .tb-ws-text,
@@ -981,7 +976,6 @@ input[type="radio"]:checked {
   }
 }
 
-/* Skills: collapse below 300px */
 @container tb (max-width: 300px) {
 
   .tb-sk-text,

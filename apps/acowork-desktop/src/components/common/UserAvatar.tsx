@@ -2,7 +2,6 @@ import { useEffect, useMemo } from "react";
 import { useUserProfileStore } from "../../stores/userProfileStore";
 import { pickDeterministicBuiltinIconId, pickRandomBuiltinIconId } from "../../lib/avatar";
 import type { BoringAvatarVariant } from "../../lib/types";
-import { Tooltip } from "./Tooltip";
 
 // ── Built-in icons (bundled JPG assets) ────────────────────────────────
 // JPG files live at src/assets/builtin-icons/icon-XX.jpg.
@@ -33,15 +32,13 @@ export const AGENT_DEFAULT_PALETTE = ["#6366F1", "#8B5CF6", "#EC4899", "#F59E0B"
 function BuiltinIconAvatar({ iconId, size, className }: { iconId: string; size: number; className?: string }) {
   const src = BUILTIN_ICONS[iconId] ?? BUILTIN_ICONS["icon-01"];
   return (
-    <Tooltip content={iconId} variant="plain">
-      <img
-        src={src}
-        alt={iconId}
-        draggable={false}
-        className={`rounded-full object-cover ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 ${className ?? ""}`}
-        style={{ width: size, height: size }}
-      />
-    </Tooltip>
+    <img
+      src={src}
+      alt={iconId}
+      draggable={false}
+      className={`rounded-full object-cover ring-1 ring-zinc-300/60 dark:ring-zinc-600/60 ${className ?? ""}`}
+      style={{ width: size, height: size }}
+    />
   );
 }
 

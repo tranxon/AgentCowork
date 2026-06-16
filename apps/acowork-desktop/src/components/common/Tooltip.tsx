@@ -76,16 +76,41 @@ function InlineTooltip({
   tipClass,
   delayMs,
 }: Required<Omit<TooltipProps, "tipClass">> & { tipClass: string }) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleEnter = useCallback(() => {
+    timerRef.current = setTimeout(() => setVisible(true), delayMs);
+  }, [delayMs]);
+
+  const handleLeave = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    setVisible(false);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
+
   return (
-    <div className="relative inline-flex group/tooltip">
+    <div
+      className="relative inline-flex"
+      onMouseEnter={handleEnter}
+      onMouseLeave={handleLeave}
+    >
       {children}
       <div
         className={cn(
           inlinePositionClasses[position],
-          "pointer-events-none absolute hidden group-hover/tooltip:block z-50",
+          "pointer-events-none absolute z-50",
           tipClass,
+          visible ? "block" : "hidden",
         )}
-        style={{ transitionDelay: `${delayMs}ms` }}
       >
         <div
           className={cn(

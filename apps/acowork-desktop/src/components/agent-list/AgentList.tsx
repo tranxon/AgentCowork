@@ -8,6 +8,7 @@ import { CloneDialog } from "./CloneDialog";
 import { PublishWizard } from "./PublishWizard";
 import { CreateWizard } from "./CreateWizard";
 import { AgentAvatar } from "../common/AgentAvatar";
+import { Tooltip } from "../common/Tooltip";
 import { useTranslation } from "../../i18n/useTranslation";
 import { cn } from "../../lib/utils";
 import { Play, Square, Trash2, Info, Copy, Plus, Search, Package, Sparkles, Bug } from "lucide-react";
@@ -337,14 +338,21 @@ export function AgentList({ width }: AgentListProps) {
               role="listitem"
             >
               {/* Avatar */}
-              <AgentAvatar
-                agentId={agent.agent_id}
-                displayName={agent.display_name ?? agent.name}
-                avatarUrl={agent.avatar}
-                iconId={agentProfiles[agent.agent_id]?.avatarIconId}
-                size={40}
-                className={isCollapsed ? "mx-auto" : ""}
-              />
+              <Tooltip
+                content={isCollapsed ? (agentProfiles[agent.agent_id]?.displayName ?? agent.display_name ?? agent.name) : ""}
+                variant="plain"
+                position="right"
+                delayMs={0}
+              >
+                <AgentAvatar
+                  agentId={agent.agent_id}
+                  displayName={agent.display_name ?? agent.name}
+                  avatarUrl={agent.avatar}
+                  iconId={agentProfiles[agent.agent_id]?.avatarIconId}
+                  size={40}
+                  className={isCollapsed ? "mx-auto" : ""}
+                />
+              </Tooltip>
 
               {/* Content area — hidden when collapsed */}
               {!isCollapsed && (

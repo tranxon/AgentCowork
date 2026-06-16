@@ -38,20 +38,21 @@ export function ToolbarDropdownTrigger({
     tooltip?: string;
 }) {
     return (
-        <div ref={wrapperRef} className="relative inline-block">
+        <div ref={wrapperRef} className="relative inline-block min-w-0">
             <Tooltip content={tooltip ?? label} tipClass={tipClass}>
                 <button
                     type="button"
                     onClick={onToggle}
                     className={cn(
                         toolbarButton,
+                        "min-w-0",
                         open && "bg-zinc-200 dark:bg-zinc-700 text-zinc-900 dark:text-zinc-100",
                         buttonClassName,
                     )}
                 >
-                    {icon}
-                    <span className={cn(collapseClass, "max-w-[120px] truncate")} style={{ fontSize: "0.75rem" }}>{label}</span>
-                    <ChevronDown className={cn("h-3 w-3 text-zinc-400", collapseClass)} />
+                    <span className="shrink-0">{icon}</span>
+                    <span className={cn(collapseClass, "min-w-0 max-w-[120px] truncate")} style={{ fontSize: "0.75rem" }}>{label}</span>
+                    <ChevronDown className={cn("h-3 w-3 shrink-0 text-zinc-400", collapseClass)} />
                 </button>
             </Tooltip>
             {children}

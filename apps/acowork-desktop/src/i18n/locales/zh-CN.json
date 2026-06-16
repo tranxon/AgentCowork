@@ -201,7 +201,7 @@
         "mcpServers": "MCP 服务器",
         "noMcpInCatalog": "目录中无 MCP 服务器。请在 Harness > MCP 标签页添加服务器。",
         "mcpToggleDesc": "切换此 Agent 的 MCP 服务器。在 Harness > MCP 标签页添加更多服务器。",
-        "applyToRuntime": "应用到运行时",
+        "applyToRuntime": "更新生效",
         "applying": "应用中...",
         "resetToDefaults": "恢复默认",
         "resetAgentSetup": "重置 Agent 设置",

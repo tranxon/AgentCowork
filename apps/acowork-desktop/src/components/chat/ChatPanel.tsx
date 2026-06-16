@@ -871,7 +871,7 @@ export function ChatPanel() {
   return (
     <>
       <div
-        className="flex flex-1 min-w-0 flex-col bg-[#FAFAFA] dark:bg-zinc-900 rounded-lg overflow-hidden"
+        className="flex flex-1 min-w-[288px] flex-col bg-[#FAFAFA] dark:bg-zinc-900 rounded-lg overflow-hidden"
       >
         {/* LLM config warning */}
         {hasLlmConfig === false && (
@@ -1272,9 +1272,9 @@ export function ChatPanel() {
           />
 
           {/* Bottom toolbar — @container for responsive button text collapse */}
-          <div className="@container/tb flex items-center justify-between px-3 pb-2 min-w-[260px]">
+          <div className="@container/tb flex items-center justify-between gap-2 px-3 pb-2 min-w-[264px]">
             {/* Left: feature buttons */}
-            <div className="flex items-center gap-1 min-w-0">
+            <div className="flex items-center gap-1 min-w-0 overflow-visible">
               {/* Model switcher — only enabled when agent is running */}
               {availableModels.length > 1 && selectedAgent?.running && (
                 <ModelMenu
@@ -1314,7 +1314,7 @@ export function ChatPanel() {
 
             {/* Right: send/stop button + context usage icon */}
 
-            <div className="flex items-center gap-1">
+            <div className="flex shrink-0 items-center gap-1">
               {/* Context usage icon — shown when session is active */}
               {currentSessionId && <ContextUsageIcon />}
 

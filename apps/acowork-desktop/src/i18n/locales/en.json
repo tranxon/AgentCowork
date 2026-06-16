@@ -201,9 +201,9 @@
         "mcpServers": "MCP Servers",
         "noMcpInCatalog": "No MCP servers in catalog. Add servers in Harness > MCP tab.",
         "mcpToggleDesc": "Toggle MCP servers for this agent. Add more in Harness > MCP tab.",
-        "applyToRuntime": "Apply to Runtime",
+        "applyToRuntime": "Apply",
         "applying": "Applying...",
-        "resetToDefaults": "Reset to defaults",
+        "resetToDefaults": "Reset",
         "resetAgentSetup": "Reset Agent Setup",
         "reset": "Reset"
     },
