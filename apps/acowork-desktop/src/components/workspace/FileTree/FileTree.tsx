@@ -6,6 +6,8 @@ import { useChatStore } from "../../../stores/chatStore";
 import { useFileEditorStore } from "../../../stores/fileEditorStore";
 import { FileTreeNode } from "./FileTreeNode";
 
+const EMPTY_ARRAY: string[] = [];
+
 /** Flattened tree node for virtualized rendering */
 interface FlatNode {
     entry: TreeEntry;
@@ -38,7 +40,7 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
     // Expanded paths from the session — Zustand selector is reactive
     const expandedPathsArr = useChatStore((s) => {
         const ss = s.agentStates[agentId]?.sessionStates[sessionId];
-        return ss?.treeExpandedPaths ?? [];
+        return ss?.treeExpandedPaths ?? EMPTY_ARRAY;
     });
     const expandedPaths = useMemo(() => new Set(expandedPathsArr), [expandedPathsArr]);
 

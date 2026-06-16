@@ -10,7 +10,7 @@ use acowork_core::tools::traits::Tool;
 use std::sync::Arc;
 
 #[cfg(test)]
-use crate::tools::workspace_resolver::{WorkspaceAccess, WorkspaceDir, WorkspaceResolver};
+use crate::tools::workspace_resolver::WorkspaceResolver;
 
 /// Tool registry
 pub struct ToolRegistry {
@@ -46,7 +46,7 @@ impl ToolRegistry {
     /// Tool activation IS authorization — no separate permission check needed.
     ///
     /// Steps:
-    /// 1. Load workspace directories from the shared resolver
+    /// 1. Pass the shared resolver to PathGuardedTool (no snapshot — live reads)
     /// 2. Apply security decorators: PathGuarded → RateLimited
     pub fn activate(
         &self,
@@ -54,16 +54,16 @@ impl ToolRegistry {
         resolver: &SharedResolver,
         max_calls_per_minute: u32,
     ) -> Vec<Arc<dyn Tool>> {
-        // Use the shared workspace resolver (single source of truth for directory resolution)
-        let allowed_dirs = resolver.read().unwrap().allowed_dirs().to_vec();
-
-        // Apply security decorators to all registered tools
+        // Pass the shared resolver directly to PathGuardedTool so it reads
+        // workspace directories fresh from the global source of truth on every
+        // execute() call. This ensures hot-reload of workspace access changes
+        // takes effect immediately without agent restart.
         self.tools
             .iter()
             .map(|tool| {
                 // Layer 1: Path guard (for filesystem tools)
                 let path_guarded =
-                    Arc::new(PathGuardedTool::new(tool.clone(), allowed_dirs.clone()))
+                    Arc::new(PathGuardedTool::new(tool.clone(), resolver.clone()))
                         as Arc<dyn Tool>;
 
                 // Layer 2: Rate limit

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use crate::tools::path_utils;
 
 // Re-export for backward compatibility — existing tests import from wrappers
-pub use crate::tools::workspace_resolver::{WorkspaceAccess, WorkspaceDir};
+pub use crate::tools::workspace_resolver::{SharedResolver, WorkspaceAccess, WorkspaceDir, WorkspaceResolver};
 use std::time::Instant;
 
 /// Rate-limited tool wrapper
@@ -82,16 +82,22 @@ impl Tool for RateLimitedTool {
 /// Restricts filesystem tool access to paths within the agent's
 /// allowed working directories. Validates path parameters before
 /// executing the inner tool.
+///
+/// Reads workspace directories fresh from the global resolver on every
+/// `execute()` call — no local caching. This ensures hot-reload of
+/// workspace access changes (e.g., read-only → read-write toggled
+/// by the user via the frontend) takes effect immediately without
+/// requiring an agent restart.
 pub struct PathGuardedTool {
     inner: Arc<dyn Tool>,
-    allowed_dirs: Vec<WorkspaceDir>,
+    resolver: SharedResolver,
 }
 
 impl PathGuardedTool {
-    pub fn new(inner: Arc<dyn Tool>, allowed_dirs: Vec<WorkspaceDir>) -> Self {
+    pub fn new(inner: Arc<dyn Tool>, resolver: SharedResolver) -> Self {
         Self {
             inner,
-            allowed_dirs,
+            resolver,
         }
     }
 
@@ -106,7 +112,9 @@ impl PathGuardedTool {
     /// prefix) matching allowed directory. This ensures nested directories
     /// with stricter access take precedence over broader parent dirs.
     fn validate_path(&self, path: &str) -> Result<WorkspaceAccess, String> {
-        if self.allowed_dirs.is_empty() {
+        let allowed_dirs = self.resolver.read().unwrap().allowed_dirs().to_vec();
+
+        if allowed_dirs.is_empty() {
             return Err("No workspace directories configured for this agent".to_string());
         }
 
@@ -116,7 +124,7 @@ impl PathGuardedTool {
         let mut best_match: Option<(usize, WorkspaceAccess)> = None;
 
         // Check against each allowed directory
-        for dir in &self.allowed_dirs {
+        for dir in &allowed_dirs {
             let allowed = std::path::Path::new(&dir.path);
 
             // Resolve relative paths against this allowed dir
@@ -311,6 +319,12 @@ impl Tool for PathGuardedTool {
 mod tests {
     use super::*;
     use acowork_core::tools::traits::ToolSpec;
+    use std::sync::RwLock;
+
+    /// Helper: build a SharedResolver from a Vec of WorkspaceDir for testing.
+    fn test_resolver(dirs: Vec<WorkspaceDir>) -> SharedResolver {
+        Arc::new(RwLock::new(WorkspaceResolver::new_for_test(dirs)))
+    }
 
     /// A simple test tool for testing wrappers
     struct EchoTool;
@@ -390,12 +404,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(
@@ -412,12 +426,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(serde_json::json!({ "path": "/etc/passwd" }), None)
@@ -437,12 +451,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(serde_json::json!({ "path": "subdir/file.txt" }), None)
@@ -456,12 +470,12 @@ mod tests {
         let inner = Arc::new(EchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         // echo is not a filesystem tool, so no path check
         let result = tool
@@ -476,12 +490,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         // Path traversal via ".." resolves to /etc/passwd which is outside allowed dir
         let result = tool
@@ -505,12 +519,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-workdir".to_string(),
                 access: WorkspaceAccess::ReadWrite,
                 last_active: false,
-            }],
+            }]),
         );
         // Prefix-suffix attack: "/tmp/agent-workdir-eval" starts with "/tmp/agent-workdir"
         let result = tool
@@ -535,12 +549,12 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadOnly,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(
@@ -582,12 +596,12 @@ mod tests {
         let inner = Arc::new(FileWriteEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadOnly,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(
@@ -630,12 +644,12 @@ mod tests {
         let inner = Arc::new(FileEditEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![WorkspaceDir {
+            test_resolver(vec![WorkspaceDir {
                 id: "test-ws".to_string(),
                 path: "/tmp/agent-pkg".to_string(),
                 access: WorkspaceAccess::ReadOnly,
                 last_active: false,
-            }],
+            }]),
         );
         let result = tool
             .execute(
@@ -656,7 +670,7 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let tool = PathGuardedTool::new(
             inner,
-            vec![
+            test_resolver(vec![
                 WorkspaceDir {
                     id: "rw".to_string(),
                     path: "/tmp/agent-pkg".to_string(),
@@ -669,7 +683,7 @@ mod tests {
                     access: WorkspaceAccess::ReadWrite,
                     last_active: false,
                 },
-            ],
+            ]),
         );
         // Read within workspace should succeed (ReadWrite wins)
         let result = tool
@@ -689,7 +703,7 @@ mod tests {
         let inner = Arc::new(FileEchoTool);
         let _tool = PathGuardedTool::new(
             inner,
-            vec![
+            test_resolver(vec![
                 WorkspaceDir {
                     id: "rw".to_string(),
                     path: "/tmp/agent-pkg".to_string(),
@@ -702,7 +716,7 @@ mod tests {
                     access: WorkspaceAccess::ReadOnly,
                     last_active: false,
                 },
-            ],
+            ]),
         );
         // A write tool should be blocked in the nested ReadOnly directory
         struct FileWriteEchoTool2;
@@ -732,7 +746,7 @@ mod tests {
         let write_inner = Arc::new(FileWriteEchoTool2);
         let write_tool = PathGuardedTool::new(
             write_inner,
-            vec![
+            test_resolver(vec![
                 WorkspaceDir {
                     id: "rw".to_string(),
                     path: "/tmp/agent-pkg".to_string(),
@@ -745,7 +759,7 @@ mod tests {
                     access: WorkspaceAccess::ReadOnly,
                     last_active: false,
                 },
-            ],
+            ]),
         );
         // Write within /tmp/agent-pkg/readonly should be blocked
         let result = write_tool

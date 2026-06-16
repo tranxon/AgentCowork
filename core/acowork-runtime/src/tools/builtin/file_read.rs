@@ -1,4 +1,4 @@
-//! File read tool — reads files within the workspace
+//! File read tool — reads a line range (fragment) from a file within the workspace
 
 use acowork_core::tools::traits::{Tool, ToolResult, ToolSpec};
 use async_trait::async_trait;
@@ -8,8 +8,9 @@ use std::path::Path;
 use crate::tools::output;
 
 const MAX_FILE_SIZE_BYTES: u64 = 10 * 1024 * 1024; // 10 MB
+const MAX_LINES_PER_CALL: usize = 200;
 
-/// File read tool
+/// File read tool — fragment reader, not a whole-file reader
 pub struct FileReadTool;
 
 impl FileReadTool {
@@ -20,15 +21,15 @@ impl FileReadTool {
     pub fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "file_read".to_string(),
-            description: "Read the contents of a file with line numbers. Supports optional line range via start_line (1-based) and end_line (inclusive).".to_string(),
+            description: "Read a specific range of lines from a file, with line numbers. This is a fragment reader — both start_line (1-based) and end_line (inclusive) are required. Read at most 200 lines per call; for longer ranges, paginate across multiple calls. Always use content_search first to locate the relevant line numbers before calling this tool.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Relative path to the file" },
-                    "start_line": { "type": "integer", "description": "Optional start line (1-based)" },
-                    "end_line": { "type": "integer", "description": "Optional end line (inclusive)" }
+                    "start_line": { "type": "integer", "description": "Starting line number (1-based). Required. Must be > 0." },
+                    "end_line": { "type": "integer", "description": "Ending line number (inclusive). Required. Must be >= start_line. At most 200 lines per call — paginate if you need more." }
                 },
-                "required": ["path"]
+                "required": ["path", "start_line", "end_line"]
             }),
         }
     }
@@ -54,6 +55,65 @@ impl Tool for FileReadTool {
                 ok: false,
                 content: String::new(),
                 error: Some("Missing 'path' parameter".to_string()),
+                token_usage: None,
+            });
+        }
+
+        // start_line and end_line are required
+        let start_line_raw = match params["start_line"].as_u64() {
+            Some(v) => v,
+            None => {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some("Missing required 'start_line' parameter. Use content_search first to locate line numbers, then request a specific range (≤100 lines).".to_string()),
+                    token_usage: None,
+                });
+            }
+        };
+        let end_line_raw = match params["end_line"].as_u64() {
+            Some(v) => v,
+            None => {
+                return Ok(ToolResult {
+                    ok: false,
+                    content: String::new(),
+                    error: Some("Missing required 'end_line' parameter".to_string()),
+                    token_usage: None,
+                });
+            }
+        };
+
+        // Validate range
+        if start_line_raw == 0 {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some("start_line must be >= 1 (1-based)".to_string()),
+                token_usage: None,
+            });
+        }
+        if end_line_raw < start_line_raw {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some(format!(
+                    "end_line ({end_line_raw}) must be >= start_line ({start_line_raw})"
+                )),
+                token_usage: None,
+            });
+        }
+        let requested = (end_line_raw - start_line_raw + 1) as usize;
+        if requested > MAX_LINES_PER_CALL {
+            return Ok(ToolResult {
+                ok: false,
+                content: String::new(),
+                error: Some(format!(
+                    "Range too large: {requested} lines requested, max {MAX_LINES_PER_CALL} per call. Paginate across multiple calls (e.g. start_line: {s}, end_line: {e1}, then start_line: {e1p1}, end_line: {e2}...)",
+                    s = start_line_raw,
+                    e1 = start_line_raw + MAX_LINES_PER_CALL as u64 - 1,
+                    e1p1 = start_line_raw + MAX_LINES_PER_CALL as u64,
+                    e2 = end_line_raw,
+                )),
                 token_usage: None,
             });
         }
@@ -101,24 +161,14 @@ impl Tool for FileReadTool {
                 if total == 0 {
                     return Ok(ToolResult {
                         ok: true,
-                        content: String::new(),
+                        content: "[File is empty]".to_string(),
                         error: None,
                         token_usage: None,
                     });
                 }
 
-                let s = params["start_line"]
-                    .as_u64()
-                    .map(|v| (v.max(1) as usize).saturating_sub(1))
-                    .unwrap_or(0)
-                    .min(total);
-                let e = params["end_line"]
-                    .as_u64()
-                    .map(|v| (v as usize).min(total))
-                    .unwrap_or(total);
-
-                // end_line defaults to 0 (meaning read to end) — clamp
-                let e = if e == 0 { total } else { e };
+                let s = (start_line_raw as usize).saturating_sub(1).min(total);
+                let e = (end_line_raw as usize).min(total);
 
                 if s >= e {
                     return Ok(ToolResult {
@@ -140,7 +190,7 @@ impl Tool for FileReadTool {
                 let summary = if partial {
                     format!("\n[Lines {}-{} of {total}]", s + 1, e)
                 } else {
-                    format!("\n[{total} lines total]")
+                    format!("\n[Lines {}-{} of {total}]", s + 1, e)
                 };
 
                 let content = format!("{numbered}{summary}");

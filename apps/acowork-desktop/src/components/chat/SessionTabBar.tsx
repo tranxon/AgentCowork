@@ -10,6 +10,8 @@ import { ScrollableTabBar, type ScrollableTabBarHandle } from "../common/Scrolla
 import { TabItem } from "../common/tab";
 import { Tooltip } from "../common/Tooltip";
 
+const EMPTY_ARRAY: string[] = [];
+
 // ── Relative time formatter ──────────────────────────────────────────────
 
 function formatRelativeTime(dateStr: string, t: (key: string, options?: Record<string, unknown>) => string): string {
@@ -37,7 +39,7 @@ interface SessionListDropdownProps {
 function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
   const { t } = useTranslation();
   const { sessions, fetchSessions, switchSession, deleteSession, totalCount, currentPage, totalPages, pageSize } = useSessionStore();
-  const openSessionIds = useChatStore((s) => s.agentStates[agentId]?.openSessionIds ?? []);
+  const openSessionIds = useChatStore((s) => s.agentStates[agentId]?.openSessionIds ?? EMPTY_ARRAY);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState("");

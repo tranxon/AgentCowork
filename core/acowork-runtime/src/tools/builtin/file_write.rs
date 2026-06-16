@@ -15,7 +15,7 @@ impl FileWriteTool {
     pub fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "file_write".to_string(),
-            description: "Write content to a file. Creates the file if it doesn't exist."
+            description: "Write content to a file, creating or completely overwriting it. For targeted modifications to an existing file, use file_edit instead."
                 .to_string(),
             input_schema: serde_json::json!({
                 "type": "object",

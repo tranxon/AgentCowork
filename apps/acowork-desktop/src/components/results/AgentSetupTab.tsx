@@ -10,6 +10,8 @@ import { StyledInput } from "../common/StyledInput";
 import { Tooltip } from "../common/Tooltip";
 import type { SearchProviderListItem, AgentSearchProvider } from "../../lib/types";
 
+const EMPTY_ARRAY: string[] = [];
+
 interface SearchProvidersResponse {
   agent_id: string;
   providers: SearchProviderListItem[];
@@ -46,7 +48,7 @@ export function AgentSetupTab() {
 
   // MCP server activation — per-agent selectors
   const catalog = useMcpStore((s) => s.catalog);
-  const activeServers = useMcpStore((s) => selectedAgentId ? (s.activeServers[selectedAgentId] ?? []) : []);
+  const activeServers = useMcpStore((s) => selectedAgentId ? (s.activeServers[selectedAgentId] ?? EMPTY_ARRAY) : EMPTY_ARRAY);
   const activationLoading = useMcpStore((s) => selectedAgentId ? (s.activationLoading[selectedAgentId] ?? false) : false);
   const loadCatalog = useMcpStore((s) => s.loadCatalog);
   const toggleServer = useMcpStore((s) => s.toggleServer);
@@ -240,7 +242,7 @@ export function AgentSetupTab() {
     <div className="flex-1 overflow-y-auto p-3">
       {/* Avatar preview — click to open icon picker */}
       <div className="mb-4 flex items-center gap-3">
-        <div className="relative" ref={iconRef}>
+        <div className="relative shrink-0" ref={iconRef}>
           <Tooltip content={t("agentSetup.chooseIcon")} variant="plain">
             <button
               onClick={() => setIconOpen(!iconOpen)}
@@ -281,11 +283,11 @@ export function AgentSetupTab() {
             </div>
           )}
         </div>
-        <div>
-          <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-zinc-800 dark:text-zinc-200">
             {agentName}
           </p>
-          <p className="text-[10px] text-zinc-400 dark:text-zinc-500">
+          <p className="truncate text-[10px] text-zinc-400 dark:text-zinc-500">
             {selectedAgentId}
           </p>
         </div>
