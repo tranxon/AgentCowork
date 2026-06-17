@@ -282,7 +282,7 @@ export function AgentList({ width }: AgentListProps) {
             <div
               key={agent.agent_id}
               className={cn(
-                "relative flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors duration-150",
+                "relative flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 transition-colors duration-150",
                 selectedAgentId === agent.agent_id
                   ? "bg-[var(--color-accent)]/90 text-white"
                   : "hover:bg-[#E2E3E6] dark:hover:bg-[#38383A]",
