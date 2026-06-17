@@ -36,6 +36,13 @@ async function bootGateway(): Promise<void> {
     if (mode === "local") {
         // Spawns child Gateway + waits up to 10s for /health
         await invoke("init_local_gateway");
+        // Sync the frontend store with the Rust-side process handle.
+        // `init_local_gateway` bypasses `startLocalGateway()` (the store
+        // action), so without this call `localState` would stay "idle"
+        // even though the backend has a running child process. This
+        // causes the Settings page to show a spurious "Start Gateway"
+        // button next to the green "Running" indicator.
+        await useGatewayStore.getState().checkLocalStatus();
     }
     // Remote mode: the Gateway is presumed already running on `url`.
 

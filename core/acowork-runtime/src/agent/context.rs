@@ -646,6 +646,51 @@ mod tests {
     }
 }
 
+/// Compute the total character count of a ChatRequest for token ratio calibration.
+///
+/// Counts ALL text that the LLM will receive in the prompt:
+/// - Message content + name + tool_call function name/arguments
+/// - Tool definitions JSON (see [ADR about including tool_defs])
+///
+/// This total is used with API `prompt_tokens` to calibrate the chars/token ratio:
+/// ```text
+/// ratio = count_chat_request_chars(request) / prompt_tokens
+/// ```
+pub fn count_chat_request_chars(request: &ChatRequest) -> usize {
+    // 1. Count message text
+    let msg_chars: usize = request
+        .messages
+        .iter()
+        .map(|m| {
+            let mut chars = m.content.len();
+            if let Some(ref name) = m.name {
+                chars += name.len();
+            }
+            if let Some(ref tool_calls) = m.tool_calls {
+                for tc in tool_calls {
+                    chars += tc.function.name.len();
+                    chars += tc.function.arguments.len();
+                }
+            }
+            chars
+        })
+        .sum();
+
+    // 2. Count tool definition JSON text
+    let tool_chars: usize = request
+        .tools
+        .as_ref()
+        .map(|tools| {
+            tools
+                .iter()
+                .map(|t| serde_json::to_string(t).map(|s| s.len()).unwrap_or(0))
+                .sum()
+        })
+        .unwrap_or(0);
+
+    msg_chars + tool_chars
+}
+
 /// Compute context usage info from model capabilities and API usage response.
 ///
 /// Usable context is derived from [`ModelCapabilitiesInfo::effective_input_budget`],

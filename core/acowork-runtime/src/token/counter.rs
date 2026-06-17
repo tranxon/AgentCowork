@@ -1,49 +1,24 @@
-//! Tiered Token Counter
+//! Unified Token Counter
 //!
-//! Implements a three-tier token counting strategy:
-//! - Tier 1 (Exact): Uses tiktoken-rs for OpenAI models. Error < 1%.
-//! - Tier 2 (Approximate): Uses a sampling ratio from known tokenizers. Error < 5%.
-//! - Tier 3 (Heuristic): Word/char based estimation. Error < 15%.
+//! Uses a single model→ratio lookup table ([`ModelRatioStore`]) for
+//! token estimation (`tokens ≈ chars / ratio`). The ratio is calibrated
+//! from LLM API feedback after each request:
+//!
+//! ```text
+//! ratio = total_input_chars / prompt_tokens
+//! ```
 //!
 //! Also provides:
 //! - Incremental cache for system prompt token counting
-//! - Elastic budget allocation (fixed zone + distributable space)
 //! - Full-field ChatMessage counting (role, name, tool_calls)
+//! - Image token estimation per protocol type
 
 use std::collections::HashMap;
 
 use acowork_core::protocol::ProtocolType;
 use acowork_core::providers::traits::{ChatMessage, MessageRole};
 
-/// Lazy-initialized tiktoken BPE for cl100k_base (GPT-4/GPT-4o/GPT-3.5).
-fn get_cl100k_bpe() -> Option<&'static tiktoken_rs::CoreBPE> {
-    use std::sync::OnceLock;
-    static BPE: OnceLock<Option<tiktoken_rs::CoreBPE>> = OnceLock::new();
-    BPE.get_or_init(|| tiktoken_rs::cl100k_base().ok()).as_ref()
-}
-
-// ── Tier classification ─────────────────────────────────────────────────
-
-/// Precision tier for token counting
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TokenCountTier {
-    /// Exact counting via tiktoken-rs (OpenAI models)
-    Tier1Exact,
-    /// Approximate counting via sampling ratio
-    Tier2Approximate,
-    /// Heuristic estimation
-    Tier3Heuristic,
-}
-
-impl std::fmt::Display for TokenCountTier {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TokenCountTier::Tier1Exact => write!(f, "Tier1(Exact)"),
-            TokenCountTier::Tier2Approximate => write!(f, "Tier2(Approximate)"),
-            TokenCountTier::Tier3Heuristic => write!(f, "Tier3(Heuristic)"),
-        }
-    }
-}
+use super::ratio_store::ModelRatioStore;
 
 // ── Image Token Estimation ──────────────────────────────────────────────
 
@@ -90,71 +65,65 @@ pub fn estimate_image_tokens(
 
 // ── Token Counter ───────────────────────────────────────────────────────
 
-/// Tiered token counter with caching support
+/// Unified token counter backed by a [`ModelRatioStore`].
+///
+/// All token estimation uses `chars / ratio` where the ratio is lazily
+/// calibrated from LLM API feedback. No static sampling ratios or
+/// hard-coded tier classification.
 pub struct TokenCounter {
     /// Cached system prompt tokens (avoids recounting on every turn)
     system_prompt_cache: HashMap<String, u64>,
-    /// Known sampling ratios for Tier 2 approximation
-    /// Maps model family → (chars_per_token_ratio)
-    sampling_ratios: HashMap<String, f64>,
-    /// Tier 2 observed ratios from actual API usage
-    observed_ratios: HashMap<String, f64>,
+    /// Model → chars/token ratio lookup
+    model_ratios: ModelRatioStore,
 }
 
 impl TokenCounter {
-    /// Create a new token counter
+    /// Create a new token counter with an empty, in-memory ratio store.
+    /// Uses default ratio 3.5 for all models until calibrated.
     pub fn new() -> Self {
-        let mut sampling_ratios = HashMap::new();
-        // Default ratios based on empirical observations
-        sampling_ratios.insert("gpt-4".to_string(), 3.8); // ~3.8 chars/token
-        sampling_ratios.insert("gpt-4o".to_string(), 3.8);
-        sampling_ratios.insert("gpt-3.5".to_string(), 4.0);
-        sampling_ratios.insert("claude".to_string(), 3.5); // Claude is slightly more efficient
-        sampling_ratios.insert("llama".to_string(), 3.6);
-        sampling_ratios.insert("qwen".to_string(), 3.2); // CJK-optimized
-        sampling_ratios.insert("mistral".to_string(), 3.7);
-
         Self {
             system_prompt_cache: HashMap::new(),
-            sampling_ratios,
-            observed_ratios: HashMap::new(),
+            model_ratios: ModelRatioStore::new(),
         }
     }
 
-    /// Determine the counting tier for a given model
-    pub fn tier_for_model(model: &str) -> TokenCountTier {
-        let lower = model.to_lowercase();
-
-        // Tier 1: Models with exact tokenizers
-        if lower.contains("gpt-4") || lower.contains("gpt-3.5") || lower.contains("gpt-4o") {
-            return TokenCountTier::Tier1Exact;
+    /// Create a new token counter with a pre-configured ratio store.
+    pub fn new_with_ratios(model_ratios: ModelRatioStore) -> Self {
+        Self {
+            system_prompt_cache: HashMap::new(),
+            model_ratios,
         }
-
-        // Tier 2: Models with known sampling ratios
-        if lower.contains("claude")
-            || lower.contains("llama")
-            || lower.contains("qwen")
-            || lower.contains("mistral")
-            || lower.contains("deepseek")
-            || lower.contains("gemini")
-            || lower.contains("minimax")
-        {
-            return TokenCountTier::Tier2Approximate;
-        }
-
-        // Tier 3: Unknown models
-        TokenCountTier::Tier3Heuristic
     }
 
-    /// Count tokens for a single text string using the best available method
+    /// Access the model ratio store for mutable operations (e.g. calibration).
+    pub fn model_ratios_mut(&mut self) -> &mut ModelRatioStore {
+        &mut self.model_ratios
+    }
+
+    /// Access the model ratio store (read-only).
+    pub fn model_ratios(&self) -> &ModelRatioStore {
+        &self.model_ratios
+    }
+
+    // ── Text counting ───────────────────────────────────────────────────
+
+    /// Count tokens for a single text string using the unified ratio table.
+    ///
+    /// `tokens = ceil(text.len() / ratio)`
     pub fn count_text(&self, text: &str, model: &str) -> u64 {
-        let tier = Self::tier_for_model(model);
-        match tier {
-            TokenCountTier::Tier1Exact => self.count_tier1(text, model),
-            TokenCountTier::Tier2Approximate => self.count_tier2(text, model),
-            TokenCountTier::Tier3Heuristic => self.count_tier3(text),
-        }
+        self.count_text_ratio(text, model)
     }
+
+    /// Internal: ratio-based text token counting.
+    fn count_text_ratio(&self, text: &str, model: &str) -> u64 {
+        if text.is_empty() {
+            return 0;
+        }
+        let ratio = self.model_ratios.get(model);
+        (text.len() as f64 / ratio).ceil() as u64
+    }
+
+    // ── Message counting ────────────────────────────────────────────────
 
     /// Count tokens for a full ChatMessage (including role, name, tool_calls overhead).
     /// When `protocol_type` is provided, image content parts are included in the count.
@@ -238,82 +207,6 @@ impl TokenCounter {
 
         total
     }
-
-    /// Update observed ratio from actual API usage
-    pub fn update_observed_ratio(&mut self, model: &str, actual_tokens: u64, char_count: usize) {
-        if actual_tokens > 0 && char_count > 0 {
-            let ratio = char_count as f64 / actual_tokens as f64;
-            self.observed_ratios.insert(model.to_string(), ratio);
-        }
-    }
-
-    // ── Tier implementations ────────────────────────────────────────────
-
-    /// Tier 1: Exact token counting
-    /// Uses tiktoken-rs cl100k_base for OpenAI models (GPT-4/GPT-4o/GPT-3.5).
-    /// Falls back to well-calibrated approximation when tiktoken is unavailable.
-    fn count_tier1(&self, text: &str, _model: &str) -> u64 {
-        // Try tiktoken-rs cl100k_base (shared by all OpenAI GPT models)
-        if let Some(bpe) = get_cl100k_bpe() {
-            let tokens = bpe.encode_ordinary(text);
-            return tokens.len() as u64;
-        }
-
-        // Fallback: use observed ratio if available (most accurate)
-        if let Some(&ratio) = self.observed_ratios.get(_model) {
-            return (text.len() as f64 / ratio).ceil() as u64;
-        }
-
-        // Use known sampling ratio
-        if let Some(&ratio) = self.sampling_ratios.get(_model) {
-            return (text.len() as f64 / ratio).ceil() as u64;
-        }
-
-        // Fallback: well-calibrated heuristic for GPT models
-        self.count_tier2(text, "gpt-4")
-    }
-
-    /// Tier 2: Approximate token counting using sampling ratios
-    fn count_tier2(&self, text: &str, model: &str) -> u64 {
-        // Check observed ratios first
-        if let Some(&ratio) = self.observed_ratios.get(model) {
-            return (text.len() as f64 / ratio).ceil() as u64;
-        }
-
-        // Check known model family ratios
-        let lower = model.to_lowercase();
-        for (key, &ratio) in &self.sampling_ratios {
-            if lower.contains(key) {
-                return (text.len() as f64 / ratio).ceil() as u64;
-            }
-        }
-
-        // Default ratio
-        (text.len() as f64 / 3.5).ceil() as u64
-    }
-
-    /// Tier 3: Heuristic estimation
-    /// English: words × 1.3, CJK: chars × 0.6
-    fn count_tier3(&self, text: &str) -> u64 {
-        let _ascii_count = text.chars().filter(|c| c.is_ascii()).count();
-        let cjk_count = text.chars().filter(|c| !c.is_ascii()).count();
-
-        // English: split into words, each word ~1.3 tokens
-        let ascii_words = text.split_whitespace().filter(|w| w.is_ascii()).count();
-
-        let ascii_tokens = (ascii_words as f64 * 1.3).ceil() as u64;
-
-        // CJK: ~0.6 tokens per character
-        let cjk_tokens = (cjk_count as f64 * 0.6).ceil() as u64;
-
-        // Minimum 1 token if text is non-empty
-        let total = ascii_tokens + cjk_tokens;
-        if total == 0 && !text.is_empty() {
-            1
-        } else {
-            total
-        }
-    }
 }
 
 impl Default for TokenCounter {
@@ -330,44 +223,25 @@ mod tests {
     use acowork_core::providers::traits::{FunctionCall, ToolCall};
 
     #[test]
-    fn test_tier_classification() {
-        assert_eq!(
-            TokenCounter::tier_for_model("gpt-4"),
-            TokenCountTier::Tier1Exact
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("gpt-4o"),
-            TokenCountTier::Tier1Exact
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("gpt-3.5-turbo"),
-            TokenCountTier::Tier1Exact
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("claude-sonnet-4"),
-            TokenCountTier::Tier2Approximate
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("llama3"),
-            TokenCountTier::Tier2Approximate
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("qwen3:8b"),
-            TokenCountTier::Tier2Approximate
-        );
-        assert_eq!(
-            TokenCounter::tier_for_model("some-unknown-model"),
-            TokenCountTier::Tier3Heuristic
-        );
+    fn test_count_text_default_ratio() {
+        let counter = TokenCounter::new();
+        let text = "Hello, how are you today?";
+        let chars = text.len() as f64;
+        let ratio = 3.5;
+        let expected = (chars / ratio).ceil() as u64;
+        let count = counter.count_text(text, "some-model");
+        assert_eq!(count, expected);
     }
 
     #[test]
-    fn test_count_text_english() {
-        let counter = TokenCounter::new();
-        let text = "Hello, how are you today?";
-        let count = counter.count_text(text, "gpt-4");
-        // "Hello, how are you today?" ≈ 7-8 tokens
-        assert!((4..=12).contains(&count), "Expected ~7 tokens, got {count}");
+    fn test_count_text_calibrated_ratio() {
+        let mut store = ModelRatioStore::new();
+        store.update("custom-model", 4.0);
+        let counter = TokenCounter::new_with_ratios(store);
+        let text = "the quick brown fox jumps over the lazy dog";
+        // 43 chars / 4.0 = 10.75 → ceil → 11
+        let count = counter.count_text(text, "custom-model");
+        assert_eq!(count, 11);
     }
 
     #[test]
@@ -454,31 +328,15 @@ mod tests {
     }
 
     #[test]
-    fn test_update_observed_ratio() {
-        let mut counter = TokenCounter::new();
-        counter.update_observed_ratio("my-custom-model", 100, 380);
-        assert_eq!(counter.observed_ratios.get("my-custom-model"), Some(&3.8));
+    fn test_count_text_empty() {
+        let counter = TokenCounter::new();
+        assert_eq!(counter.count_text("", "gpt-4"), 0);
     }
 
     #[test]
-    fn test_tier3_heuristic_english() {
+    fn test_count_text_single_char() {
         let counter = TokenCounter::new();
-        let count = counter.count_text("Hello world this is a test", "unknown-model");
-        // 6 words × 1.3 ≈ 8 tokens
-        assert!((5..=12).contains(&count), "Expected ~8 tokens, got {count}");
-    }
-
-    #[test]
-    fn test_tier3_heuristic_empty() {
-        let counter = TokenCounter::new();
-        let count = counter.count_text("", "unknown-model");
-        assert_eq!(count, 0);
-    }
-
-    #[test]
-    fn test_tier3_heuristic_single_char() {
-        let counter = TokenCounter::new();
-        let count = counter.count_text("a", "unknown-model");
+        let count = counter.count_text("a", "gpt-4");
         assert!(count >= 1);
     }
 }

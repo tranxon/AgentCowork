@@ -52,75 +52,51 @@ impl Drop for PidFileGuard {
     }
 }
 
-/// Clean up stale pidfile from a previous Gateway run.
+/// Check if a port is occupied by another Gateway instance.
 ///
-/// If the file exists but the recorded PID is no longer running,
-/// the stale file is deleted. If the PID is still alive (another
-/// Gateway instance), returns an error.
-pub fn cleanup_stale_pidfile(data_dir: &Path) -> Result<(), GatewayError> {
+/// Probes `GET /health` on the given port with a 2-second timeout.
+/// If the response contains the Gateway `version` field, it's another
+/// Gateway instance. Non-Gateway apps or unreachable ports return `false`.
+///
+/// This is more reliable than PID-based checks because:
+/// - No stale state after crashes
+/// - No PID reuse false positives
+/// - Direct verification of the service identity
+async fn is_gateway_on_port(host: &str, port: u16) -> bool {
+    let url = format!("http://{}:{}/health", host, port);
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    match client.get(&url).send().await {
+        Ok(resp) => {
+            // Check if the response is JSON with a "version" field (Gateway signature)
+            if let Ok(body) = resp.json::<serde_json::Value>().await {
+                body.get("version").is_some() && body.get("checks").is_some()
+            } else {
+                false
+            }
+        }
+        Err(_) => false,
+    }
+}
+
+/// Remove a stale pidfile from a previous Gateway run.
+///
+/// This is purely for housekeeping — mutual exclusion is now handled
+/// by probing the HTTP port (see `is_gateway_on_port`). If the file
+/// exists, it is simply removed; no PID liveness check is performed.
+fn cleanup_stale_pidfile(data_dir: &Path) {
     let pid_path = data_dir.join("gateway.pid");
-    if !pid_path.exists() {
-        return Ok(());
+    if pid_path.exists() {
+        match std::fs::remove_file(&pid_path) {
+            Ok(()) => tracing::info!("Removed stale pidfile '{}'", pid_path.display()),
+            Err(e) => tracing::warn!("Failed to remove stale pidfile '{}': {}", pid_path.display(), e),
+        }
     }
-
-    let content = std::fs::read_to_string(&pid_path).map_err(|e| {
-        GatewayError::Config(format!(
-            "Failed to read pidfile '{}': {}",
-            pid_path.display(),
-            e
-        ))
-    })?;
-
-    let parsed: PidFile = serde_json::from_str(&content).map_err(|e| {
-        GatewayError::Config(format!(
-            "Failed to parse pidfile '{}': {}",
-            pid_path.display(),
-            e
-        ))
-    })?;
-
-    // Check if the recorded process is still alive
-    if is_pid_alive(parsed.pid) {
-        return Err(GatewayError::Config(format!(
-            "Another Gateway instance is running (PID {})",
-            parsed.pid
-        )));
-    }
-
-    // Stale pidfile — process no longer exists (normal after non-clean shutdown)
-    tracing::info!(
-        "Removing stale pidfile '{}' (old PID {} no longer running)",
-        pid_path.display(),
-        parsed.pid
-    );
-    std::fs::remove_file(&pid_path).map_err(|e| {
-        GatewayError::Config(format!(
-            "Failed to remove stale pidfile '{}': {}",
-            pid_path.display(),
-            e
-        ))
-    })?;
-
-    Ok(())
-}
-
-/// Check if a process with the given PID is still alive.
-#[cfg(unix)]
-fn is_pid_alive(pid: u32) -> bool {
-    // Signal 0 doesn't kill the process; it just checks existence.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
-}
-
-/// Check if a process with the given PID is still alive (non-Unix fallback).
-#[cfg(not(unix))]
-fn is_pid_alive(pid: u32) -> bool {
-    // On Windows, try to open the process handle.
-    // If we can't, the process is likely not running.
-    std::process::Command::new("tasklist")
-        .args(["/FI", &format!("PID eq {}", pid), "/NH"])
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&pid.to_string()))
-        .unwrap_or(false)
 }
 
 /// Start the HTTP API server
@@ -165,14 +141,18 @@ pub(crate) async fn start_http_server(
     // Start background LSP pool reaper (evicts idle processes after timeout)
     crate::lsp::LspPool::start_reaper(Arc::clone(&app_state.lsp_pool));
 
-    // S5.9: Clean up stale pidfile from a previous Gateway run before writing a new one.
-    // If the previous process is still alive, this returns an error (prevents dual Gateway).
-    cleanup_stale_pidfile(data_dir)?;
+    // Clean up stale pidfile from a previous run (if any). This is purely
+    // for housekeeping — mutual exclusion is handled by port probing below.
+    cleanup_stale_pidfile(data_dir);
 
-    // P1-3 fix: Find available port and return the bound listener
-    // to eliminate the TOCTOU race between checking and binding.
-    let (actual_port, std_listener) =
-        find_available_port(&http_config.host, http_config.port, http_config.port_max)?;
+    // Find an available port, probing occupied ports to distinguish between
+    // another Gateway instance (fatal) and unrelated applications (skip).
+    let (actual_port, std_listener) = find_available_port(
+        &http_config.host,
+        http_config.port,
+        http_config.port_max,
+    )
+    .await?;
 
     // Write pidfile for Desktop App discovery
     let _pidfile_guard = write_pidfile(data_dir, actual_port, socket_path)?;
@@ -204,10 +184,11 @@ pub(crate) async fn start_http_server(
 
 /// Find an available port in the configured range.
 ///
-/// P1-3 fix: Returns the bound `TcpListener` directly so the caller
-/// can pass it to `axum::serve` without a second `bind()` call,
-/// eliminating the TOCTOU race condition between port-check and bind.
-fn find_available_port(
+/// For each occupied port, probes `GET /health` to determine if it's another
+/// Gateway instance (fatal error) or an unrelated application (skip to next).
+/// Returns the bound `TcpListener` directly so the caller can pass it to
+/// `axum::serve` without a second `bind()` call.
+async fn find_available_port(
     host: &str,
     start_port: u16,
     max_port: u16,
@@ -219,7 +200,17 @@ fn find_available_port(
                 return Ok((port, listener));
             }
             Err(_) => {
-                tracing::warn!("Port {} occupied, trying next", port);
+                // Port occupied — probe to check if it's another Gateway
+                if is_gateway_on_port(host, port).await {
+                    return Err(GatewayError::Config(format!(
+                        "Another Gateway instance is running on {}:{}",
+                        host, port
+                    )));
+                }
+                tracing::warn!(
+                    "Port {} occupied by non-Gateway application, trying next",
+                    port
+                );
             }
         }
     }
@@ -259,10 +250,10 @@ fn write_pidfile(
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_find_available_port() {
+    #[tokio::test]
+    async fn test_find_available_port() {
         // find_available_port returns both the port number and the bound listener
-        let result = find_available_port("127.0.0.1", 19876, 19878);
+        let result = find_available_port("127.0.0.1", 19876, 19878).await;
         assert!(result.is_ok());
         let (port, listener) = result.unwrap();
         assert!((19876..=19878).contains(&port));
@@ -270,10 +261,10 @@ mod tests {
         assert!(listener.local_addr().is_ok());
     }
 
-    #[test]
-    fn test_find_available_port_range_exhausted() {
+    #[tokio::test]
+    async fn test_find_available_port_range_exhausted() {
         // Use an impossible range to test exhaustion
-        let result = find_available_port("127.0.0.1", 1, 0);
+        let result = find_available_port("127.0.0.1", 1, 0).await;
         assert!(result.is_err());
     }
 
@@ -330,68 +321,25 @@ mod tests {
     }
 
     #[test]
-    fn test_cleanup_stale_pidfile_removes_dead_process() {
+    fn test_cleanup_stale_pidfile_removes_file() {
         let dir = std::env::temp_dir().join("acowork-test-pidfile-stale");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // Write a pidfile referencing a PID that doesn't exist
-        let stale_pid: u32 = 9999999; // Extremely unlikely to be a running process
+        // Write a stale pidfile
         let pid_file = PidFile {
-            pid: stale_pid,
+            pid: 9999999,
             http_port: 19876,
             socket_path: "/tmp/test.sock".to_string(),
         };
         let pid_path = dir.join("gateway.pid");
         let content = serde_json::to_string_pretty(&pid_file).unwrap();
         std::fs::write(&pid_path, &content).unwrap();
-        assert!(
-            pid_path.exists(),
-            "stale pidfile should exist before cleanup"
-        );
+        assert!(pid_path.exists(), "stale pidfile should exist before cleanup");
 
-        // cleanup_stale_pidfile should detect the dead process and remove the file
-        let result = cleanup_stale_pidfile(&dir);
-        assert!(
-            result.is_ok(),
-            "cleanup_stale_pidfile should succeed for dead process: {:?}",
-            result
-        );
-        assert!(
-            !pid_path.exists(),
-            "stale pidfile should be removed after cleanup"
-        );
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn test_cleanup_stale_pidfile_rejects_live_process() {
-        let dir = std::env::temp_dir().join("acowork-test-pidfile-live");
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-
-        // Write a pidfile referencing our own PID (which is definitely alive)
-        let live_pid: u32 = std::process::id();
-        let pid_file = PidFile {
-            pid: live_pid,
-            http_port: 19876,
-            socket_path: "/tmp/test.sock".to_string(),
-        };
-        let pid_path = dir.join("gateway.pid");
-        let content = serde_json::to_string_pretty(&pid_file).unwrap();
-        std::fs::write(&pid_path, &content).unwrap();
-
-        // cleanup_stale_pidfile should refuse because the process is alive
-        let result = cleanup_stale_pidfile(&dir);
-        assert!(
-            result.is_err(),
-            "cleanup_stale_pidfile should reject a live Gateway process"
-        );
-        assert!(
-            pid_path.exists(),
-            "pidfile should NOT be removed when process is alive"
-        );
+        // cleanup_stale_pidfile should simply remove it
+        cleanup_stale_pidfile(&dir);
+        assert!(!pid_path.exists(), "stale pidfile should be removed after cleanup");
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -402,13 +350,15 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
-        // No pidfile exists — should succeed without doing anything
-        let result = cleanup_stale_pidfile(&dir);
-        assert!(
-            result.is_ok(),
-            "cleanup_stale_pidfile should succeed when no pidfile exists"
-        );
+        // No pidfile exists — should not panic
+        cleanup_stale_pidfile(&dir);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_is_gateway_on_port_no_server() {
+        // A port with nothing listening should return false
+        assert!(!is_gateway_on_port("127.0.0.1", 19999).await);
     }
 }

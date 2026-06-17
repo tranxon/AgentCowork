@@ -118,6 +118,7 @@
         "stopped": "停止中",
         "startGateway": "ゲートウェイを起動",
         "restart": "再起動",
+        "gatewayRunningExternal": "ゲートウェイに到達できますが、このアプリ外で起動されています。設定から再起動するか、手動で停止してからアプリで管理してください。",
         "restarting": "再起動中...",
         "stop": "停止",
         "stopping": "停止中...",
@@ -335,7 +336,12 @@
         "environment": "環境変数（KEY=VALUE、カンマ区切り）",
         "cancel": "キャンセル",
         "configure": "設定 ",
-        "enter": "入力 "
+        "enter": "入力 ",
+        "testing": "接続テスト中...",
+        "connected": "接続済み — {{count}} ツール利用可能",
+        "connFailed": "接続失敗",
+        "testConn": "テスト",
+        "addAnyway": "それでも追加"
     },
     "resultsPanel": {
         "debug": "デバッグ",

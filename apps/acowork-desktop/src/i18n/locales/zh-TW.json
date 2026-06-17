@@ -116,6 +116,7 @@
         "stopped": "已停止",
         "startGateway": "啟動閘道",
         "restart": "重新啟動",
+        "gatewayRunningExternal": "閘道可連線，但不在本應用程式管控內。可在設定中重新啟動或手動停止後由本應用程式接管。",
         "restarting": "重新啟動中...",
         "stop": "停止",
         "stopping": "停止中...",
@@ -333,7 +334,12 @@
         "environment": "環境變數（KEY=VALUE，逗號分隔）",
         "cancel": "取消",
         "configure": "設定 ",
-        "enter": "輸入 "
+        "enter": "輸入 ",
+        "testing": "測試連線中...",
+        "connected": "已連線 — {{count}} 個工具可用",
+        "connFailed": "連線失敗",
+        "testConn": "測試",
+        "addAnyway": "仍然新增"
     },
     "resultsPanel": {
         "debug": "除錯",

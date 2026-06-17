@@ -29,6 +29,11 @@ export const useGatewayStore = create<GatewayStore>((set, get) => ({
   },
 
   startLocalGateway: async () => {
+    // Sync with the Rust-side process handle before checking the guard.
+    // The SplashScreen boot path calls `init_local_gateway` directly (not
+    // this action), so `localState` may still be "idle" even though the
+    // backend already has a running child process.
+    await get().checkLocalStatus();
     if (get().localState === "starting" || get().localState === "running") return;
     set({ localState: "starting" });
     try {
@@ -61,8 +66,9 @@ export const useGatewayStore = create<GatewayStore>((set, get) => ({
       const running = await invoke<boolean>("get_local_gateway_status");
       set({ localState: running ? "running" : "stopped" });
     } catch {
-      // Not in Tauri context or command not available
-      set({ localState: "idle" });
+      // Not in Tauri context (e.g. plain web dev mode) or command failed.
+      // Leave localState unchanged so we don't clobber a valid "running"
+      // state from a previous successful start.
     }
   },
 }));

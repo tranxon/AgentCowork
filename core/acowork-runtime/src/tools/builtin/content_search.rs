@@ -27,7 +27,10 @@ impl ContentSearchTool {
     pub fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "content_search".to_string(),
-            description: "Search file contents using a regex pattern. Returns matching lines with file paths, context, and summary.".to_string(),
+            description: "Search file contents using a regex pattern. Returns matching lines with file paths, context, and summary. \
+                 IMPORTANT: Use specific 'include' glob (e.g. '*.rs', '*.tsx') to limit scanned files \
+                 and a focused regex pattern to avoid oversized results. Results default to 1000 max; \
+                 use 'output_mode': 'files_with_matches' for a compact file list when exploring broadly.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {

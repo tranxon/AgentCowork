@@ -18,6 +18,7 @@ path = "src/main.rs"
 
 [dependencies]
 acowork-core.workspace = true
+acowork-mcp.workspace = true
 acowork-sign.workspace = true
 acowork-vault.workspace = true
 acowork-memory.workspace = true

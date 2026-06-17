@@ -469,11 +469,6 @@ impl DebugProtocolServer {
                         iteration,
                     },
                 );
-                // Wake up the SessionTask so it can re-run the agent loop
-                // if it has already exited (e.g. after rewind was issued
-                // post-completion).  This is a no-op if the agent loop is
-                // already polling in await_debug_resume.
-                ctrl.resume_notify.notify_one();
                 tracing::info!("Debug: resume — agent loop will continue");
                 Ok(JsonRpcResponse::success(id.clone(), serde_json::json!({})))
             }
@@ -496,8 +491,15 @@ impl DebugProtocolServer {
 
             "debugger.step" => {
                 self.last_active_session_id = Some(session_id.clone());
-                ctrl.state = DebugState::Stepping;
                 let iteration = ctrl.iteration;
+                if ctrl.state != DebugState::Paused {
+                    tracing::info!(state = ?ctrl.state, "Debug: step ignored — not paused");
+                    return Ok(JsonRpcResponse::success(
+                        id.clone(),
+                        serde_json::json!({ "ignored": true, "state": ctrl.state, "iteration": iteration }),
+                    ));
+                }
+                ctrl.state = DebugState::Stepping;
                 send_event(
                     &self.event_tx,
                     &session_id,
@@ -506,11 +508,6 @@ impl DebugProtocolServer {
                         iteration,
                     },
                 );
-                // Wake the SessionTask so it can re-enter the agent loop.
-                // await_debug_resume() inside execute_single_iteration also
-                // waits on this notify — this covers both the running and
-                // idle-session cases.
-                ctrl.resume_notify.notify_one();
                 tracing::info!("Debug: step — agent loop will execute one step");
                 Ok(JsonRpcResponse::success(id.clone(), serde_json::json!({})))
             }

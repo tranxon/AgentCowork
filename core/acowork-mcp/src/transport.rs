@@ -44,6 +44,28 @@ pub trait McpTransportConn: Send + Sync {
 
 // ── Stdio Transport ──────────────────────────────────────────────────────
 
+/// Resolve `$VAR_NAME` / `${VAR_NAME}` placeholders in command-line arguments
+/// using the provided environment map. Non-matching args are left unchanged.
+fn resolve_env_vars_in_args(
+    args: &[String],
+    env: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    if env.is_empty() {
+        return args.to_vec();
+    }
+    args.iter()
+        .map(|arg| {
+            let mut resolved = arg.clone();
+            for (key, value) in env {
+                // Support both `$VAR` and `${VAR}` syntax.
+                resolved = resolved.replace(&format!("${{{}}}", key), value);
+                resolved = resolved.replace(&format!("${}", key), value);
+            }
+            resolved
+        })
+        .collect()
+}
+
 /// Spawn an MCP server command, with Windows fallback for extension-less
 /// commands (e.g. `npx` from NVM symlinks).  On Windows, if the raw command
 /// fails to spawn and lacks a file extension, retry with `.cmd` appended.
@@ -52,9 +74,16 @@ fn spawn_mcp_command(
     args: &[String],
     env: &std::collections::HashMap<String, String>,
 ) -> Result<Child> {
+    // Resolve $VAR / ${VAR} placeholders in args from the env map.
+    // Rust's Command::new().args() does NOT expand shell variables,
+    // so args like "--token=$API_KEY" would be passed literally without
+    // this step. We substitute before spawning so the child process
+    // receives the actual secret values.
+    let resolved_args = resolve_env_vars_in_args(args, env);
+
     let build_cmd = |cmd: &str| -> std::io::Result<Child> {
         let mut c = Command::new(cmd);
-        c.args(args)
+        c.args(&resolved_args)
             .envs(env)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())

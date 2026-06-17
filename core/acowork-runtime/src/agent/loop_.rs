@@ -7,6 +7,7 @@
 //! S1.6: InboundQueue for external message injection
 //! S1.7: Parallel tool execution with per-tool timeout
 
+use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -133,6 +134,9 @@ pub enum ChunkEvent {
         model: Option<String>,
         provider: Option<String>,
         workspace_id: Option<String>,
+        /// Current model chars/token ratio from API calibration.
+        /// `None` before the first calibration.
+        ratio: Option<f64>,
     },
     /// Todo list updated — emitted after a `todo_write` tool call mutates
     /// SessionState.todos, so the frontend can render the current task list.
@@ -171,6 +175,9 @@ pub struct AgentLoop {
     pub(crate) approval_handle: ApprovalHandle,
     /// Counter for generating unique approval request IDs.
     pub(crate) approval_next_id: AtomicU64,
+    /// Total input chars of the most recent ChatRequest, used for token
+    /// ratio calibration together with the API-reported prompt_tokens.
+    pub(crate) last_input_chars: usize,
 }
 
 impl AgentLoop {
@@ -212,7 +219,11 @@ impl AgentLoop {
             approval_rx,
             approval_handle: approval_handle.clone(),
             approval_next_id: AtomicU64::new(0),
+            last_input_chars: 0,
         };
+        // Initialize persistent model ratio store from agent config dir.
+        let ratio_config_dir = Path::new(&loop_.core.config.work_dir).join("config");
+        loop_.session.history.init_model_ratios(&ratio_config_dir);
         // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
         loop_.core.approval_handle = Some(approval_handle);
         (loop_, inbound_tx)
@@ -276,6 +287,7 @@ impl AgentLoop {
             approval_rx,
             approval_handle: approval_handle.clone(),
             approval_next_id: AtomicU64::new(0),
+            last_input_chars: 0,
         };
         // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
         session_loop.core.approval_handle = Some(approval_handle);
@@ -810,6 +822,26 @@ impl AgentLoop {
         self.persist_and_emit_tool_results(&deduped_calls, &tool_results);
         self.pre_trim_for_tool_results(&tool_results, current_model);
 
+        // ── ⑧.25 Context-aware tool result trimming ──
+        // After pre-trim removed old history, also truncate individual
+        // tool results that exceed the remaining context budget.
+        // This prevents a single large shell/grep/file_read output from
+        // overflowing the window when appended, which would cause the
+        // FIFO/emergency trim to delete ALL messages including the
+        // results themselves, crashing the session with "context depleted".
+        let mut tool_results = tool_results;
+        let truncated = self.trim_tool_results_for_context(
+            &mut tool_results,
+            current_model,
+        );
+        if truncated > 0 {
+            tracing::warn!(
+                truncated,
+                total = tool_results.len(),
+                "Tool results were truncated to fit context budget"
+            );
+        }
+
         // ── ⑧.5 Path B: Record tool failures as ProceduralNodes ──
         // After persisting results, scan for errors and create
         // low-confidence ProceduralNodes (execution_failure path).
@@ -843,6 +875,15 @@ impl AgentLoop {
             None,
         );
         self.core.debug_observer.on_phase_step_done().await;
+
+        // Emit post-iteration session snapshot so the frontend status panel
+        // sees the latest model, provider, and ratio without waiting for the
+        // next status change.
+        //
+        // TextResponse/Stopped paths return early and are covered by their
+        // subsequent transition_status(Idle) → emit_session_state calls.
+        // This checkpoint covers the ToolCallsExecuted continue-path only.
+        self.emit_session_state();
 
         Ok(IterationResult::ToolCallsExecuted)
     }

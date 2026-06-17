@@ -66,7 +66,18 @@ impl Tool for WebFetchTool {
                 let html = resp.text().await.unwrap_or_default();
                 // Simple HTML-to-text: strip tags
                 let text = strip_html_tags(&html);
-                let truncated: String = text.chars().take(10000).collect();
+                let max_chars = 10000;
+                let chars: Vec<char> = text.chars().collect();
+                let truncated = if chars.len() > max_chars {
+                    format!(
+                        "{}\n\n[Web page truncated: fetched {} characters, showing first {}.]",
+                        chars.iter().take(max_chars).collect::<String>(),
+                        chars.len(),
+                        max_chars
+                    )
+                } else {
+                    text
+                };
                 Ok(ToolResult {
                     ok: true,
                     content: truncated,

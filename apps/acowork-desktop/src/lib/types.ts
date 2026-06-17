@@ -718,6 +718,18 @@ export interface AgentMcpServersResponse {
   active_servers: string[];
 }
 
+/** MCP probe response — result of a health check against an MCP server */
+export interface McpProbeResponse {
+  success: boolean;
+  tool_count: number;
+  tools: string[];
+  error: string | null;
+  duration_ms: number;
+}
+
+/** MCP server health status (frontend-only, derived from probe results) */
+export type McpHealthStatus = "unknown" | "probing" | "healthy" | "unhealthy";
+
 /** Request body for PUT /api/agents/{id}/mcp-servers */
 export interface UpdateMcpServersRequest {
   servers: string[];

@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use acowork_core::providers::traits::Provider;
 
+use crate::agent::context::count_chat_request_chars;
 use crate::agent::loop_::{AgentLoop, ChunkEvent, SessionChunkEvent};
 
 impl AgentLoop {
@@ -424,6 +425,9 @@ impl AgentLoop {
             }
         }
 
+        // Compute total input chars for next round's token ratio calibration.
+        self.last_input_chars = count_chat_request_chars(&chat_request);
+
         chat_request
     }
 
@@ -493,7 +497,13 @@ impl AgentLoop {
             if prompt_tokens_reliable {
                 self.session
                     .history
-                    .calibrate_from_usage(usage.prompt_tokens);
+                    .calibrate_from_usage(usage.prompt_tokens, self.last_input_chars);
+
+                // Persist the calibrated ratio into SessionState so the
+                // next emit_session_state checkpoint will pick it up.
+                if let Some(ratio) = self.session.history.model_ratio() {
+                    self.session.set_model_ratio(ratio);
+                }
             } else {
                 tracing::warn!(
                     local_estimate,
@@ -599,5 +609,117 @@ impl AgentLoop {
             );
             self.trim_history_to_budget(current_model);
         }
+    }
+
+    /// ⑥.5 Context-aware tool result trimming — truncate individual tool
+    /// results so they don't overflow the context window when appended.
+    ///
+    /// After [`pre_trim_for_tool_results`] trims history, this ensures the
+    /// tool results themselves fit within the remaining context budget.
+    /// Each result gets a proportional share of the remaining space, and
+    /// truncated results carry a detailed marker so the LLM can adapt its
+    /// strategy (narrower search, pagination, etc.).
+    ///
+    /// Returns the number of results that were truncated.
+    pub(crate) fn trim_tool_results_for_context(
+        &self,
+        tool_results: &mut [String],
+        current_model: &str,
+    ) -> usize {
+        let usable_budget = self.context_trim_budget(current_model);
+        let current_tokens = self.session.history.token_count();
+
+        // Safety margin: reserve 15% of the usable budget for the LLM's
+        // next response (output tokens), tool call metadata, and message
+        // serialisation overhead. Without this, the trimmed results may
+        // fit the remaining space but the follow-up LLM response will
+        // immediately overflow again.
+        let safe_budget = (usable_budget as f64 * 0.85) as u64;
+        let remaining = safe_budget.saturating_sub(current_tokens);
+
+        if remaining == 0 || tool_results.is_empty() {
+            return 0;
+        }
+
+        // Count tokens per result
+        let result_tokens: Vec<u64> = tool_results
+            .iter()
+            .map(|r| crate::token::count_text(r, current_model) as u64)
+            .collect();
+        let total_result_tokens: u64 = result_tokens.iter().sum();
+
+        if total_result_tokens <= remaining {
+            return 0; // Everything fits
+        }
+
+        let n = tool_results.len() as u64;
+        // Minimum budget per result: 256 tokens ensures the LLM still
+        // gets meaningful output. Below this, every result would be
+        // reduced to just the truncation marker, which is unhelpful.
+        let min_per_result: u64 = 256;
+        let per_result_budget = (remaining / n).max(min_per_result);
+
+        tracing::warn!(
+            current_tokens,
+            total_result_tokens,
+            remaining,
+            per_result_budget,
+            result_count = n,
+            usable_budget,
+            "Tool results exceed remaining context budget — truncating"
+        );
+
+        let mut truncated = 0;
+        for (i, result) in tool_results.iter_mut().enumerate() {
+            let orig_tokens = result_tokens[i];
+            if orig_tokens <= per_result_budget {
+                continue;
+            }
+
+            let original_bytes = result.len();
+            // Convert token budget to char budget (≈ 4 chars/token for CJK, ≈ 3 for ASCII).
+            // Use 3.5 as a middle-ground multiplier and add 10% padding for safety.
+            let max_chars = ((per_result_budget as f64) * 3.5 * 1.1) as usize;
+
+            // Find a UTF-8 safe cut point within budget
+            let mut cut = max_chars.min(result.len());
+            while cut > 0 && !result.is_char_boundary(cut) {
+                cut -= 1;
+            }
+
+            // Try to cut at a newline for readability
+            if let Some(nl_pos) = result[..cut].rfind('\n').filter(|&p| p > cut / 2) {
+                cut = nl_pos;
+            }
+
+            let kept = &result[..cut];
+            let dropped_tokens = orig_tokens.saturating_sub(per_result_budget);
+
+            let truncation_marker = format!(
+                "\n\n[RESULT TRUNCATED by context budget: original output was {} bytes \
+                 (~{} tokens), but only {per_result_budget} tokens of context budget remain \
+                 per result (total remaining: {remaining} tokens across {n} result(s)). \
+                 ~{dropped_tokens} tokens of this output were dropped. \
+                 SUGGESTION: re-run with narrower parameters (pipe through 'head -N' or \
+                 'tail -N' for pagination, use tighter grep patterns to reduce matches, \
+                 or search fewer files/directories) to get a complete result.]",
+                original_bytes,
+                orig_tokens,
+            );
+
+            *result = format!("{kept}{truncation_marker}");
+            truncated += 1;
+
+            tracing::warn!(
+                i,
+                original_bytes,
+                orig_tokens,
+                kept_bytes = cut,
+                per_result_budget,
+                "Tool result #{i} truncated to fit context budget"
+            );
+        }
+
+        truncated
     }
 }

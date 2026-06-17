@@ -8,12 +8,14 @@
 //! Constants and helpers defined here provide consistent, project-wide
 //! truncation behaviour.
 
-/// Default maximum bytes for a single tool output (512 KB).
+/// Default maximum bytes for a single tool output (256 KB).
 ///
-/// This is large enough to give the LLM meaningful content but small
-/// enough that even with overhead (serialisation, history wrapping) the
-/// result stays within typical budget margins.
-pub const MAX_OUTPUT_BYTES: usize = 512 * 1024; // 512 KB
+/// Reduced from 512 KB to 256 KB: two concurrent 512 KB results (e.g.
+/// two bash commands) could consume ~1 MB / ~250K tokens, exceeding the
+/// usable context budget of most models (typically 128-172K). At 256 KB
+/// per result (~64K tokens each), two results stay within budget while
+/// still providing ample meaningful content.
+pub const MAX_OUTPUT_BYTES: usize = 256 * 1024; // 256 KB
 
 /// Maximum bytes per *single matched line* when a tool emits line-level
 /// output (e.g. content_search content mode).
@@ -29,8 +31,14 @@ pub const MAX_LINE_OUTPUT_BYTES: usize = 10 * 1024; // 10 KB
 pub const TRUNCATED_LINE_MARKER: &str = "...[truncated]";
 
 /// Appended when an entire output is truncated because it exceeded
-/// [`MAX_OUTPUT_BYTES`].
-pub const TRUNCATED_OUTPUT_MARKER: &str = "\n\n[Output truncated: exceeded limit]";
+/// [`MAX_OUTPUT_BYTES`].  Provides the LLM with actionable guidance
+/// so it knows to narrow the request rather than blindly retry.
+pub const TRUNCATED_OUTPUT_MARKER: &str = "\
+\n[OUTPUT TRUNCATED: exceeded tool-level output limit (256 KB). \
+The full output was too large to fit in the LLM context window. \
+SUGGESTION: re-run with more targeted parameters — narrower \
+search patterns, file range limits (head/tail/Select-Object), \
+or pagination across multiple calls.]";
 
 /// Maximum number of results returned by collection tools (glob_search,
 /// files_with_matches mode, etc.).  Prevents a tool from dumping tens of

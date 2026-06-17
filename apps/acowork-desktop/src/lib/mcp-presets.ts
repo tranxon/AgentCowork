@@ -118,7 +118,7 @@ export const MCP_PRESETS: McpPresetDef[] = [
     category: "design",
     transport: "stdio",
     command: "npx",
-    args: ["-y", "figma-developer-mcp", "--figma-api-key=$FIGMA_API_KEY"],
+    args: ["-y", "figma-developer-mcp", "--figma-api-key=$FIGMA_API_KEY", "--stdio"],
     requiredEnv: ["FIGMA_API_KEY"],
     optionalEnv: {},
     installHint:

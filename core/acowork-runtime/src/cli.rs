@@ -1153,6 +1153,46 @@ async fn async_main(
             session_manager.enable_debug_mode(debug_port).await;
         }
 
+        // ── Sync agent_mcp.json from Gateway catalog at startup ──
+        // The AgentHello handshake delivers the latest mcp_list from Gateway.
+        // We must update agent_mcp.json's catalog portion BEFORE auto-connect
+        // so that MCP connections use the freshest config (e.g. --stdio flags,
+        // updated env vars). Without this, a stale agent_mcp.json from a
+        // previous session would be used for connections.
+        if let Some(ref cfg) = hello_config {
+            if let Some(ref mcp_list) = cfg.mcp_list {
+                use acowork_core::protocol::McpServerConfigDef;
+                let catalog: Vec<McpServerConfigDef> = mcp_list
+                    .iter()
+                    .map(|item| McpServerConfigDef {
+                        name: item.id.clone(),
+                        transport: item.transport.clone(),
+                        url: item.url.clone(),
+                        command: item.command.clone(),
+                        args: item.args.clone(),
+                        env: item.env.clone(),
+                        headers: item.headers.clone(),
+                        tool_timeout_secs: item.tool_timeout_secs,
+                    })
+                    .collect();
+                let work_dir_path = std::path::Path::new(&config.work_dir);
+                if let Err(e) = crate::agent_config::save_agent_mcp_config_catalog(
+                    work_dir_path,
+                    &catalog,
+                ) {
+                    tracing::warn!(
+                        error = %e,
+                        "Failed to sync agent_mcp.json catalog from AgentHello mcp_list"
+                    );
+                } else {
+                    tracing::info!(
+                        catalog_count = catalog.len(),
+                        "Synced agent_mcp.json catalog from AgentHello mcp_list"
+                    );
+                }
+            }
+        }
+
         // ── MCP server auto-connect at startup (background, non-blocking) ──
         // Spawn MCP connect in a background task. Results are sent through an
         // mpsc channel and applied asynchronously inside run_gateway_loop's
@@ -1432,6 +1472,7 @@ async fn async_main(
                             model,
                             provider,
                             workspace_id,
+                            ratio,
                         } => {
                             let mut params = serde_json::json!({
                                 "status": status,
@@ -1445,6 +1486,9 @@ async fn async_main(
                             }
                             if let Some(ref w) = workspace_id {
                                 params["workspace_id"] = serde_json::json!(w);
+                            }
+                            if let Some(r) = ratio {
+                                params["ratio"] = serde_json::json!(r);
                             }
                             relay_intent(&outbound_tx, "session_state_changed", &params).await;
                         }

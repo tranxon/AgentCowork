@@ -110,14 +110,23 @@ impl ShellTool {
         let description = match self.tool_name.as_str() {
             "bash" => format!(
                 "Execute a command in Git Bash (Unix-style shell on Windows). \
+                 IMPORTANT: Output is capped at {}KB — pipe through 'head -N' or \
+                 'tail -N' to limit lines, filter with 'grep' to narrow results, \
+                 or use more specific patterns to avoid oversized responses that \
+                 exhaust the context window. \
                  For absolute paths outside the workspace, prefer Windows format (e.g. 'C:/Users/...'). \
                  {fallback}",
+                crate::tools::output::MAX_OUTPUT_BYTES / 1024,
                 fallback = self.fallback_hint()
             ),
             "powershell" => format!(
                 "Execute a command in {shell_name} ({shell_binary}). \
+                 IMPORTANT: Output is capped at {max_kb}KB — use 'Select-Object -First N' \
+                 to limit results, 'Select-String' to filter, or narrower parameters \
+                 to avoid oversized responses that exhaust the context window. \
                  Use this if 'bash' is unavailable or for Windows-specific tasks. \
                  {fallback}",
+                max_kb = crate::tools::output::MAX_OUTPUT_BYTES / 1024,
                 shell_name = self.shell_name,
                 shell_binary = self.shell_binary,
                 fallback = self.fallback_hint()

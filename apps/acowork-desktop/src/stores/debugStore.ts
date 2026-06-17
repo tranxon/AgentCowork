@@ -198,8 +198,6 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
         setTimeout(() => {
           const sessionId = useChatStore.getState().getActiveSessionId(agentId);
           get().getState(sessionId).catch(() => { });
-          console.log("[debugStore] WebSocket connected, sending initial step");
-          get().sendRequest(sessionId, "debugger.step").catch((e) => console.warn("[debugStore] initial step failed:", e));
         }, 0);
       };
 
@@ -327,8 +325,6 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
         patchSession({
           iteration: (event.params.iteration as number) ?? 0,
           phase: (event.params.phase as Phase) ?? "Idle",
-          debugState: "Stepping",
-          paused: true,
           promptTokens: usage?.prompt_tokens ?? 0,
           completionTokens: usage?.completion_tokens ?? 0,
         });
@@ -389,22 +385,18 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
 
   resume: async (sessionId: string | null) => {
     await get().sendRequest(sessionId, "debugger.resume");
-    patchSessionDebug(sessionId, { debugState: "Running", paused: false });
   },
 
   pause: async (sessionId: string | null) => {
     await get().sendRequest(sessionId, "debugger.pause");
-    patchSessionDebug(sessionId, { debugState: "Paused" });
   },
 
   step: async (sessionId: string | null, granularity = "iteration") => {
     await get().sendRequest(sessionId, "debugger.step", { granularity });
-    patchSessionDebug(sessionId, { debugState: "Stepping" });
   },
 
   stop: async (sessionId: string | null) => {
     await get().sendRequest(sessionId, "debugger.stop");
-    patchSessionDebug(sessionId, { debugState: "Stopped", paused: true });
   },
 
   restart: async (sessionId: string | null) => {
@@ -421,16 +413,7 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
       console.error("[debugStore] restart: restartAgentInDebug failed:", e);
       throw e;
     }
-    // Reset UI state; the backend will push fresh events after reconnect.
-    patchSessionDebug(sessionId, {
-      iteration: 0,
-      phase: "Idle",
-      debugState: "Stepping",
-      paused: false,
-      snapshots: [],
-      sectionCache: new Map(),
-      hasPendingPatches: false,
-    });
+    await get().getState(sessionId).catch(() => { });
   },
 
   // ── State query ─────────────────────────────────────────────────────
@@ -533,7 +516,7 @@ export const useDebugStore = create<DebugStore>((set, get) => ({
 
   reExecute: async (sessionId: string | null) => {
     const result = (await get().sendRequest(sessionId, "debugger.reExecute", {})) as { has_patches: boolean };
-    patchSessionDebug(sessionId, { hasPendingPatches: false, debugState: "Running", paused: false });
+    patchSessionDebug(sessionId, { hasPendingPatches: false });
     return result;
   },
 }));

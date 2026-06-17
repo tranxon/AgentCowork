@@ -1294,8 +1294,13 @@ const MCP_ICON_MAP: Record<string, React.ComponentType<{ className?: string }>> 
 
 function McpTab() {
   const { t } = useTranslation();
-  const { catalog, loading, error, loadCatalog, addServer, removeServer } = useMcpStore();
+  const { catalog, loading, error, loadCatalog, addServer, removeServer, probeServer, probeByName,
+    healthStatus, healthErrors, healthToolCounts } = useMcpStore();
   const [showAddForm, setShowAddForm] = useState(false);
+
+  // Probe-before-add state
+  const [pendingConfig, setPendingConfig] = useState<McpServerConfigDef | null>(null);
+  const [probeResult, setProbeResult] = useState<{ success: boolean; tool_count: number; tools: string[]; error: string | null; duration_ms: number } | null>(null);
 
   const presetIconMap = useMemo(() => {
     const map: Record<string, string> = {};
@@ -1323,7 +1328,7 @@ function McpTab() {
 
   const catalogNames = useMemo(() => new Set(catalog.map((s) => s.name)), [catalog]);
 
-  const handleAddFromPreset = (preset: McpPresetDef) => {
+  const handleAddFromPreset = async (preset: McpPresetDef) => {
     if (preset.requiredEnv.length > 0) {
       // Show env form for API keys
       setActivePreset(preset);
@@ -1331,21 +1336,35 @@ function McpTab() {
         preset.requiredEnv.reduce((acc, key) => ({ ...acc, [key]: "" }), {})
       );
     } else {
-      // No API key needed, add directly
+      // No API key needed, probe first then add
       const config = presetToServerConfig(preset);
-      addServer(config);
+      setPendingConfig(config);
+      setProbeResult(null);
+      const result = await probeServer(config);
+      setProbeResult(result);
+      if (result.success) {
+        addServer(config);
+        setPendingConfig(null);
+      }
     }
   };
 
-  const handlePresetEnvSubmit = () => {
+  const handlePresetEnvSubmit = async () => {
     if (!activePreset) return;
     const config = presetToServerConfig(activePreset, presetEnvForm);
-    addServer(config);
+    setPendingConfig(config);
+    setProbeResult(null);
     setActivePreset(null);
     setPresetEnvForm({});
+    const result = await probeServer(config);
+    setProbeResult(result);
+    if (result.success) {
+      addServer(config);
+      setPendingConfig(null);
+    }
   };
 
-  const handleAddManual = () => {
+  const handleAddManual = async () => {
     if (!newName.trim()) return;
     const config: McpServerConfigDef = {
       name: newName.trim(),
@@ -1362,13 +1381,30 @@ function McpTab() {
         )
         : {},
     };
-    addServer(config);
+    setPendingConfig(config);
+    setProbeResult(null);
     setShowAddForm(false);
-    setNewName("");
-    setNewCommand("");
-    setNewArgs("");
-    setNewUrl("");
-    setNewEnv("");
+    const result = await probeServer(config);
+    setProbeResult(result);
+    if (result.success) {
+      addServer(config);
+      setPendingConfig(null);
+      setNewName(""); setNewCommand(""); setNewArgs(""); setNewUrl(""); setNewEnv("");
+    }
+  };
+
+  /** Add the pending config despite probe failure */
+  const handleAddAnyway = () => {
+    if (!pendingConfig) return;
+    addServer(pendingConfig);
+    setPendingConfig(null);
+    setProbeResult(null);
+  };
+
+  /** Dismiss probe result without adding */
+  const dismissProbe = () => {
+    setPendingConfig(null);
+    setProbeResult(null);
   };
 
   return (
@@ -1402,13 +1438,27 @@ function McpTab() {
         {/* Server list */}
         {catalog.length > 0 && (
           <div className="mt-3 space-y-2">
-            {catalog.map((server) => (
+            {catalog.map((server) => {
+              const status = healthStatus[server.name];
+              const healthErr = healthErrors[server.name];
+              const toolCount = healthToolCounts[server.name];
+              return (
               <div
                 key={server.name}
                 className="rounded border border-zinc-100 px-3 py-2 dark:border-zinc-600"
               >
                 <div className="flex items-start justify-between">
                   <div className="flex items-center gap-2 min-w-0">
+                    {/* Health indicator dot */}
+                    {status === "probing" && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" title={t("harnessMcp.testing")} />
+                    )}
+                    {status === "healthy" && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" title={t("harnessMcp.connected", { count: toolCount })} />
+                    )}
+                    {status === "unhealthy" && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={healthErr || t("harnessMcp.connFailed")} />
+                    )}
                     <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-700 shrink-0">
                       {server.transport}
                     </span>
@@ -1421,21 +1471,38 @@ function McpTab() {
                     {server.has_secrets && (
                       <span className="text-[10px] text-amber-500 shrink-0">{t("harnessMcp.hasApiKey")}</span>
                     )}
+                    {status === "healthy" && toolCount > 0 && (
+                      <span className="text-[10px] text-green-500 shrink-0">{toolCount} tools</span>
+                    )}
                   </div>
-                  <button
-                    onClick={() => removeServer(server.name)}
-                    className="group/remove shrink-0 text-xs text-zinc-400 transition-colors hover:text-[var(--color-accent)] dark:text-zinc-500"
-                  >
-                    {t("harnessMcp.remove")}
-                  </button>
+                  <div className="flex items-center gap-2 shrink-0">
+                    <button
+                      onClick={() => probeByName(server.name)}
+                      disabled={status === "probing"}
+                      className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+                    >
+                      {status === "probing" ? "..." : t("harnessMcp.testConn")}
+                    </button>
+                    <button
+                      onClick={() => removeServer(server.name)}
+                      className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium"
+                    >
+                      {t("harnessMcp.remove")}
+                    </button>
+                  </div>
                 </div>
                 {(server.command || server.url) && (
                   <p className="mt-1 text-[10px] text-zinc-400 break-all">
                     {server.command || server.url}
                   </p>
                 )}
+                {/* Show health error inline */}
+                {status === "unhealthy" && healthErr && (
+                  <p className="mt-1 text-[10px] text-red-500 break-all">{healthErr}</p>
+                )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1579,20 +1646,20 @@ function McpTab() {
 
       {/* Preset env form (for servers requiring API keys) */}
       {activePreset && (
-        <div className="rounded-md border border-amber-200 bg-white p-4 dark:border-amber-700 dark:bg-zinc-800">
+        <div className="rounded-md border border-[var(--color-accent)]/40 bg-white p-4 dark:bg-zinc-800">
           <h2 className="text-xs font-medium mb-1">{t("harnessMcp.configure")}{activePreset.name}</h2>
           <p className="text-[10px] text-zinc-400 mb-3">{activePreset.installHint}</p>
           <div className="space-y-2">
             {activePreset.requiredEnv.map((envKey) => (
               <div key={envKey}>
-                <label className="text-[10px] text-zinc-400">{envKey}</label>
+                <label className="mb-1 block text-[10px] text-zinc-400">{envKey}</label>
                 <input
                   type="password"
                   value={presetEnvForm[envKey] || ""}
                   onChange={(e) =>
                     setPresetEnvForm((prev) => ({ ...prev, [envKey]: e.target.value }))
                   }
-                  className="rounded border border-zinc-200 px-2 py-1 dark:border-zinc-600 dark:bg-zinc-700"
+                  className={inputBase}
                   placeholder={`${t("harnessMcp.enter")}${envKey}`}
                 />
               </div>
@@ -1611,6 +1678,80 @@ function McpTab() {
                 {t("common.cancel")}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Probe result dialog */}
+      {probeResult && pendingConfig && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50">
+          <div className="w-[400px] rounded-md bg-white p-6 shadow-xl dark:bg-zinc-800">
+            {probeResult.success ? (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="h-3 w-3 rounded-full bg-green-500" />
+                  <h3 className="text-sm font-semibold text-green-600 dark:text-green-400">
+                    {t("harnessMcp.connected", { count: probeResult.tool_count })}
+                  </h3>
+                </div>
+                {probeResult.tools.length > 0 && (
+                  <div className="mb-3 max-h-32 overflow-y-auto rounded bg-zinc-50 p-2 dark:bg-zinc-700/50">
+                    {probeResult.tools.map((tool) => (
+                      <span key={tool} className="mr-1 mb-1 inline-block rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-600 dark:bg-zinc-600 dark:text-zinc-300">
+                        {tool}
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <p className="text-[10px] text-zinc-400 mb-3">{probeResult.duration_ms}ms</p>
+                <button
+                  onClick={dismissProbe}
+                  className="inline-flex items-center gap-1 rounded btn-accent px-3 py-1.5 text-xs font-medium"
+                >
+                  OK
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <span className="h-3 w-3 rounded-full bg-red-500" />
+                  <h3 className="text-sm font-semibold text-red-600 dark:text-red-400">
+                    {t("harnessMcp.connFailed")}
+                  </h3>
+                </div>
+                <div className="mb-3 rounded bg-red-50 p-2 dark:bg-red-900/20">
+                  <p className="text-[11px] text-red-600 dark:text-red-400 break-all whitespace-pre-wrap">
+                    {probeResult.error}
+                  </p>
+                </div>
+                <p className="text-[10px] text-zinc-400 mb-3">{probeResult.duration_ms}ms</p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleAddAnyway}
+                    className="inline-flex items-center gap-1 rounded-md border border-amber-400 px-3 py-1.5 text-xs font-medium text-amber-600 hover:bg-amber-50 dark:border-amber-600 dark:text-amber-400 dark:hover:bg-amber-900/20"
+                  >
+                    {t("harnessMcp.addAnyway")}
+                  </button>
+                  <button
+                    onClick={dismissProbe}
+                    className="inline-flex items-center gap-1 rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 dark:border-zinc-600 dark:text-zinc-300 dark:hover:bg-zinc-700"
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Probing spinner overlay (shown while probe is in progress) */}
+      {pendingConfig && !probeResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="w-[300px] rounded-md bg-white p-6 text-center shadow-xl dark:bg-zinc-800">
+            <div className="mx-auto mb-3 h-8 w-8 animate-spin rounded-full border-2 border-zinc-300 border-t-[var(--color-accent)]" />
+            <p className="text-xs text-zinc-500">{t("harnessMcp.testing")}</p>
+            <p className="mt-1 text-[10px] text-zinc-400">{pendingConfig.name}</p>
           </div>
         </div>
       )}

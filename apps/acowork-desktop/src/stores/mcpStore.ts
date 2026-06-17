@@ -11,6 +11,8 @@ import type {
   McpCatalogEntryResponse,
   McpServerConfigDef,
   AgentMcpServersResponse,
+  McpProbeResponse,
+  McpHealthStatus,
 } from "../lib/types";
 
 // ── Catalog types ────────────────────────────────────────────────────
@@ -46,6 +48,22 @@ interface McpActivationState {
   activationLoading: Record<string, boolean>;
 }
 
+interface McpHealthState {
+  /** Health status per server name (serverName -> status) */
+  healthStatus: Record<string, McpHealthStatus>;
+  /** Last probe error per server name (serverName -> error message) */
+  healthErrors: Record<string, string | null>;
+  /** Tool count per server name (serverName -> count) */
+  healthToolCounts: Record<string, number>;
+}
+
+interface McpHealthActions {
+  /** Probe a server config (before adding) — does NOT save to catalog */
+  probeServer: (config: McpServerConfigDef) => Promise<McpProbeResponse>;
+  /** Probe an existing catalog entry by name */
+  probeByName: (name: string) => Promise<McpProbeResponse>;
+}
+
 interface McpActivationActions {
   /** Load active MCP server names for an agent */
   loadActiveServers: (agentId: string) => Promise<void>;
@@ -60,7 +78,9 @@ interface McpActivationActions {
 export type McpStore = McpCatalogState &
   McpCatalogActions &
   McpActivationState &
-  McpActivationActions;
+  McpActivationActions &
+  McpHealthState &
+  McpHealthActions;
 
 export const useMcpStore = create<McpStore>((set, get) => ({
   // ── Catalog state ──
@@ -71,6 +91,11 @@ export const useMcpStore = create<McpStore>((set, get) => ({
   // ── Activation state ──
   activeServers: {},
   activationLoading: {},
+
+  // ── Health state ──
+  healthStatus: {},
+  healthErrors: {},
+  healthToolCounts: {},
 
   // ── Catalog actions ──
 
@@ -230,5 +255,71 @@ export const useMcpStore = create<McpStore>((set, get) => ({
       : [...currentActive, serverName];
 
     await get().setActiveServers(agentId, newServers);
+  },
+
+  // ── Health actions ──
+
+  probeServer: async (config: McpServerConfigDef) => {
+    const name = config.name;
+    set((s) => ({
+      healthStatus: { ...s.healthStatus, [name]: "probing" },
+      healthErrors: { ...s.healthErrors, [name]: null },
+    }));
+    try {
+      const resp = await fetch(`${getGatewayUrl()}/api/mcp-catalog/probe`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(config),
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as McpProbeResponse;
+      set((s) => ({
+        healthStatus: { ...s.healthStatus, [name]: data.success ? "healthy" : "unhealthy" },
+        healthErrors: { ...s.healthErrors, [name]: data.error ?? null },
+        healthToolCounts: { ...s.healthToolCounts, [name]: data.tool_count },
+      }));
+      return data;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({
+        healthStatus: { ...s.healthStatus, [name]: "unhealthy" },
+        healthErrors: { ...s.healthErrors, [name]: message },
+      }));
+      return { success: false, tool_count: 0, tools: [], error: message, duration_ms: 0 };
+    }
+  },
+
+  probeByName: async (name: string) => {
+    set((s) => ({
+      healthStatus: { ...s.healthStatus, [name]: "probing" },
+      healthErrors: { ...s.healthErrors, [name]: null },
+    }));
+    try {
+      const resp = await fetch(
+        `${getGatewayUrl()}/api/mcp-catalog/${encodeURIComponent(name)}/probe`,
+        { method: "POST" },
+      );
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+        throw new Error(err.error || `HTTP ${resp.status}`);
+      }
+      const data = (await resp.json()) as McpProbeResponse;
+      set((s) => ({
+        healthStatus: { ...s.healthStatus, [name]: data.success ? "healthy" : "unhealthy" },
+        healthErrors: { ...s.healthErrors, [name]: data.error ?? null },
+        healthToolCounts: { ...s.healthToolCounts, [name]: data.tool_count },
+      }));
+      return data;
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      set((s) => ({
+        healthStatus: { ...s.healthStatus, [name]: "unhealthy" },
+        healthErrors: { ...s.healthErrors, [name]: message },
+      }));
+      return { success: false, tool_count: 0, tools: [], error: message, duration_ms: 0 };
+    }
   },
 }));

@@ -116,6 +116,7 @@
         "stopped": "중지됨",
         "startGateway": "게이트웨이 시작",
         "restart": "재시작",
+        "gatewayRunningExternal": "게이트웨이에 연결할 수 있지만 이 앱 외부에서 시작되었습니다. 설정에서 재시작하거나 수동으로 중지한 후 앱에서 관리하세요.",
         "restarting": "재시작 중...",
         "stop": "중지",
         "stopping": "중지 중...",
@@ -333,7 +334,12 @@
         "environment": "환경 변수（KEY=VALUE, 쉼표 구분）",
         "cancel": "취소",
         "configure": "설정 ",
-        "enter": "입력 "
+        "enter": "입력 ",
+        "testing": "연결 테스트 중...",
+        "connected": "연결됨 — {{count}}개 도구 사용 가능",
+        "connFailed": "연결 실패",
+        "testConn": "테스트",
+        "addAnyway": "그래도 추가"
     },
     "resultsPanel": {
         "debug": "디버그",

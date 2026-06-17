@@ -119,6 +119,9 @@ pub struct SessionState {
     pub(crate) model: Option<String>,
     /// Per-session provider selection (ADR-012).
     pub(crate) provider: Option<String>,
+    /// Current model chars/token ratio (calibrated from API feedback).
+    /// Updated after each LLM call via `calibrate_from_usage`.
+    pub(crate) model_ratio: Option<f64>,
 }
 
 impl SessionState {
@@ -140,6 +143,7 @@ impl SessionState {
             is_compacted: false,
             model: None,
             provider: None,
+            model_ratio: None,
         }
     }
 
@@ -260,6 +264,16 @@ impl SessionState {
     /// Set the per-session provider (ADR-012).
     pub fn set_provider(&mut self, provider: String) {
         self.provider = Some(provider);
+    }
+
+    /// Get the current model chars/token ratio (from API calibration).
+    pub fn model_ratio(&self) -> Option<f64> {
+        self.model_ratio
+    }
+
+    /// Set the current model chars/token ratio (from API calibration).
+    pub fn set_model_ratio(&mut self, ratio: f64) {
+        self.model_ratio = Some(ratio);
     }
 
     /// Get the per-session workspace_id (from JSONL metadata, persisted by

@@ -8,19 +8,21 @@
 //! - PUT    /api/mcp-catalog         — replace the entire catalog
 //! - POST   /api/mcp-catalog         — add a single server entry
 //! - DELETE /api/mcp-catalog/{name}   — remove a server entry
+//! - POST   /api/mcp-catalog/probe   — probe a server config (health check)
+//! - POST   /api/mcp-catalog/{name}/probe — probe an existing catalog entry
 
 use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    routing::{delete, get},
+    routing::{delete, get, post},
 };
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::http::routes::{ApiError, AppState};
 use crate::resource_cache;
-use acowork_core::protocol::McpServerConfigDef;
+use acowork_core::protocol::{McpServerConfigDef, McpTransportDef};
 
 /// Build the MCP catalog router
 pub fn mcp_catalog_routes() -> Router<AppState> {
@@ -32,8 +34,16 @@ pub fn mcp_catalog_routes() -> Router<AppState> {
                 .post(add_catalog_entry),
         )
         .route(
+            "/api/mcp-catalog/probe",
+            post(probe_server_config),
+        )
+        .route(
             "/api/mcp-catalog/{name}",
             delete(remove_catalog_entry).put(update_catalog_entry),
+        )
+        .route(
+            "/api/mcp-catalog/{name}/probe",
+            post(probe_catalog_entry),
         )
 }
 
@@ -140,6 +150,21 @@ pub struct UpdateCatalogEntryRequest {
 #[derive(Serialize)]
 pub struct MessageResponse {
     pub message: String,
+}
+
+/// MCP probe response — result of a health check against an MCP server
+#[derive(Serialize)]
+pub struct McpProbeResponse {
+    /// Whether the connection succeeded
+    pub success: bool,
+    /// Number of tools discovered
+    pub tool_count: usize,
+    /// Tool names discovered
+    pub tools: Vec<String>,
+    /// Error message if failed
+    pub error: Option<String>,
+    /// Probe duration in milliseconds
+    pub duration_ms: u64,
 }
 
 // ── Handlers ──────────────────────────────────────────────────────────
@@ -371,6 +396,154 @@ pub async fn remove_catalog_entry(
     Ok(Json(MessageResponse {
         message: format!("MCP server '{}' removed from catalog", name),
     }))
+}
+
+// ── Probe handlers ──────────────────────────────────────────────────
+
+/// Substitute `$VAR_NAME` references in command args with values from the env map.
+/// Only substitutes references that have a matching key in the env map.
+fn substitute_env_vars_in_args(
+    args: &[String],
+    env: &std::collections::HashMap<String, String>,
+) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            let mut result = arg.clone();
+            for (key, value) in env {
+                let pattern = format!("${}", key);
+                result = result.replace(&pattern, value);
+            }
+            result
+        })
+        .collect()
+}
+
+/// Core probe logic: attempt to connect to an MCP server and return health info.
+///
+/// If the initial stdio connection fails with "invalid JSON-RPC response" (which
+/// typically means the process started in HTTP mode instead of stdio), we
+/// automatically retry in HTTP mode to give the user a clear diagnosis.
+async fn do_probe(config: McpServerConfigDef) -> McpProbeResponse {
+    let start = std::time::Instant::now();
+
+    // Substitute $ENV_VAR references in args from env map
+    let resolved_args = substitute_env_vars_in_args(&config.args, &config.env);
+    let resolved_config = McpServerConfigDef {
+        args: resolved_args,
+        ..config.clone()
+    };
+
+    match acowork_mcp::McpClient::connect(resolved_config).await {
+        Ok(client) => {
+            let duration_ms = start.elapsed().as_millis() as u64;
+            let tools: Vec<String> = client.tools().into_iter().map(|t| t.name).collect();
+            let tool_count = tools.len();
+            // Disconnect cleanly
+            client.disconnect().await;
+            McpProbeResponse {
+                success: true,
+                tool_count,
+                tools,
+                error: None,
+                duration_ms,
+            }
+        }
+        Err(e) => {
+            let err_msg = format!("{:#}", e);
+
+            // Smart diagnosis: if stdio failed with "invalid JSON-RPC response",
+            // the process likely started in HTTP mode. Try HTTP fallback to confirm.
+            if config.transport == McpTransportDef::Stdio
+                && err_msg.contains("invalid JSON-RPC response")
+            {
+                // Try common HTTP MCP endpoints
+                let http_urls = [
+                    "http://127.0.0.1:3333/mcp".to_string(),
+                    "http://127.0.0.1:3000/mcp".to_string(),
+                    "http://127.0.0.1:8080/mcp".to_string(),
+                ];
+                for url in &http_urls {
+                    let http_config = McpServerConfigDef {
+                        transport: McpTransportDef::Http,
+                        url: Some(url.clone()),
+                        ..config.clone()
+                    };
+                    if let Ok(client) = acowork_mcp::McpClient::connect(http_config).await {
+                        let duration_ms = start.elapsed().as_millis() as u64;
+                        let tools: Vec<String> =
+                            client.tools().into_iter().map(|t| t.name).collect();
+                        let tool_count = tools.len();
+                        client.disconnect().await;
+                        return McpProbeResponse {
+                            success: true,
+                            tool_count,
+                            tools,
+                            error: None,
+                            duration_ms,
+                        };
+                    }
+                }
+
+                // HTTP fallback also failed — give a clear diagnosis
+                let duration_ms = start.elapsed().as_millis() as u64;
+                return McpProbeResponse {
+                    success: false,
+                    tool_count: 0,
+                    tools: Vec::new(),
+                    error: Some(format!(
+                        "{err_msg}\n\nThe server process started but did not respond on stdio. \
+                         It may be running in HTTP mode instead. \
+                         Try adding \"--stdio\" to the command arguments."
+                    )),
+                    duration_ms,
+                };
+            }
+
+            let duration_ms = start.elapsed().as_millis() as u64;
+            McpProbeResponse {
+                success: false,
+                tool_count: 0,
+                tools: Vec::new(),
+                error: Some(err_msg),
+                duration_ms,
+            }
+        }
+    }
+}
+
+/// `POST /api/mcp-catalog/probe` — probe an MCP server config (health check)
+///
+/// Accepts a full MCP server config, attempts to connect and perform the
+/// MCP initialize handshake + tools/list. Returns success/failure with
+/// tool names and duration. Used by the frontend to verify a server
+/// config is valid before saving it to the catalog.
+pub async fn probe_server_config(
+    Json(config): Json<McpServerConfigDef>,
+) -> Result<Json<McpProbeResponse>, (StatusCode, Json<ApiError>)> {
+    tracing::info!(server = %config.name, transport = ?config.transport, "Probing MCP server config");
+    Ok(Json(do_probe(config).await))
+}
+
+/// `POST /api/mcp-catalog/{name}/probe` — probe an existing catalog entry
+///
+/// Loads the real (unmasked) config from the catalog file and probes it.
+/// Used to re-verify an already-saved server's health.
+pub async fn probe_catalog_entry(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+) -> Result<Json<McpProbeResponse>, (StatusCode, Json<ApiError>)> {
+    let data_dir = get_data_dir(&state).await?;
+    let catalog = load_mcp_catalog(&data_dir).map_err(|e| ApiError::internal(&e))?;
+
+    let config = catalog
+        .into_iter()
+        .find(|c| c.name == name)
+        .ok_or_else(|| {
+            ApiError::not_found(&format!("MCP server '{}' not found in catalog", name))
+        })?;
+
+    tracing::info!(server = %name, "Probing existing catalog MCP server");
+    Ok(Json(do_probe(config).await))
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────

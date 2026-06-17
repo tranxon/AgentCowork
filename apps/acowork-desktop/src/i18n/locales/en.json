@@ -118,6 +118,7 @@
         "stopped": "Stopped",
         "startGateway": "Start Gateway",
         "restart": "Restart",
+        "gatewayRunningExternal": "Gateway is reachable but was started outside of this app. Restart it via Settings or stop it manually to manage it from here.",
         "restarting": "Restarting...",
         "stop": "Stop",
         "stopping": "Stopping...",
@@ -335,7 +336,12 @@
         "environment": "Environment (KEY=VALUE, comma-separated)",
         "cancel": "Cancel",
         "configure": "Configure ",
-        "enter": "Enter "
+        "enter": "Enter ",
+        "testing": "Testing connection...",
+        "connected": "Connected — {{count}} tools available",
+        "connFailed": "Connection failed",
+        "testConn": "Test",
+        "addAnyway": "Add Anyway"
     },
     "resultsPanel": {
         "debug": "Debug",

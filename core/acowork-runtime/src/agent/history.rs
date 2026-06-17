@@ -62,10 +62,32 @@ impl HistoryManager {
         self.protocol_type = pt;
     }
 
-    /// Set the model name for Tier1/Tier2 token counting precision.
+    /// Get the current model chars/token ratio from the calibrated ratio store.
+    /// Returns `None` if no model is set or no calibration has occurred yet.
+    pub fn model_ratio(&self) -> Option<f64> {
+        let model = self.model_name.as_deref()?;
+        if model.is_empty() {
+            return None;
+        }
+        Some(self.counter.model_ratios().get(model))
+    }
+
+    /// Set the model name for token counting precision.
     /// Called when session model is determined (ADR-012).
     pub fn set_model_name(&mut self, model: String) {
         self.model_name = Some(model);
+    }
+
+    /// Initialize the token counter with a persistent ratio store.
+    ///
+    /// Called once during AgentLoop startup with the agent's config directory
+    /// path. Loads previously calibrated ratios from `{config_dir}/model_ratios.json`
+    /// and auto-saves after each calibration.
+    pub fn init_model_ratios(&mut self, config_dir: &std::path::Path) {
+        let path = config_dir.join("model_ratios.json");
+        self.counter = TokenCounter::new_with_ratios(
+            crate::token::ratio_store::ModelRatioStore::with_persistence(path),
+        );
     }
 
     /// Dynamically update the max token budget for FIFO trimming.
@@ -111,16 +133,28 @@ impl HistoryManager {
     /// Calibrate the history token count from actual API usage feedback.
     ///
     /// LLM API responses include `usage.prompt_tokens` which is the authoritative
-    /// token count for the entire prompt (system + history). This method replaces
-    /// our heuristic estimate with the ground truth value, preventing cumulative
-    /// estimation drift across turns.
+    /// token count for the entire prompt (system + history + tool definitions).
+    /// This method:
+    /// 1. Replaces our heuristic estimate with the API ground truth for budget tracking
+    /// 2. Computes the chars/token ratio and feeds it back into TokenCounter
     ///
-    /// **Safety guard**: when `prompt_tokens` is 0, the API response is
-    /// considered unreliable (observed with some Anthropic-protocol providers
-    /// like MiniMax that occasionally omit `message_start` usage fields).
-    /// In this case, the calibration is skipped entirely to prevent corrupting
-    /// the internal counter with a bogus zero value.
-    pub fn calibrate_from_usage(&mut self, prompt_tokens: u64) {
+    /// ## Calibration formula
+    ///
+    /// ```text
+    /// ratio = total_input_chars / prompt_tokens
+    /// ```
+    ///
+    /// Both `total_input_chars` and `prompt_tokens` represent the same LLM request
+    /// payload — they are **same-source** (分子分母同源), avoiding the calibration
+    /// distortion that plagued previous versions.
+    ///
+    /// ## Safety
+    ///
+    /// When `prompt_tokens` is 0, the API response is considered unreliable
+    /// (observed with some Anthropic-protocol providers like MiniMax that
+    /// occasionally omit `message_start` usage fields). Calibration is skipped
+    /// entirely to prevent corrupting the ratio store with a bogus value.
+    pub fn calibrate_from_usage(&mut self, prompt_tokens: u64, total_input_chars: usize) {
         if prompt_tokens == 0 {
             tracing::warn!(
                 current_tokens = self.current_tokens,
@@ -128,37 +162,26 @@ impl HistoryManager {
             );
             return;
         }
-        let old = self.current_tokens;
+
+        // Store API ground truth for budget tracking.
+        let prior = self.current_tokens;
         self.current_tokens = prompt_tokens;
 
-        // Feed the API ground truth back into TokenCounter so it can
-        // learn the actual chars/token ratio for this model.
-        //
-        // IMPORTANT: We must NOT use `prompt_tokens` as the numerator
-        // for ratio calculation because `prompt_tokens` includes tokens
-        // from the system prompt, tool definitions, and other context
-        // that are NOT stored in `history.messages`. Using it directly
-        // would produce a wildly inaccurate ratio when history is small
-        // (e.g. 4026 prompt_tokens vs 50 chars of history → ratio of
-        // 0.012 chars/token instead of the real ~3.5, causing token
-        // estimates to explode by ~300x on subsequent turns).
-        //
-        // Instead, we use the LOCAL estimate (`old`) as the numerator.
-        // The local estimate was computed by `count_message()` on the
-        // actual history content, so its ratio against `total_chars`
-        // reflects the true chars/token relationship. We only update
-        // the observed ratio when the local estimate is large enough
-        // (> 500 tokens) to reduce small-sample noise.
-        let total_chars: usize = self.messages.iter().map(|m| m.content.len()).sum();
-        if let Some(ref model) = self.model_name {
-            if old > 500 && total_chars > 500 {
-                self.counter.update_observed_ratio(model, old, total_chars);
+        // Calibrate the chars/token ratio from same-source data.
+        // Both total_input_chars and prompt_tokens represent the same LLM request,
+        // so the computed ratio is a precise measurement of the model's chars/token.
+        if total_input_chars > 500 && prompt_tokens > 500 {
+            let ratio = total_input_chars as f64 / prompt_tokens as f64;
+            if let Some(ref model) = self.model_name {
+                self.counter.model_ratios_mut().update(model, ratio);
             }
         }
 
         tracing::debug!(
-            old,
-            new = prompt_tokens,
+            prior,
+            api = prompt_tokens,
+            total_input_chars,
+            delta = prompt_tokens as i64 - prior as i64,
             "History token count calibrated from API usage"
         );
     }

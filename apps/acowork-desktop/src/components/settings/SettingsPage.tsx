@@ -58,7 +58,7 @@ export function SettingsPage({ initialTab = "profile" }: { initialTab?: Settings
 /** Gateway connection settings */
 function GatewayTab() {
   const { t } = useTranslation();
-  const { status, health, localState, checkHealth, startLocalGateway, stopLocalGateway } = useGatewayStore();
+  const { status, health, localState, checkHealth, checkLocalStatus, startLocalGateway, stopLocalGateway } = useGatewayStore();
   const gatewayUrl = useSettingsStore((s) => s.gatewayUrl);
   const setGatewayUrl = useSettingsStore((s) => s.setGatewayUrl);
   const gatewayMode = useSettingsStore((s) => s.gatewayMode);
@@ -72,6 +72,16 @@ function GatewayTab() {
 
   // Sync draft when gatewayUrl changes externally
   useEffect(() => { setUrlDraft(gatewayUrl); }, [gatewayUrl]);
+
+  // On mount, sync both the HTTP health status and the local process
+  // handle from the Rust side. This covers the case where the Gateway
+  // was spawned by the SplashScreen boot path (which bypasses the store
+  // action) — without this, `localState` would stay "idle" and the UI
+  // would show a spurious "Start Gateway" button next to "Running".
+  useEffect(() => {
+    checkHealth();
+    checkLocalStatus();
+  }, [checkHealth, checkLocalStatus]);
 
   const handleModeChange = useCallback((mode: GatewayMode) => {
     setGatewayMode(mode);
@@ -153,8 +163,12 @@ function GatewayTab() {
     }
   }, [status, fetchAgents]);
 
-  const localIsRunning = gatewayMode === "local" && localState === "running";
-  const localIsStarting = gatewayMode === "local" && (localState === "starting" || starting);
+  const localIsRunning = gatewayMode === "local" && (status === "connected" || localState === "running");
+  const localIsStarting = gatewayMode === "local" && (localState === "starting" || starting) && status !== "connected";
+  // Whether Tauri itself owns the local Gateway process. Only in that case can
+  // the user stop/restart it via the UI. If a Gateway is reachable but was
+  // started outside of Tauri, we still show "Running" but no stop/restart buttons.
+  const localIsTauriManaged = localState === "running";
 
   return (
     <div className="max-w-lg space-y-4">
@@ -202,7 +216,7 @@ function GatewayTab() {
           )}
 
           <div className="mt-3 flex gap-2">
-            {!localIsRunning && !localIsStarting && (
+            {!localIsTauriManaged && !localIsStarting && (
               <button
                 onClick={handleStartLocal}
                 disabled={starting}
@@ -211,7 +225,7 @@ function GatewayTab() {
                 {starting ? t("settings.starting") : t("settings.startGateway")}
               </button>
             )}
-            {localIsRunning && (
+            {localIsTauriManaged && (
               <>
                 <button
                   onClick={handleRestartLocal}
@@ -230,6 +244,11 @@ function GatewayTab() {
               </>
             )}
           </div>
+          {localIsRunning && !localIsTauriManaged && (
+            <p className="mt-2 text-[10px] text-zinc-500 dark:text-zinc-400">
+              {t("settings.gatewayRunningExternal")}
+            </p>
+          )}
         </div>
       )}
 

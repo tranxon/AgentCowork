@@ -54,6 +54,24 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
     if (!agent?.activeSessionId) return null;
     return agent.sessionStates[agent.activeSessionId]?.sessionStatus ?? null;
   });
+  const sessionModel = useChatStore((s) => {
+    if (!selectedAgentId) return null;
+    const agent = s.agentStates[selectedAgentId];
+    if (!agent?.activeSessionId) return null;
+    return agent.sessionStates[agent.activeSessionId]?.model ?? null;
+  });
+  const sessionProvider = useChatStore((s) => {
+    if (!selectedAgentId) return null;
+    const agent = s.agentStates[selectedAgentId];
+    if (!agent?.activeSessionId) return null;
+    return agent.sessionStates[agent.activeSessionId]?.provider ?? null;
+  });
+  const modelRatio = useChatStore((s) => {
+    if (!selectedAgentId) return null;
+    const agent = s.agentStates[selectedAgentId];
+    if (!agent?.activeSessionId) return null;
+    return agent.sessionStates[agent.activeSessionId]?.ratio ?? null;
+  });
   const openSessionCount = useChatStore((s) => {
     if (!selectedAgentId) return 0;
     const agent = s.agentStates[selectedAgentId];
@@ -398,6 +416,13 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
               <StatRow label={t("resultsPanel.completionTokens")} value={(tokenUsage?.completion_tokens ?? contextUsage?.output_tokens)?.toLocaleString()} />
               <StatRow label={t("resultsPanel.totalTokens")} value={(tokenUsage?.total_tokens ?? contextUsage?.total_tokens)?.toLocaleString()} />
               <StatRow label={t("resultsPanel.iterations")} value={iterations ? String(iterations) : undefined} />
+              {sessionModel && (
+                <StatRow label="Model" value={sessionModel} />
+              )}
+              {sessionProvider && (
+                <StatRow label="Provider" value={sessionProvider} />
+              )}
+              <StatRow label="Ch/Token" value={modelRatio != null ? modelRatio.toFixed(2) : undefined} />
               <div className="flex justify-between py-1">
                 <span className="text-zinc-500">{t("resultsPanel.sessionStatusLabel")}</span>
                 <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">

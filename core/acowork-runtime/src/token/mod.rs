@@ -1,9 +1,8 @@
 //! Token counting module
 //!
-//! Provides tiered token counting with different precision levels:
-//! - Tier 1: Exact counting (OpenAI → tiktoken-rs, Anthropic → official tokenizer), error < 1%
-//! - Tier 2: Approximate counting (unknown models, first call remote, then ratio), error < 5%
-//! - Tier 3: Heuristic estimation (English words×1.3, CJK chars×0.6), error < 15%
+//! Uses a unified model→ratio lookup table for token estimation:
+//! `tokens ≈ chars / ratio`. The ratio is calibrated from LLM API feedback
+//! after each request and persisted to disk for reuse across sessions.
 //!
 //! # Unified API
 //!
@@ -11,15 +10,17 @@
 //! Do NOT use `content.len() / 4` or any other ad-hoc heuristic —
 //! they cause the debug panel and status panel to show contradictory numbers.
 pub mod counter;
+pub mod ratio_store;
 
-pub use counter::{TokenCountTier, TokenCounter, estimate_image_tokens};
+pub use counter::{TokenCounter, estimate_image_tokens};
+pub use ratio_store::ModelRatioStore;
 
 /// The single unified entry point for token counting in AgentCowork.
 ///
-/// Uses model-aware tiered counting:
-/// - GPT models → tiktoken (Tier 1, < 1% error)
-/// - Claude/Qwen/Llama → sampling ratio (Tier 2, < 5% error)
-/// - Unknown models → word/CJK heuristic (Tier 3, < 15% error)
+/// Uses model-aware ratio-based counting:
+/// - `tokens = ceil(chars / ratio)` where ratio is calibrated from API feedback
+/// - Uncalibrated models fall back to default ratio 3.5
+/// - Ratio is shared via ModelRatioStore for consistency across all counting paths
 ///
 /// # Why a unified API matters
 ///

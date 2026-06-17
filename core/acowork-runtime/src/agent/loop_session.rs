@@ -22,29 +22,39 @@ impl super::loop_::AgentLoop {
     /// Returns true if the status actually changed (and event was emitted).
     pub(crate) fn transition_status(&mut self, new_status: SessionStatus) -> bool {
         if self.session.set_status(new_status) {
-            let status = self.session.status.clone();
-            // Emit chunk event to Gateway → frontend
-            if !self
-                .core
-                .try_send_chunk(super::loop_::ChunkEvent::SessionStateChanged {
-                    status: status.clone(),
-                    model: self.session.model().map(|s| s.to_string()),
-                    provider: self.session.provider().map(|s| s.to_string()),
-                    workspace_id: self.session.workspace_id(),
-                })
-            {
-                tracing::warn!(
-                    "SessionStateChanged event dropped (channel full/closed), status={:?}. Pull repair will correct frontend.",
-                    status
-                );
-            }
-            // Update watch channel for SessionHandle reads
-            if let Some(ref tx) = self.core.status_tx {
-                let _ = tx.send(status);
-            }
+            self.emit_session_state();
             true
         } else {
             false
+        }
+    }
+
+    /// Emit a SessionStateChanged event with the current session state.
+    ///
+    /// Called on status transitions (via [`transition_status`]) and at the
+    /// end of each iteration checkpoint in [`execute_single_iteration`], so
+    /// the frontend always sees the latest model, provider, status and ratio.
+    pub(crate) fn emit_session_state(&mut self) {
+        let status = self.session.status.clone();
+        // Emit chunk event to Gateway → frontend
+        if !self
+            .core
+            .try_send_chunk(super::loop_::ChunkEvent::SessionStateChanged {
+                status: status.clone(),
+                model: self.session.model().map(|s| s.to_string()),
+                provider: self.session.provider().map(|s| s.to_string()),
+                workspace_id: self.session.workspace_id(),
+                ratio: self.session.model_ratio(),
+            })
+        {
+            tracing::warn!(
+                "SessionStateChanged event dropped (channel full/closed), status={:?}. Pull repair will correct frontend.",
+                status
+            );
+        }
+        // Update watch channel for SessionHandle reads
+        if let Some(ref tx) = self.core.status_tx {
+            let _ = tx.send(status);
         }
     }
 

@@ -45,6 +45,7 @@ const markdownComponents = {
   },
 };
 import { AskQuestionCard } from "./AskQuestionCard";
+import { DebugPausedBanner } from "./DebugPausedBanner";
 import { SessionTabBar } from "./SessionTabBar";
 import { SkillsPanel } from "../skills/SkillsPanel";
 import { WorkspaceSelector } from "../workspace/WorkspaceSelector";
@@ -1050,6 +1051,10 @@ export function ChatPanel() {
                 })}
               </div>
             )}
+            {/* Debug paused banner — shown when the agent is in dev_mode and
+                the debugger is currently in Stepping/Paused state. Provides
+                F5 (resume) and F10 (step) actions directly from the chat. */}
+            <DebugPausedBanner />
             {/* Iteration limit pause — hint + Continue button */}
             {iterationLimitPaused && (
               <div className="flex flex-col items-start gap-1.5">

@@ -118,6 +118,7 @@
         "stopped": "已停止",
         "startGateway": "启动网关",
         "restart": "重启",
+        "gatewayRunningExternal": "网关可访问，但不在本应用管控内。可在设置中重启或手动停止后由本应用接管。",
         "restarting": "重启中...",
         "stop": "停止",
         "stopping": "停止中...",
@@ -335,7 +336,12 @@
         "environment": "环境变量（KEY=VALUE，逗号分隔）",
         "cancel": "取消",
         "configure": "配置 ",
-        "enter": "输入 "
+        "enter": "输入 ",
+        "testing": "测试连接中...",
+        "connected": "已连接 — {{count}} 个工具可用",
+        "connFailed": "连接失败",
+        "testConn": "测试",
+        "addAnyway": "仍然添加"
     },
     "resultsPanel": {
         "debug": "调试",

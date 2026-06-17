@@ -95,6 +95,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
   const snapshots = sessionDebugState?.snapshots ?? [];
   const sectionCache = sessionDebugState?.sectionCache ?? new Map();
   const hasPendingPatches = sessionDebugState?.hasPendingPatches ?? false;
+  const waitingForFirstMessage = debugState === "Stepping" && sessionDebugState?.paused !== true && snapshots.length === 0;
 
   const [editingSection, setEditingSection] = useState<{
     iteration: number;
@@ -202,13 +203,16 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
             else void pauseDebug(activeSessionId);
           }}
           title={
-            debugState === "Paused"
-              ? "Resume (F5)"
-              : debugState === "Stopped"
-                ? "Restart"
-                : "Pause (F6)"
+            waitingForFirstMessage
+              ? "Send a message to start"
+              : debugState === "Paused"
+                ? "Resume (F5)"
+                : debugState === "Stopped"
+                  ? "Restart"
+                  : "Pause (F6)"
           }
           active={debugState === "Paused"}
+          disabled={waitingForFirstMessage}
         >
           {debugState === "Paused"
             ? <Play className="h-3.5 w-3.5" />
@@ -217,15 +221,15 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
         </ControlButton>
         <ControlButton
           onClick={() => step(activeSessionId, "iteration")}
-          title="Step (F10)"
-          disabled={debugState === "Stopped"}
+          title={waitingForFirstMessage ? "Send a message to start" : "Step (F10)"}
+          disabled={waitingForFirstMessage || debugState !== "Paused"}
         >
           <StepForward className="h-3.5 w-3.5" />
         </ControlButton>
         <ControlButton
           onClick={() => stop(activeSessionId)}
           title="Stop"
-          disabled={debugState === "Stopped"}
+          disabled={waitingForFirstMessage || debugState === "Stopped"}
         >
           <Square className="h-3.5 w-3.5" />
         </ControlButton>
@@ -269,7 +273,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
           <div className="px-3 py-4 text-center text-xs text-zinc-400">
             No context snapshots yet.
             <br />
-            Send a message to the agent to generate snapshots.
+            {waitingForFirstMessage ? "Send a message to start debugging." : "Send a message to the agent to generate snapshots."}
           </div>
         )}
         {snapshots.map((snap) => (

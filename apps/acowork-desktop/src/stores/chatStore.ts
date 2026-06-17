@@ -65,6 +65,8 @@ interface SessionChatState {
   model: string | null;
   /** Per-session selected provider */
   provider: string | null;
+  /** Current model chars/token ratio from API calibration */
+  ratio: number | null;
   /** Context compaction in progress (both manual and auto triggers) */
   isCompacting: boolean;
   /** File tree expanded directory paths (persisted per-session) */
@@ -104,6 +106,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   todos: [],
   model: null,
   provider: null,
+  ratio: null,
   isCompacting: false,
   treeExpandedPaths: [],
   attachedContext: [],
@@ -806,6 +809,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           currentTurnId: null,
         }),
       }));
+
     }
 
     // Update session title immediately when first message is sent
@@ -2053,6 +2057,8 @@ function handleMessageEvent(
             // ADR-012: Backend includes per-session model/provider (from JSONL metadata).
             if (typeof data.model === "string") sessionPatch.model = data.model as string;
             if (typeof data.provider === "string") sessionPatch.provider = data.provider as string;
+            // Model chars/token ratio from API calibration (for status panel display).
+            if (typeof data.ratio === "number") sessionPatch.ratio = data.ratio as number;
 
             // When status transitions FROM Streaming, clear transient streaming state
             const prev = getSessionState(state, agentId, sid);
