@@ -78,6 +78,9 @@ pub enum SessionMessage {
     /// Update the workspace directory path for tool execution.
     /// Carries the fully-resolved absolute path from SessionManager.
     SetWorkDir { path: String },
+    /// Update the workspace prompt file content (CLAUDE.md / AGENTS.md).
+    /// Content is None when no prompt file is configured.
+    SetWorkspacePromptFile { content: Option<String> },
     /// Update identity context from Gateway UserProfileUpdate push
     UpdateIdentityContext { identity_context: Option<String> },
     /// Stop signal to stop the current agent loop iteration
@@ -169,6 +172,11 @@ impl std::fmt::Debug for SessionMessage {
             SessionMessage::SetWorkDir { path } => {
                 f.debug_struct("SetWorkDir").field("path", path).finish()
             }
+            SessionMessage::SetWorkspacePromptFile { content } => f
+                .debug_struct("SetWorkspacePromptFile")
+                .field("has_content", &content.is_some())
+                .field("content_len", &content.as_ref().map(|c| c.len()))
+                .finish(),
             SessionMessage::UpdateIdentityContext { identity_context } => f
                 .debug_struct("UpdateIdentityContext")
                 .field("has_identity", &identity_context.is_some())
@@ -1063,6 +1071,14 @@ impl SessionTask {
                         "SessionTask: updating work_dir for tool execution"
                     );
                     agent_loop.core.current_work_dir = Some(path);
+                }
+                Some(SessionMessage::SetWorkspacePromptFile { content }) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        has_content = content.is_some(),
+                        "SessionTask: updating workspace prompt file content"
+                    );
+                    context_builder.set_workspace_prompt_file(content);
                 }
                 Some(SessionMessage::UpdateIdentityContext { identity_context }) => {
                     tracing::info!(

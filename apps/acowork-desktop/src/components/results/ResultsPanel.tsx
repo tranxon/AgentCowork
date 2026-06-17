@@ -509,9 +509,14 @@ function formatTokenCount(n: number): string {
 
 function StatRow({ label, value }: { label: string; value?: string }) {
   return (
-    <div className="flex justify-between py-1">
-      <span className="text-zinc-500">{label}</span>
-      <span className="font-mono text-zinc-700 dark:text-zinc-300">{value ?? "\u2014"}</span>
+    <div className="flex items-center justify-between gap-2 py-1">
+      <span className="shrink-0 text-zinc-500">{label}</span>
+      <span
+        className="min-w-0 truncate font-mono text-zinc-700 dark:text-zinc-300"
+        title={value}
+      >
+        {value ?? "\u2014"}
+      </span>
     </div>
   );
 }

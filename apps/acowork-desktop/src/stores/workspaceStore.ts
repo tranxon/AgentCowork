@@ -16,6 +16,8 @@ interface WorkspaceDir {
   last_active?: boolean;
   select_count: number;
   last_selected_at: string | null;
+  /** Prompt file to inject into system prompt (e.g. "CLAUDE.md", "AGENTS.md"). */
+  prompt_file: string | null;
 }
 
 /** Single file/directory entry from the tree API — matches Gateway TreeResponse.entries */
@@ -97,6 +99,9 @@ interface WorkspaceState {
   // Clipboard for copy/paste — stores the source entry to be pasted
   copiedEntry: { agentId: string; workspaceId: string; path: string; type: "file" | "directory" } | null;
   setCopiedEntry: (entry: { agentId: string; workspaceId: string; path: string; type: "file" | "directory" } | null) => void;
+
+  // Set/unset prompt file for workspace (e.g. CLAUDE.md, AGENTS.md)
+  setPromptFile: (agentId: string, workspaceId: string, promptFile: string | null) => Promise<boolean>;
 
   // Clear state on agent switch
   reset: () => void;
@@ -423,6 +428,31 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
 
   setCopiedEntry: (entry) => {
     set({ copiedEntry: entry });
+  },
+
+  setPromptFile: async (agentId: string, workspaceId: string, promptFile: string | null) => {
+    try {
+      const baseUrl = getGatewayUrl();
+      const resp = await fetch(`${baseUrl}/api/agents/${agentId}/workspaces/${workspaceId}/prompt-file`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt_file: promptFile }),
+      });
+      if (!resp.ok) {
+        const body = await resp.text().catch(() => "<unreadable>");
+        console.error("[WorkspaceStore] setPromptFile failed:", resp.status, resp.statusText, body);
+        return false;
+      }
+      // Update the local workspace state
+      const updated = await resp.json() as WorkspaceDir;
+      set((state) => ({
+        workspaces: state.workspaces.map((ws) => (ws.id === workspaceId ? updated : ws)),
+      }));
+      return true;
+    } catch (e) {
+      console.error("[WorkspaceStore] setPromptFile error:", e);
+      return false;
+    }
   },
 
   reset: () => {

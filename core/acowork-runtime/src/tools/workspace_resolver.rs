@@ -82,6 +82,8 @@ pub struct WorkspaceDir {
     /// Whether this was the last active workspace when the user last selected it.
     /// Used as the default workspace for new sessions.
     pub last_active: bool,
+    /// Prompt file to inject into system prompt (e.g. "CLAUDE.md", "AGENTS.md").
+    pub prompt_file: Option<String>,
 }
 
 /// Central resolver for workspace directories.
@@ -158,6 +160,15 @@ impl WorkspaceResolver {
             .map(|d| d.id.as_str())
     }
 
+    /// Read and return the prompt file content for a workspace.
+    /// Returns None if no prompt_file is configured or the file doesn't exist.
+    pub fn read_prompt_file(&self, workspace_id: &str) -> Option<String> {
+        let ws = self.find_by_id(workspace_id)?;
+        let prompt_file = ws.prompt_file.as_ref()?;
+        let file_path = Path::new(&ws.path).join(prompt_file);
+        std::fs::read_to_string(&file_path).ok()
+    }
+
     /// Create a resolver directly from a list of workspace directories.
     /// For tests only — bypasses disk I/O so tests can inject arbitrary
     /// workspace configurations without creating `agent_workspaces.json`.
@@ -190,6 +201,8 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
         added_at: String,
         #[serde(default)]
         last_active: bool,
+        #[serde(default)]
+        prompt_file: Option<String>,
     }
 
     let config_path = Path::new(work_dir)
@@ -220,6 +233,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                             WorkspaceAccess::ReadOnly
                         },
                         last_active: entry.last_active,
+                        prompt_file: entry.prompt_file,
                     });
                 }
 
@@ -232,6 +246,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                             path: package_root_str,
                             access: WorkspaceAccess::ReadOnly,
                             last_active: false,
+                            prompt_file: None,
                         });
                     }
                 }
@@ -242,6 +257,7 @@ fn load_workspace_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                     path: work_dir.to_string(),
                     access: WorkspaceAccess::ReadWrite,
                     last_active: false,
+                    prompt_file: None,
                 });
 
                 tracing::info!(
@@ -286,6 +302,7 @@ fn fallback_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
                 path: package_root_str,
                 access: WorkspaceAccess::ReadOnly,
                 last_active: false,
+                prompt_file: None,
             });
         }
     }
@@ -295,6 +312,7 @@ fn fallback_dirs(work_dir: &str) -> Vec<WorkspaceDir> {
         path: work_dir.to_string(),
         access: WorkspaceAccess::ReadWrite,
         last_active: false,
+        prompt_file: None,
     });
 
     dirs
@@ -319,6 +337,9 @@ pub struct WorkspaceDirFull {
     pub select_count: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_selected_at: Option<String>,
+    /// Prompt file to inject into system prompt (e.g. "CLAUDE.md", "AGENTS.md").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_file: Option<String>,
 }
 
 /// Full workspace config (mirrors Gateway's WorkspaceConfig for file persistence).

@@ -1,6 +1,6 @@
 import { memo, useCallback, useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, FilePlus, FolderPlus, MessageSquarePlus, Trash2, Copy, ClipboardPaste, Eye } from "lucide-react";
+import { ChevronRight, FilePlus, FolderPlus, MessageSquarePlus, Trash2, Copy, ClipboardPaste, Eye, Check, Code } from "lucide-react";
 import { cn } from "../../../lib/utils";
 import { getFileIcon } from "./fileIcons";
 import { SetiIcon } from "../../common/SetiIcon";
@@ -171,6 +171,22 @@ export const FileTreeNode = memo(function FileTreeNode({
     setContextMenu(null);
   }, [agentId, sessionId, relPath, openPreview]);
 
+  const handleTogglePromptFile = useCallback(() => {
+    const state = useWorkspaceStore.getState();
+    const workspaceId = state.sessionWorkspaceMap[sessionId] ?? "__agent_home__";
+    const workspace = state.workspaces.find((ws) => ws.id === workspaceId);
+    const isActive = workspace?.prompt_file === entry.name;
+    const newPromptFile = isActive ? null : entry.name;
+    void state.setPromptFile(agentId, workspaceId, newPromptFile);
+    setContextMenu(null);
+  }, [agentId, sessionId, entry.name]);
+
+  // Check if this file qualifies as a prompt file (CLAUDE.md / AGENTS.md)
+  const isPromptFile = !isDir && /^(CLAUDE|AGENTS)\.md$/i.test(entry.name);
+  const workspaceId = useWorkspaceStore((s) => s.sessionWorkspaceMap[sessionId] ?? "__agent_home__");
+  const workspace = useWorkspaceStore((s) => s.workspaces.find((ws) => ws.id === workspaceId));
+  const isActivePromptFile = workspace?.prompt_file === entry.name;
+
   return (
     <>
       <div
@@ -238,6 +254,20 @@ export const FileTreeNode = memo(function FileTreeNode({
             >
               <Eye className="h-3.5 w-3.5 text-zinc-400" />
               {t("workspace.contextMenu.preview")}
+            </button>
+          )}
+          {isPromptFile && (
+            <button
+              onClick={handleTogglePromptFile}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-zinc-700 hover:bg-zinc-100 dark:text-zinc-300 dark:hover:bg-zinc-700"
+              style={CONTEXT_MENU_FONT_SIZE}
+            >
+              {isActivePromptFile ? (
+                <Check className="h-3.5 w-3.5 text-green-500" />
+              ) : (
+                <Code className="h-3.5 w-3.5 text-zinc-400" />
+              )}
+              {isActivePromptFile ? "取消注入上下文" : "注入上下文"}
             </button>
           )}
           <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />

@@ -1,19 +1,23 @@
 # AGENTS.md — AgentCowork.AI
 
-**Generated:** 2026-04-13
-**Commit:** cec6614
-**Branch:** master
-
-## OVERVIEW
+## Overview
 
 AgentCowork.AI is a decentralized, high-security, scalable AI Agent runtime platform modeled after Android. Each Agent is a declarative `.agent` package (config + prompts + skills, no binary), loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
 
-## STRUCTURE
+## Build & Test
+
+```bash
+cd core && cargo build --release
+cd core && cargo clippy --all-targets -- -D warnings
+cd core && cargo test
+./dev/ci.sh all
+```
+
+## Project Structure
 
 ```
 agent-study/
 ├── core/                    # Rust workspace (library crates + integration tests)
-│   ├── Cargo.toml           # Workspace root
 │   ├── acowork-core/       # Shared types, errors, config
 │   ├── acowork-runtime/    # Agent runtime (main loop, tools, providers)
 │   ├── acowork-gateway/    # Gateway (lifecycle, IPC, HTTP API)
@@ -21,47 +25,21 @@ agent-study/
 │   ├── acowork-memory/     # Memory manager (trait, middleware)
 │   ├── acowork-vault/      # Encrypted key/value store
 │   ├── acowork-sign/       # Package signing & verification
-│   ├── tests/               # Integration tests
-│   ├── rustfmt.toml
-│   └── clippy.toml
+│   └── tests/               # Integration tests
 ├── apps/                    # Application layer (executables)
 │   ├── cli/                 # Gateway CLI (planned)
 │   └── desktop/             # Tauri v2 Desktop App (planned)
 ├── docs/                    # Architecture design docs (Chinese, v3.x)
 │   ├── module-design/       # Detailed module specs (crate structure)
-│   ├── plan/                # Planning docs (Chinese)
-│   ├── review/              # Review reports (design + code review, numbered)
+│   ├── plan/                # Planning docs
+│   ├── review/              # Design & code review reports (numbered)
 │   └── reference/           # Reference materials (ZeroClaw, Grafeo, memory research)
 ├── examples/                # Example .agent packages
 ├── ref-repo/                # Reference implementation ONLY (not source of truth)
-├── dev/                     # CI/CD scripts
-├── AGENTS.md                # This file
-├── README.md
-└── LICENSE
+└── dev/                     # CI/CD scripts
 ```
 
-## WHERE TO LOOK
-
-| Task                     | Location                                                      | Notes                                                                            |
-| ------------------------ | ------------------------------------------------------------- | -------------------------------------------------------------------------------- |
-| Platform overview        | `docs/01-overview.md`                                         | Android analogy, core principles                                                 |
-| Package format           | `docs/02-agent-package.md`                                    | `.agent` structure, signing                                                      |
-| Runtime internals        | `docs/03-agent-runtime.md`                                    | Main loop, tool dispatch, Session Actor model                                    |
-| Gateway design           | `docs/04-gateway.md` + `docs/module-design/03-gateway.md`     | Lifecycle, IntentRouter, Vault                                                   |
-| Memory architecture      | `docs/05-memory.md` + `docs/module-design/04-grafeo.md`       | Grafeo, layered memory, MemoryStore trait, lifecycle                             |
-| Security design          | `docs/08-security.md` + `docs/module-design/05-vault-sign.md` | Isolation, signing, permissions                                                  |
-| Debug protocol           | `docs/10-debug-protocol.md`                                   | DevMode, breakpoints, recording/replay                                           |
-| Tool system              | `docs/12-tool-system.md`                                      | Built-in / WASM / Gateway tools                                                  |
-| Skill system             | `docs/13-skill-system.md`                                     | SKILL.md + Grafeo experience layer                                               |
-| Desktop app              | `docs/14-desktop-app.md`                                      | Tauri layout, tray, Gateway HTTP API                                             |
-| Conversation persistence | `docs/15-conversation-persistence.md`                         | Session Actor model, selectedSession, JSONL, Episode, Token budget, JSONL safety |
-| Communication protocol   | `docs/06-communication.md`                                    | IPC message format, gRPC session messages (v3.6), Socket API, Intent mechanism   |
-| Module workspace plan    | `docs/module-design/00-overview.md`                           | 7-crate workspace structure                                                      |
-| Implementation roadmap   | `docs/09-roadmap-and-scenarios.md`                            | 7-phase plan                                                                     |
-| Design review reports    | `docs/review/`                                                | Design doc reviews, numbered                                                     |
-| Code review reports      | `docs/review/`                                                | Source code reviews, numbered                                                    |
-
-## ARCHITECTURE MAP
+## Architecture
 
 ```
 Desktop App (Tauri v2, 独立进程)
@@ -89,30 +67,34 @@ Agent Runtime (统一二进制)
 └── DevMode — Debug Protocol (WebSocket, 开发者调试)
 ```
 
-## CONVENTIONS (THIS PROJECT)
+## Conventions
 
-- Design docs in both Chinese and English; code comments (Rust `//`, `//!`, `///`) **MUST be in English**
+- Design docs in both Chinese and English; Rust code comments (`//`, `//!`, `///`) **MUST be in English**
 - `.agent` bundles are **declarative only** — no executable code
-- ref-repo is **reference only** — not source of truth for AgentCowork design
-- Rust implementation follows workspace pattern under `core/`: `acowork-core`, `acowork-runtime`, `acowork-gateway`, `acowork-grafeo`, `acowork-vault`, `acowork-sign`
+- Rust implementation follows workspace pattern under `core/` (7 crates, structure defined in `docs/module-design/00-overview.md`)
+- Code reviews follow `.opencode/style-guide.md`
 
-## ANTI-PATTERNS (THIS PROJECT)
+## Rules (Do NOT)
 
-- Do NOT edit `ref-repo/` — it is a separate reference project
+- Do NOT edit `ref-repo/` — it is a separate reference project, not source of truth
 - Do NOT implement executable code in `.agent` packages
 - Do NOT commit in Chinese
 
-## COMMANDS
+## Key Documentation
 
-Core workspace (under `core/`):
-```bash
-cd core && cargo build --release
-cd core && cargo clippy --all-targets -- -D warnings
-cd core && cargo test
-./dev/ci.sh all
-```
-
-## NOTES
-
-- Rust crate structure defined in `docs/module-design/00-overview.md`
-- Code reviews follow [.opencode/style-guide.md](./.opencode/style-guide.md)
+| Topic | Document |
+|-------|----------|
+| Platform overview | `docs/01-overview.md` |
+| Package format | `docs/02-agent-package.md` |
+| Runtime internals | `docs/03-agent-runtime.md` |
+| Gateway design | `docs/04-gateway.md` · `docs/module-design/03-gateway.md` |
+| Memory architecture | `docs/05-memory.md` · `docs/module-design/04-grafeo.md` |
+| Communication protocol | `docs/06-communication.md` |
+| Security design | `docs/08-security.md` · `docs/module-design/05-vault-sign.md` |
+| Implementation roadmap | `docs/09-roadmap-and-scenarios.md` |
+| Debug protocol | `docs/10-debug-protocol.md` |
+| Tool system | `docs/12-tool-system.md` |
+| Skill system | `docs/13-skill-system.md` |
+| Desktop app | `docs/14-desktop-app.md` |
+| Conversation persistence | `docs/15-conversation-persistence.md` |
+| Design & code reviews | `docs/review/` |

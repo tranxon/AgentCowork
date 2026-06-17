@@ -40,6 +40,9 @@ pub struct WorkspaceDir {
     /// Last selection timestamp (RFC3339), None if never selected
     #[serde(default)]
     pub last_selected_at: Option<String>,
+    /// Prompt file to inject into system prompt (e.g. "CLAUDE.md", "AGENTS.md").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_file: Option<String>,
 }
 
 /// Access level for workspace directories
@@ -83,6 +86,12 @@ pub struct SetCurrentWorkspaceQuery {
 pub struct UpdateWorkspaceRequest {
     pub access: Option<AccessLevel>,
     pub alias: Option<String>,
+}
+
+/// Request to set/unset prompt file for a workspace
+#[derive(Debug, Deserialize)]
+pub struct SetPromptFileRequest {
+    pub prompt_file: Option<String>,
 }
 
 /// List of workspace directories
@@ -228,6 +237,7 @@ pub async fn add_workspace(
         last_active: false,
         select_count: 0,
         last_selected_at: None,
+        prompt_file: None,
     };
 
     let result = new_dir.clone();
@@ -265,6 +275,34 @@ pub async fn update_workspace(
         dir.alias = Some(alias);
     }
 
+    let updated = dir.clone();
+
+    // Push to Runtime + update cache
+    push_and_cache(&state, &agent_id, &config)
+        .await
+        .map_err(|e| ApiError::internal(&e))?;
+
+    Ok(Json(updated))
+}
+
+/// `PUT /api/agents/{agent_id}/workspaces/{ws_id}/prompt-file` — set/unset prompt file for a workspace
+pub async fn set_prompt_file(
+    State(state): State<AppState>,
+    Path((agent_id, ws_id)): Path<(String, String)>,
+    Json(req): Json<SetPromptFileRequest>,
+) -> Result<Json<WorkspaceDir>, (StatusCode, Json<ApiError>)> {
+    let mut config = get_cached_config(&state, &agent_id)
+        .await
+        .ok_or_else(|| ApiError::not_found("Agent not running — cannot update workspace"))?;
+
+    // Find and update directory
+    let dir = config
+        .additional_dirs
+        .iter_mut()
+        .find(|d| d.id == ws_id)
+        .ok_or_else(|| ApiError::not_found(&format!("Workspace directory not found: {}", ws_id)))?;
+
+    dir.prompt_file = req.prompt_file;
     let updated = dir.clone();
 
     // Push to Runtime + update cache
@@ -1396,6 +1434,10 @@ pub fn workspace_routes() -> Router<AppState> {
         .route(
             "/api/agents/{agent_id}/workspaces/{ws_id}",
             put(update_workspace).delete(delete_workspace),
+        )
+        .route(
+            "/api/agents/{agent_id}/workspaces/{ws_id}/prompt-file",
+            put(set_prompt_file),
         )
         .route("/api/agents/{agent_id}/workspaces/tree", get(list_tree))
         .route(

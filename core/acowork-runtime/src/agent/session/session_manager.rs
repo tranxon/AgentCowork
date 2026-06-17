@@ -1145,6 +1145,7 @@ After installation, ask the user to re-enable the MCP server.",
     }
 
     /// Format and send workspace context to a specific session only.
+    /// Also reads and sends workspace prompt file content (CLAUDE.md / AGENTS.md).
     pub fn update_session_workspace_context(
         &mut self,
         session_id: &str,
@@ -1152,12 +1153,17 @@ After installation, ask the user to re-enable the MCP server.",
     ) {
         let ws_id = self.session_workspace_id(session_id);
         let context_text = format_workspace_context_for_session(resolver, ws_id);
+        let prompt_file_content = resolver.read_prompt_file(ws_id);
         if let Some(handle) = self.sessions.get(session_id) {
             let _ = handle.send(SessionMessage::UpdateWorkspaceContext { context_text });
+            let _ = handle.send(SessionMessage::SetWorkspacePromptFile {
+                content: prompt_file_content,
+            });
             tracing::info!(
                 session_id = %session_id,
                 workspace_id = %ws_id,
-                "SessionManager: sent per-session workspace context"
+                has_prompt_file = resolver.read_prompt_file(ws_id).is_some(),
+                "SessionManager: sent per-session workspace context and prompt file"
             );
         } else {
             tracing::warn!(

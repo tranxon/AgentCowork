@@ -325,11 +325,20 @@ impl super::observer::DebugObserver for DebugObserverImpl {
             "capture_context_snapshot: workspace_context status"
         );
 
+        // Assemble the full system content as it will be sent to the LLM:
+        // base system prompt + workspace prompt file content (if any).
+        // This mirrors ContextBuilder::build() so the debug snapshot accurately
+        // reflects what the LLM actually receives.
+        let base_prompt = req.context_builder.system_prompt();
+        let prompt_file_section = req
+            .context_builder
+            .workspace_prompt_file()
+            .map(|content| format!("\n\n## Workspace Prompt File\n{content}"))
+            .unwrap_or_default();
+        let full_system_content = format!("{base_prompt}{prompt_file_section}");
+
         let sections = ContextSnapshotSections {
-            system_prompt: SectionContent::new(
-                req.context_builder.system_prompt().to_string(),
-                req.model,
-            ),
+            system_prompt: SectionContent::new(full_system_content, req.model),
             workspace_context: SectionContent::new(
                 req.context_builder
                     .workspace_context()

@@ -18,6 +18,8 @@ pub struct ContextBuilder {
     identity_context: Option<String>,
     /// Workspace context (self-formatted from agent_workspaces.json)
     workspace_context: Option<String>,
+    /// Workspace prompt file content (CLAUDE.md / AGENTS.md) for injection
+    workspace_prompt_file: Option<String>,
     /// Environment info override (for debug patching).
     /// When set, takes precedence over auto-detected platform info.
     /// Stored as the full formatted string (e.g. "## Environment\n- OS: ...\n- Shell: ...")
@@ -51,6 +53,7 @@ impl ContextBuilder {
             system_prompt,
             identity_context: None,
             workspace_context: None,
+            workspace_prompt_file: None,
             environment_override: None,
             tool_definitions: None,
             override_model: None,
@@ -71,6 +74,12 @@ impl ContextBuilder {
     /// Set workspace context (from Runtime self-formatting)
     pub fn with_workspace_context(mut self, workspace: Option<String>) -> Self {
         self.workspace_context = workspace;
+        self
+    }
+
+    /// Set workspace prompt file content (CLAUDE.md / AGENTS.md)
+    pub fn with_workspace_prompt_file(mut self, content: Option<String>) -> Self {
+        self.workspace_prompt_file = content;
         self
     }
 
@@ -109,6 +118,19 @@ impl ContextBuilder {
             "ContextBuilder workspace context updated"
         );
         self.workspace_context = Some(context_text);
+    }
+
+    /// Update workspace prompt file content in-place (from workspace selection)
+    pub fn set_workspace_prompt_file(&mut self, content: Option<String>) {
+        if let Some(ref text) = content {
+            tracing::info!(
+                content_len = text.len(),
+                "ContextBuilder workspace prompt file updated"
+            );
+        } else {
+            tracing::info!("ContextBuilder workspace prompt file cleared");
+        }
+        self.workspace_prompt_file = content;
     }
 
     /// Set environment override (for debug patching).
@@ -305,6 +327,11 @@ impl ContextBuilder {
         self.workspace_context.as_deref()
     }
 
+    /// Get the workspace prompt file content (e.g. CLAUDE.md / AGENTS.md), if set.
+    pub fn workspace_prompt_file(&self) -> Option<&str> {
+        self.workspace_prompt_file.as_deref()
+    }
+
     /// Get the environment override text, if set.
     pub fn environment_override(&self) -> Option<&str> {
         self.environment_override.as_deref()
@@ -372,6 +399,12 @@ impl ContextBuilder {
             system_content.push_str(&format!("\n\n{env_override}"));
         } else {
             system_content.push_str(&format!("\n\n{}", detect_environment_text()));
+        }
+
+        // 3.2 Workspace prompt file content (CLAUDE.md / AGENTS.md)
+        // Injected at the end for maximum visibility.
+        if let Some(ref prompt_file) = self.workspace_prompt_file {
+            system_content.push_str(&format!("\n\n## Workspace Prompt File\n{prompt_file}"));
         }
 
         // 3.5 Tool definitions are passed separately in ChatRequest

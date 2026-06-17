@@ -2716,15 +2716,23 @@ async fn process_gateway_recv(
                         session_manager.set_default_workspace_id(ws_id);
                     }
 
-                    // 4. Refresh context for CURRENT session only (not broadcast).
+                    // 4. Refresh context for ALL active sessions (not just current).
                     // Workspace list CRUD: all sessions reconcile lazily when
-                    // switched to foreground.
-                    // 4. For all other sessions: check if their selected workspace
-                    //    still exists. If deleted → move to pending, fallback to agent home.
+                    // switched to foreground, but prompt_file changes need to
+                    // take effect immediately for the user's active session.
                     session_manager.reconcile_deleted_workspaces(&resolver_guard);
+
+                    // 5. Push workspace context + prompt_file content to every active
+                    // session. This ensures prompt_file changes (e.g. AGENTS.md)
+                    // are reflected immediately without requiring a workspace switch.
+                    let active_sessions = session_manager.active_sessions();
+                    for sid in &active_sessions {
+                        session_manager.update_session_workspace_context(sid, &resolver_guard);
+                    }
                     drop(resolver_guard);
                     tracing::info!(
-                        "Workspace config applied: file written, resolver reloaded, context refreshed for current session"
+                        session_count = active_sessions.len(),
+                        "Workspace config applied: file written, resolver reloaded, contexts refreshed"
                     );
                     return LoopAction::Continue;
                 }
