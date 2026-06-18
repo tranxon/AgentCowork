@@ -446,13 +446,15 @@ impl SessionTask {
         // This must run BEFORE emit_session_state so the first event already
         // contains the correct value. Critical for resumed sessions where the
         // JSONL metadata has model but no reasoning_effort persisted.
+        // If the model has no default, fall back to Medium (the Rust enum default).
         if let Some(ref model) = agent_loop.session.model {
             let default_effort = agent_loop
                 .core
                 .get_model_capabilities(model)
                 .and_then(|c| c.default_reasoning_effort)
-                .and_then(|s| acowork_core::providers::traits::ReasoningEffort::from_str_loose(&s));
-            agent_loop.session.set_reasoning_effort(default_effort);
+                .and_then(|s| acowork_core::providers::traits::ReasoningEffort::from_str_loose(&s))
+                .unwrap_or_default();
+            agent_loop.session.set_reasoning_effort(Some(default_effort));
         }
 
         // Emit initial session state snapshot so the frontend status panel shows
@@ -1043,12 +1045,14 @@ impl SessionTask {
                     context_builder.set_override_model(model.clone());
                     // Reset reasoning_effort to new model's default (clear user override).
                     // This ensures model switch doesn't carry over the previous model's effort.
+                    // If the model has no default, fall back to Medium (the Rust enum default).
                     let default_effort = agent_loop
                         .core
                         .get_model_capabilities(&model)
                         .and_then(|c| c.default_reasoning_effort)
-                        .and_then(|s| acowork_core::providers::traits::ReasoningEffort::from_str_loose(&s));
-                    agent_loop.session.set_reasoning_effort(default_effort);
+                        .and_then(|s| acowork_core::providers::traits::ReasoningEffort::from_str_loose(&s))
+                        .unwrap_or_default();
+                    agent_loop.session.set_reasoning_effort(Some(default_effort));
                 }
                 Some(SessionMessage::ReasoningEffort { effort }) => {
                     let parsed = acowork_core::providers::traits::ReasoningEffort::from_str_loose(&effort);
