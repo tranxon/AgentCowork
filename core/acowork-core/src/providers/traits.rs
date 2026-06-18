@@ -276,7 +276,7 @@ pub enum MessageRole {
 ///
 /// When a message contains only text, the `content` field (String) is used for
 /// backward compatibility. When a message contains multimodal parts (e.g. text
-/// + image), `content_parts` is populated and provider serialization layers
+/// and image), `content_parts` is populated and provider serialization layers
 /// should prefer it over the plain `content` field.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -456,6 +456,68 @@ pub struct FunctionCall {
     pub arguments: String,
 }
 
+/// Reasoning effort level for thinking-capable models.
+///
+/// Maps to provider-specific parameters:
+/// - OpenAI-compatible: `reasoning_effort` field ("low", "medium", "high")
+/// - Anthropic: `thinking` block with `budget_tokens`
+/// - Google: `thinkingConfig` with `thinkingBudget`
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ReasoningEffort {
+    /// Disable thinking/reasoning entirely.
+    Off,
+    /// Light reasoning — fast responses with minimal thinking.
+    Low,
+    /// Balanced reasoning — good trade-off between speed and depth.
+    #[default]
+    Medium,
+    /// Deep reasoning — thorough analysis, slower responses.
+    High,
+    /// Maximum reasoning depth — exhaustive thinking for complex problems.
+    Max,
+}
+
+impl ReasoningEffort {
+    /// Parse from a string slice (case-insensitive).
+    /// Returns `None` if the string does not match any known variant.
+    pub fn from_str_loose(s: &str) -> Option<Self> {
+        match s.to_lowercase().as_str() {
+            "off" | "none" => Some(Self::Off),
+            "low" => Some(Self::Low),
+            "medium" | "med" => Some(Self::Medium),
+            "high" => Some(Self::High),
+            "max" | "maximum" => Some(Self::Max),
+            _ => None,
+        }
+    }
+
+    /// Convert to the OpenAI-compatible API string value.
+    /// Returns `None` for `Off` (field should be omitted).
+    pub fn to_openai_str(&self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Low => Some("low"),
+            Self::Medium => Some("medium"),
+            Self::High => Some("high"),
+            // Most OpenAI-compatible APIs cap at "high".
+            Self::Max => Some("high"),
+        }
+    }
+}
+
+impl std::fmt::Display for ReasoningEffort {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Off => write!(f, "off"),
+            Self::Low => write!(f, "low"),
+            Self::Medium => write!(f, "medium"),
+            Self::High => write!(f, "high"),
+            Self::Max => write!(f, "max"),
+        }
+    }
+}
+
 /// Chat request to LLM provider
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChatRequest {
@@ -467,6 +529,13 @@ pub struct ChatRequest {
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub tools: Option<Vec<serde_json::Value>>,
+    /// Reasoning/thinking effort level (None = use provider default, no override).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+    /// Anthropic-specific thinking mode: "extended" (budget_tokens) or "adaptive".
+    /// When `None`, the provider decides based on the model (defaults to "extended").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
 }
 
 /// Chat response from LLM provider

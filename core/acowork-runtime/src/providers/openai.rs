@@ -19,7 +19,7 @@ use tokio::sync::mpsc;
 
 use acowork_core::providers::traits::{
     ChatMessage, ChatRequest, ChatResponse, ContentPart, FunctionCall, MessageRole, Provider,
-    StreamEvent, ToolCall, UsageInfo,
+    ReasoningEffort, StreamEvent, ToolCall, UsageInfo,
 };
 
 /// Default per-chunk read timeout (45s) — used by backwards-compatible constructors.
@@ -82,6 +82,25 @@ impl OpenAIProvider {
     }
 }
 
+/// Map a [`ReasoningEffort`] to the OpenAI `reasoning_effort` field value.
+///
+/// OpenAI's `reasoning_effort` parameter only accepts "low" | "medium" | "high"
+/// (some models also accept "minimal"). It has **no explicit "disable"** value —
+/// omitting the field lets the model use its own default, which is typically
+/// "medium" for o-series models. To honor the user's intent of "minimum
+/// reasoning", we map `Off` to `"low"` (the lowest universally-supported value).
+fn openai_reasoning_str(effort: &ReasoningEffort) -> &'static str {
+    match effort {
+        // No disable protocol — collapse to the lowest available effort.
+        ReasoningEffort::Off => "low",
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High => "high",
+        // Most OpenAI-compatible APIs cap at "high".
+        ReasoningEffort::Max => "high",
+    }
+}
+
 // ── OpenAI API types ─────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -98,6 +117,10 @@ struct NativeChatRequest {
     /// Request usage stats in the final streaming chunk (OpenAI stream_options)
     #[serde(skip_serializing_if = "Option::is_none")]
     stream_options: Option<StreamOptions>,
+    /// Reasoning effort for thinking-capable models (OpenAI o-series, MiniMax, etc.)
+    /// Maps to `reasoning_effort` in the OpenAI-compatible API.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reasoning_effort: Option<String>,
 }
 
 /// OpenAI stream_options to request usage in the final chunk
@@ -467,6 +490,10 @@ impl Provider for OpenAIProvider {
     }
 
     async fn chat(&self, request: ChatRequest) -> acowork_core::error::Result<ChatResponse> {
+        let reasoning = request
+            .reasoning_effort
+            .as_ref()
+            .map(|e| openai_reasoning_str(e).to_string());
         let native_request = NativeChatRequest {
             model: request.model,
             messages: convert_messages(&request.messages),
@@ -475,6 +502,7 @@ impl Provider for OpenAIProvider {
             tools: convert_tools(request.tools.as_deref()),
             stream: None,
             stream_options: None,
+            reasoning_effort: reasoning,
         };
 
         // Log request payload for debugging tool definitions
@@ -559,6 +587,10 @@ impl Provider for OpenAIProvider {
         &self,
         request: ChatRequest,
     ) -> acowork_core::error::Result<Box<dyn Stream<Item = StreamEvent> + Send>> {
+        let reasoning = request
+            .reasoning_effort
+            .as_ref()
+            .map(|e| openai_reasoning_str(e).to_string());
         let native_request = NativeChatRequest {
             model: request.model,
             messages: convert_messages(&request.messages),
@@ -569,6 +601,7 @@ impl Provider for OpenAIProvider {
             stream_options: Some(StreamOptions {
                 include_usage: true,
             }),
+            reasoning_effort: reasoning,
         };
 
         // Log request payload for debugging tool definitions
@@ -616,6 +649,7 @@ impl Provider for OpenAIProvider {
                     tools: native_request.tools.clone(),
                     stream: Some(true),
                     stream_options: None,
+                    reasoning_effort: native_request.reasoning_effort.clone(),
                 };
                 let retry_response = self.send_streaming_request(&url, &fallback_request).await?;
                 if !retry_response.status().is_success() {

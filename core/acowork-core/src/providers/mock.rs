@@ -206,6 +206,8 @@ mod tests {
             temperature: None,
             max_tokens: None,
             tools: None,
+            reasoning_effort: None,
+            thinking_mode: None,
         };
 
         let response = provider.chat(request).await.unwrap();
@@ -228,6 +230,8 @@ mod tests {
             temperature: None,
             max_tokens: None,
             tools: None,
+            reasoning_effort: None,
+            thinking_mode: None,
         };
 
         let response = provider.chat(request.clone()).await.unwrap();
@@ -255,6 +259,8 @@ mod tests {
             temperature: None,
             max_tokens: None,
             tools: None,
+            reasoning_effort: None,
+            thinking_mode: None,
         };
 
         let result = provider.chat(request).await;
@@ -270,6 +276,8 @@ mod tests {
             temperature: None,
             max_tokens: None,
             tools: None,
+            reasoning_effort: None,
+            thinking_mode: None,
         };
 
         let response = provider.chat(request).await.unwrap();
@@ -285,6 +293,8 @@ mod tests {
             temperature: Some(0.5),
             max_tokens: None,
             tools: None,
+            reasoning_effort: None,
+            thinking_mode: None,
         };
 
         let _ = provider.chat(request.clone()).await.unwrap();

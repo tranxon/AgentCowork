@@ -638,11 +638,10 @@ fn enrich_model_from_offline(model: &mut ModelInfo) {
     candidates.push(model.id.clone());
 
     // 2. Bare ID
-    if let Some(bare) = model.id.split('/').next_back() {
-        if bare != model.id.as_str() {
+    if let Some(bare) = model.id.split('/').next_back()
+        && bare != model.id.as_str() {
             candidates.push(bare.to_string());
         }
-    }
 
     for candidate in &candidates {
         for provider_data in providers.values() {
@@ -893,6 +892,8 @@ fn model_to_capabilities(
         name: Some(model.name.clone()),
         family: model.family.clone(),
         knowledge_cutoff: model.knowledge.clone(),
+        default_reasoning_effort: None,
+        thinking_mode: None,
     })
 }
 

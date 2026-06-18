@@ -150,12 +150,11 @@ impl Cli {
 
         // Apply --home flag to ACOWORK_HOME so config path resolution
         // picks it up consistently (CLI > env > default).
-        if let Some(home) = &self.home {
-            if !home.is_empty() {
+        if let Some(home) = &self.home
+            && !home.is_empty() {
                 // SAFETY: single-threaded at this point in startup.
                 unsafe { std::env::set_var("ACOWORK_HOME", home); }
             }
-        }
 
         // One-time migration from the legacy split layout. Must run BEFORE
         // init_tracing creates the log dir, otherwise `new_root.exists()`

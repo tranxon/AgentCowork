@@ -96,6 +96,7 @@ export function ChatPanel() {
     : false;
   const currentModel = sessionState?.model ?? null;
   const currentProvider = sessionState?.provider ?? null;
+  const currentReasoningEffort = sessionState?.reasoningEffort ?? null;
 
   // Global state and actions — selectors to avoid full-store re-render
   const wsMap = useChatStore((s) => s.wsMap);
@@ -107,6 +108,7 @@ export function ChatPanel() {
     sendMessage,
     sendStop,
     setCurrentModel,
+    setReasoningEffort,
     setAvailableModels,
     continueExecution,
     resolveApproval,
@@ -260,6 +262,7 @@ export function ChatPanel() {
               tool_call: caps?.supports_tool_calling ?? undefined,
               reasoning: caps?.supports_reasoning ?? undefined,
               input_modalities: caps?.modalities?.input ?? undefined,
+              default_reasoning_effort: caps?.default_reasoning_effort ?? undefined,
             });
           }
         } else if (key.default_model) {
@@ -270,6 +273,7 @@ export function ChatPanel() {
             tool_call: caps?.supports_tool_calling ?? undefined,
             reasoning: caps?.supports_reasoning ?? undefined,
             input_modalities: caps?.modalities?.input ?? undefined,
+            default_reasoning_effort: caps?.default_reasoning_effort ?? undefined,
           });
         }
       }
@@ -1300,6 +1304,15 @@ export function ChatPanel() {
                   currentModel={currentModel}
                   currentProvider={currentProvider}
                   onSelect={(m, p) => selectedAgentId && setCurrentModel(m, p, selectedAgentId)}
+                />
+              )}
+              {/* Reasoning effort toggle — only when current model supports reasoning */}
+              {selectedAgent?.running && currentModel && availableModels.some(
+                (m) => m.name === currentModel && m.reasoning
+              ) && (
+                <ReasoningEffortMenu
+                  effort={currentReasoningEffort}
+                  onChange={(e) => selectedAgentId && setReasoningEffort(e, selectedAgentId)}
                 />
               )}
               {/* Workspace button */}
@@ -2526,6 +2539,94 @@ function ModelMenu({
           window.dispatchEvent(new Event('models-added'));
         }}
       />
+    </ToolbarDropdownTrigger>
+  );
+}
+
+/** Reasoning effort selector — popup with Off/Low/Medium/High/Max */
+function ReasoningEffortMenu({
+  effort,
+  onChange,
+}: {
+  effort: string | null;
+  onChange: (effort: string) => void;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  const OPTIONS: { value: string; color: string }[] = [
+    { value: "Off", color: "#9ca3af" },
+    { value: "Low", color: "#3b82f6" },
+    { value: "Medium", color: "#8b5cf6" },
+    { value: "High", color: "#ef4444" },
+    { value: "Max", color: "#f59e0b" },
+  ];
+
+  const effortLabel = effort ?? "Off";
+  const currentColor = OPTIONS.find((o) => o.value === effortLabel)?.color ?? "#9ca3af";
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+
+  return (
+    <ToolbarDropdownTrigger
+      icon={<Brain size={14} style={{ color: currentColor }} />}
+      label={effortLabel}
+      collapseClass="tb-model-text"
+      tipClass="tb-model-tip"
+      tooltip={t("chatPanel.selectReasoningEffort") ?? "Reasoning effort"}
+      open={open}
+      onToggle={() => setOpen(!open)}
+      wrapperRef={ref}
+    >
+      {open && (
+        <div
+          className={cn(
+            "absolute bottom-full left-0 z-50 mb-1 overflow-hidden rounded-md border shadow-lg",
+            "border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-800",
+          )}
+          style={{ width: "140px" }}
+        >
+          {OPTIONS.map((opt) => {
+            const isActive = opt.value === effortLabel;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center gap-2 px-2.5 py-1.5 text-xs transition-colors",
+                  isActive
+                    ? "text-zinc-900 dark:text-white"
+                    : "text-zinc-600 hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50",
+                )}
+              >
+                <span
+                  className="h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: opt.color }}
+                />
+                <span
+                  className={cn("font-medium", isActive && "text-[var(--color-accent)]")}
+                >
+                  {opt.value}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </ToolbarDropdownTrigger>
   );
 }

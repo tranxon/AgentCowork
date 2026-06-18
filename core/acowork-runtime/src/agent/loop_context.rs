@@ -396,6 +396,33 @@ impl AgentLoop {
         context_builder.set_todo_context(self.session.format_todos());
         let caps = self.get_model_capabilities(current_model);
         let max_output_limit = self.core.max_output_tokens_limit_for_model(current_model);
+
+        // Resolve reasoning_effort: prefer per-session override (set by frontend
+        // toggle), fall back to model capabilities default_reasoning_effort.
+        // The session override is reset to None on model switch so new model's
+        // default takes effect.
+        let reasoning_effort = self
+            .session
+            .reasoning_effort()
+            .cloned()
+            .or_else(|| {
+                caps
+                    .as_ref()
+                    .and_then(|c| c.default_reasoning_effort.as_deref())
+                    .and_then(acowork_core::providers::traits::ReasoningEffort::from_str_loose)
+            });
+        context_builder.set_reasoning_effort(reasoning_effort.clone());
+        // Cache for emergency trim retry in call_llm_streaming_inner()
+        // where context_builder is immutable.
+        self.last_reasoning_effort = reasoning_effort;
+
+        // Resolve thinking_mode (Anthropic: "extended" vs "adaptive")
+        let thinking_mode = caps
+            .as_ref()
+            .and_then(|c| c.thinking_mode.clone());
+        context_builder.set_thinking_mode(thinking_mode.clone());
+        self.last_thinking_mode = thinking_mode;
+
         let mut chat_request = context_builder.build(
             &self.core.manifest,
             &self.session.history,

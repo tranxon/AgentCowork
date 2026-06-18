@@ -834,6 +834,23 @@ After installation, ask the user to re-enable the MCP server.",
         self.send_to_session(session_id, SessionMessage::ModelSwitch { model, provider })
     }
 
+    /// Route per-session reasoning effort override to the target session.
+    ///
+    /// Sends a ReasoningEffort message to the session task, which updates
+    /// the SessionState and persists the change.
+    pub fn route_reasoning_effort(
+        &mut self,
+        session_id: &str,
+        effort: String,
+    ) -> Result<()> {
+        tracing::info!(
+            session_id = %session_id,
+            effort = %effort,
+            "SessionManager: routing reasoning_effort to session"
+        );
+        self.send_to_session(session_id, SessionMessage::ReasoningEffort { effort })
+    }
+
     /// Update web search config from Gateway SearchConfigDelivery hot-push.
     ///
     /// Caches the search key vault and provider list (mirrors CachedLLMConfig pattern)
@@ -856,7 +873,7 @@ After installation, ask the user to re-enable the MCP server.",
     /// Formats the `UserProfile` into an `identity_context` text block
     /// and broadcasts it to all active sessions via their ContextBuilder.
     pub fn update_user_identity(&mut self, profile: Option<acowork_core::protocol::UserProfile>) {
-        let identity_context = profile.as_ref().map(|p| format_user_profile_context(p));
+        let identity_context = profile.as_ref().map(format_user_profile_context);
         tracing::info!(
             has_profile = profile.is_some(),
             ctx_len = identity_context.as_ref().map(|s| s.len()).unwrap_or(0),
@@ -864,7 +881,7 @@ After installation, ask the user to re-enable the MCP server.",
         );
         self.config.identity_context = identity_context.clone();
         // Broadcast updated identity to all active sessions
-        for (_sid, handle) in &self.sessions {
+        for handle in self.sessions.values() {
             let _ = handle.send(SessionMessage::UpdateIdentityContext {
                 identity_context: identity_context.clone(),
             });
@@ -1441,9 +1458,10 @@ pub(crate) fn format_user_profile_context(profile: &acowork_core::protocol::User
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::RuntimeConfig;
-    use acowork_core::providers::mock::MockProvider;
+    
+    
 
+    #[allow(dead_code)]
     fn make_tool_spec(name: &str) -> (String, serde_json::Value) {
         let schema = serde_json::json!({
             "type": "function",

@@ -67,6 +67,8 @@ interface SessionChatState {
   provider: string | null;
   /** Current model chars/token ratio from API calibration */
   ratio: number | null;
+  /** Per-session reasoning effort override (frontend display only, source of truth is Runtime) */
+  reasoningEffort: string | null;
   /** Context compaction in progress (both manual and auto triggers) */
   isCompacting: boolean;
   /** File tree expanded directory paths (persisted per-session) */
@@ -107,6 +109,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   model: null,
   provider: null,
   ratio: null,
+  reasoningEffort: null,
   isCompacting: false,
   treeExpandedPaths: [],
   attachedContext: [],
@@ -298,6 +301,8 @@ interface ChatStore {
   trimMessagesTo: (agentId: string, count: number) => void;
   setCurrentModel: (model: string, provider: string, agentId: string) => void;
   setAvailableModels: (models: ModelEntry[]) => void;
+  /** Set per-session reasoning effort override (Off/Low/Medium/High/Max) */
+  setReasoningEffort: (effort: string, agentId: string) => void;
   getWs: (agentId: string) => WebSocket | undefined;
   continueExecution: (agentId: string) => Promise<void>;
   resolveApproval: (agentId: string) => void;
@@ -1085,14 +1090,35 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const sessionId = getAgentState(get(), agentId).activeSessionId;
     if (!sessionId) return;
 
-    // Update session model (current session only)
-    set((state) => updateSessionState(state, agentId, sessionId, { model, provider }));
+    // Resolve new model's default reasoning effort from availableModels
+    const models = get().availableModels;
+    const newModelEntry = models.find((m) => m.name === model && m.provider === provider);
+    const defaultEffort = newModelEntry?.default_reasoning_effort ?? null;
+
+    // Update session model + reset reasoningEffort to new model's default
+    set((state) => updateSessionState(state, agentId, sessionId, {
+      model,
+      provider,
+      reasoningEffort: defaultEffort,
+    }));
     // Update agent's default model (new sessions inherit this)
     set((state) => updateAgentState(state, agentId, { preferredModel: model, preferredProvider: provider }));
 
     const ws = get().wsMap[agentId];
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({ type: "model_switch", model, provider, agentId, session_id: sessionId }));
+    }
+  },
+  setReasoningEffort: (effort: string, agentId: string) => {
+    const sessionId = getAgentState(get(), agentId).activeSessionId;
+    if (!sessionId) return;
+
+    // Optimistically update frontend state (Runtime will confirm)
+    set((state) => updateSessionState(state, agentId, sessionId, { reasoningEffort: effort }));
+
+    const ws = get().wsMap[agentId];
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "reasoning_effort", effort, agentId, session_id: sessionId }));
     }
   },
   setAvailableModels: (models: ModelEntry[]) => {
@@ -1499,7 +1525,7 @@ const CONTENT_EVENT_TYPES = new Set([
   "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
   "context_usage", "session_state_changed", "stopped", "todo_list_updated",
-  "compacting_started", "compacting_ended", "model_confirmed",
+  "compacting_started", "compacting_ended", "model_confirmed", "reasoning_effort_confirmed",
 ]);
 
 function handleMessageEvent(
@@ -1888,15 +1914,32 @@ function handleMessageEvent(
       const confirmedProvider = data.provider as string | undefined;
       console.log("[ChatStore] Model switch confirmed:", confirmedModel, confirmedProvider);
       if (confirmedModel && sid) {
+        // Resolve new model's default reasoning effort
+        const models = get().availableModels;
+        const newModelEntry = models.find((m) => m.name === confirmedModel && m.provider === (confirmedProvider ?? ""));
+        const defaultEffort = newModelEntry?.default_reasoning_effort ?? null;
+
         // Update session model (current session only)
         set((state) => updateSessionState(state, agentId, sid!, {
           model: confirmedModel,
           provider: confirmedProvider ?? "",
+          reasoningEffort: defaultEffort,
         }));
         // Update agent's default model (new sessions inherit this)
         set((state) => updateAgentState(state, agentId, {
           preferredModel: confirmedModel,
           preferredProvider: confirmedProvider ?? null,
+        }));
+      }
+      break;
+    }
+
+    case "reasoning_effort_confirmed": {
+      const confirmedEffort = data.effort as string;
+      console.log("[ChatStore] Reasoning effort confirmed:", confirmedEffort);
+      if (confirmedEffort && sid) {
+        set((state) => updateSessionState(state, agentId, sid!, {
+          reasoningEffort: confirmedEffort,
         }));
       }
       break;

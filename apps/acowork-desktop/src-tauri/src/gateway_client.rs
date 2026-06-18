@@ -787,6 +787,12 @@ pub struct ModelCapabilities {
     /// Knowledge cutoff date
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledge_cutoff: Option<String>,
+    /// Default reasoning effort level (user-configured). Values: "off", "low", "medium", "high", "max".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    /// Anthropic thinking mode: "extended" or "adaptive".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
 }
 
 /// Cost information for a model

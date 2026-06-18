@@ -53,6 +53,7 @@
         "inputParams": "Enter params... (Enter to send, Shift+Enter for new line)",
         "inputParamsConnecting": "Enter params... (Connecting to agent...)",
         "selectModel": "Select model",
+        "selectReasoningEffort": "Reasoning effort",
         "startAgent": "Start Agent",
         "llmNotConfigured": "No LLM provider configured. Please add an API key in Harness → Providers."
     },
@@ -283,7 +284,9 @@
         "removeKey": "Remove key",
         "enterCustomModelName": "Enter custom model name",
         "localProviderNoKey": "Local provider — no API key needed",
-        "compactModelHint": "Compact model for summarization"
+        "compactModelHint": "Compact model for summarization",
+        "defaultReasoningEffort": "Default reasoning effort (applies to all reasoning models)",
+        "useModelDefault": "Use model default"
     },
     "harnessSearch": {
         "searchProviderManagement": "Search Provider Management",

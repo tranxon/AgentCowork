@@ -55,6 +55,13 @@ pub struct StoredModelCapabilities {
     /// Knowledge cutoff date
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledge_cutoff: Option<String>,
+    /// Default reasoning effort level for this model (user-configured).
+    /// Values: "off", "low", "medium", "high", "max".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    /// Anthropic thinking mode: "extended" or "adaptive".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
 }
 
 /// Default value for serde boolean fields
@@ -77,6 +84,8 @@ impl From<StoredModelCapabilities> for acowork_core::protocol::ModelCapabilities
             name: c.name,
             family: c.family,
             knowledge_cutoff: c.knowledge_cutoff,
+            default_reasoning_effort: c.default_reasoning_effort,
+            thinking_mode: c.thinking_mode,
         }
     }
 }

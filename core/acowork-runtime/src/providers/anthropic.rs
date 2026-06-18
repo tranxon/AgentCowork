@@ -95,6 +95,123 @@ struct AnthropicRequest {
     tools: Option<Vec<AnthropicToolSpec>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     stream: Option<bool>,
+    /// Extended / adaptive thinking configuration for reasoning-capable models.
+    /// When thinking is enabled, temperature must be 1.0 (Anthropic API requirement).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<AnthropicThinking>,
+    /// Output configuration for adaptive thinking (effort level).
+    /// Only used with `thinking: { type: "adaptive" }`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<AnthropicOutputConfig>,
+}
+
+/// Anthropic thinking configuration block.
+///
+/// Two modes are supported:
+/// - **Extended** (older models): `{ type: "enabled", budget_tokens: N }`
+/// - **Adaptive** (newer models, Opus 4.6+): `{ type: "adaptive" }` + `output_config.effort`
+///
+/// API constraints:
+/// - When `thinking` is present, `temperature` must be 1.0 or omitted.
+/// - `budget_tokens` must be >= 1024 and < `max_tokens` (extended mode only).
+/// - Adaptive-only models (Opus 4.7+, Mythos 5, Fable 5) reject `enabled`/`disabled`.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type")]
+enum AnthropicThinking {
+    #[serde(rename = "enabled")]
+    Enabled {
+        budget_tokens: u32,
+    },
+    #[serde(rename = "disabled")]
+    Disabled,
+    #[serde(rename = "adaptive")]
+    Adaptive,
+}
+
+/// Output configuration for Anthropic adaptive thinking.
+/// Controls how much thinking the model does (effort level).
+#[derive(Debug, Serialize)]
+struct AnthropicOutputConfig {
+    effort: String,
+}
+
+/// Map `ReasoningEffort` to Anthropic's `thinking` + `output_config` blocks.
+///
+/// Supports two modes controlled by `thinking_mode`:
+/// - **"extended"** (default): `{ type: "enabled", budget_tokens: N }`
+/// - **"adaptive"**: `{ type: "adaptive" }` + `output_config: { effort: "..." }`
+///
+/// Extended mode budget allocation:
+/// - `None` → no thinking block (model uses its own default behavior)
+/// - `Off` → disabled
+/// - `Low` → 2048 tokens
+/// - `Medium` → 8000 tokens
+/// - `High` → min(16000, max_output/2)
+/// - `Max` → min(31999, max_output - 1)
+///
+/// Adaptive mode effort mapping:
+/// - `None` → no thinking block (model uses adaptive default)
+/// - `Off` → disabled
+/// - `Low` → "low", `Medium` → "medium", `High` → "high", `Max` → "max"
+///
+/// Returns `(thinking_config, output_config, adjusted_temperature)`.
+/// When thinking is enabled, temperature is forced to `None` (Anthropic requires 1.0).
+fn map_anthropic_thinking(
+    effort: Option<&acowork_core::providers::ReasoningEffort>,
+    thinking_mode: Option<&str>,
+    max_output: u32,
+    original_temperature: Option<f64>,
+) -> (Option<AnthropicThinking>, Option<AnthropicOutputConfig>, Option<f64>) {
+    use acowork_core::providers::ReasoningEffort;
+    let is_adaptive = thinking_mode == Some("adaptive");
+
+    // None: reasoning_effort not set at all — omit thinking block entirely
+    // so the model uses its own built-in default behavior.
+    // Off: user explicitly chose to disable thinking.
+    let effort = match effort {
+        None => {
+            // No override — let the model decide its default behavior.
+            // For both extended and adaptive models, omitting thinking = model default.
+            return (None, None, original_temperature);
+        }
+        Some(ReasoningEffort::Off) => {
+            // Explicitly disable thinking (both extended and adaptive).
+            return (Some(AnthropicThinking::Disabled), None, original_temperature);
+        }
+        Some(e) => e,
+    };
+
+    if is_adaptive {
+        // Adaptive thinking: map effort to output_config.effort string
+        let effort_str = match effort {
+            ReasoningEffort::Low => "low",
+            ReasoningEffort::Medium => "medium",
+            ReasoningEffort::High => "high",
+            ReasoningEffort::Max => "max",
+            _ => "medium",
+        };
+        return (
+            Some(AnthropicThinking::Adaptive),
+            Some(AnthropicOutputConfig { effort: effort_str.to_string() }),
+            None, // temperature must be omitted
+        );
+    }
+
+    // Extended thinking: compute budget_tokens
+    let budget = match effort {
+        ReasoningEffort::Low => 2048,
+        ReasoningEffort::Medium => 8000,
+        ReasoningEffort::High => std::cmp::min(16000, max_output.saturating_div(2)),
+        ReasoningEffort::Max => std::cmp::min(31999, max_output.saturating_sub(1)),
+        _ => unreachable!(),
+    };
+    // Ensure budget_tokens >= 1024 (Anthropic minimum)
+    let budget = std::cmp::max(budget, 1024);
+    // Ensure budget_tokens < max_tokens (Anthropic requirement)
+    let budget = std::cmp::min(budget, max_output.saturating_sub(1));
+
+    // When thinking is enabled, temperature must be omitted (defaults to 1.0)
+    (Some(AnthropicThinking::Enabled { budget_tokens: budget }), None, None)
 }
 
 /// Anthropic message format
@@ -255,17 +372,15 @@ fn build_anthropic_content(msg: &ChatMessage) -> serde_json::Value {
 /// Parse a data URI into (media_type, base64_data).
 /// E.g. "data:image/png;base64,iVBOR..." → ("image/png", "iVBOR...")
 fn parse_data_uri(uri: &str) -> (&str, &str) {
-    if let Some(rest) = uri.strip_prefix("data:") {
-        if let Some(semi) = rest.find(';') {
+    if let Some(rest) = uri.strip_prefix("data:")
+        && let Some(semi) = rest.find(';') {
             let media_type = &rest[..semi];
             let after_semi = &rest[semi + 1..];
-            if let Some(comma) = after_semi.find(',') {
-                if after_semi[..comma].contains("base64") {
+            if let Some(comma) = after_semi.find(',')
+                && after_semi[..comma].contains("base64") {
                     return (media_type, &after_semi[comma + 1..]);
                 }
-            }
         }
-    }
     // Fallback: treat as raw base64 with unknown media type
     ("image/png", uri)
 }
@@ -484,14 +599,24 @@ impl Provider for AnthropicProvider {
             messages
         };
 
+        let effective_max_tokens = request.max_tokens.unwrap_or(4096);
+        let (thinking, output_config, temperature) = map_anthropic_thinking(
+            request.reasoning_effort.as_ref(),
+            request.thinking_mode.as_deref(),
+            effective_max_tokens,
+            request.temperature,
+        );
+
         let anthropic_request = AnthropicRequest {
             model: request.model,
             messages,
             system,
-            max_tokens: request.max_tokens.or(Some(4096)),
-            temperature: request.temperature,
+            max_tokens: Some(effective_max_tokens),
+            temperature,
             tools: convert_tools(request.tools.as_deref()),
             stream: None,
+            thinking,
+            output_config,
         };
 
         // Log request payload for debugging tool definitions
@@ -579,14 +704,24 @@ impl Provider for AnthropicProvider {
             messages
         };
 
+        let effective_max_tokens = request.max_tokens.unwrap_or(4096);
+        let (thinking, output_config, temperature) = map_anthropic_thinking(
+            request.reasoning_effort.as_ref(),
+            request.thinking_mode.as_deref(),
+            effective_max_tokens,
+            request.temperature,
+        );
+
         let anthropic_request = AnthropicRequest {
             model: request.model,
             messages,
             system,
-            max_tokens: request.max_tokens.or(Some(4096)),
-            temperature: request.temperature,
+            max_tokens: Some(effective_max_tokens),
+            temperature,
             tools: convert_tools(request.tools.as_deref()),
             stream: Some(true),
+            thinking,
+            output_config,
         };
 
         // Log request payload for debugging tool definitions

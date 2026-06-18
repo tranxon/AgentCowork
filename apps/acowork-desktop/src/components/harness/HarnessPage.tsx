@@ -93,6 +93,7 @@ function ProvidersTab() {
   const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
   const [editSupportsToolCalling, setEditSupportsToolCalling] = useState(true);
   const [editCompactModel, setEditCompactModel] = useState("");
+  const [editDefaultReasoningEffort, setEditDefaultReasoningEffort] = useState("");
   // Gateway config for default provider indication
   const [config, setConfig] = useState<GatewayConfig | null>(null);
 
@@ -370,6 +371,7 @@ function ProvidersTab() {
     setEditMaxOutputTokens(vaultMot && vaultMot > 0 ? vaultMot.toString() : "4096");
     setEditSupportsToolCalling(firstCaps?.supports_tool_calling ?? true);
     setEditCompactModel(keyEntry?.compact_model ?? "");
+    setEditDefaultReasoningEffort(firstCaps?.default_reasoning_effort ?? "");
     setShowEditDialog(provider);
     // Fetch models
     setEditModelsLoading(true);
@@ -397,7 +399,8 @@ function ProvidersTab() {
         updatePayload.key = editKey;
       }
       // Build per-model capabilities map
-      if (editContextWindow || editMaxOutputTokens) {
+      const shouldBuildCaps = editContextWindow || editMaxOutputTokens || editDefaultReasoningEffort;
+      if (shouldBuildCaps) {
         const cw = Number(editContextWindow);
         const mot = Number(editMaxOutputTokens);
         if ((editContextWindow && (!Number.isFinite(cw) || cw <= 0)) ||
@@ -413,6 +416,7 @@ function ProvidersTab() {
             max_output_tokens: mot || 4096,
             supports_tool_calling: editSupportsToolCalling,
             supports_reasoning: modelInfo?.reasoning ?? undefined,
+            default_reasoning_effort: editDefaultReasoningEffort || undefined,
             modalities: modelInfo?.input_modalities?.length ? { input: modelInfo.input_modalities } : undefined,
           };
         }
@@ -1244,6 +1248,34 @@ function ProvidersTab() {
                   </div>
                 );
               })()}
+
+              {/* Default reasoning effort (applies to all reasoning models in this provider) */}
+              {editModels.length > 0 && editModels.some((m) => editAvailableModels.find((mi) => mi.id === m)?.reasoning === true) && (
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">
+                    {t("harness.defaultReasoningEffort")}
+                  </label>
+                  <select
+                    value={editDefaultReasoningEffort}
+                    onChange={(e) => setEditDefaultReasoningEffort(e.target.value)}
+                    className="w-full appearance-none rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 outline-none transition-colors focus:border-[var(--color-accent)] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                      backgroundPosition: 'right 0.5rem center',
+                      backgroundRepeat: 'no-repeat',
+                      backgroundSize: '1.5em 1.5em',
+                      paddingRight: '2rem',
+                    }}
+                  >
+                    <option value="">{t("harness.useModelDefault")}</option>
+                    <option value="Off">Off</option>
+                    <option value="Low">Low</option>
+                    <option value="Medium">Medium</option>
+                    <option value="High">High</option>
+                    <option value="Max">Max</option>
+                  </select>
+                </div>
+              )}
 
               {/* Compact model for LLM summarization */}
               {editModels.length > 0 && (

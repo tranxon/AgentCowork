@@ -5,7 +5,7 @@
 
 use acowork_core::manifest::AgentManifest;
 use acowork_core::protocol::ModelCapabilitiesInfo;
-use acowork_core::providers::traits::{ChatMessage, ChatRequest, ContentPart, MessageRole};
+use acowork_core::providers::traits::{ChatMessage, ChatRequest, ContentPart, MessageRole, ReasoningEffort};
 
 use crate::agent::history::HistoryManager;
 use crate::token::counter::TokenCounter;
@@ -42,6 +42,14 @@ pub struct ContextBuilder {
     /// Todo list context for injection into the system prompt.
     /// Set by AgentLoop before each build() from SessionState.todos.
     todo_context: Option<String>,
+    /// Reasoning effort level for the LLM request.
+    /// Resolved from ModelCapabilitiesInfo.default_reasoning_effort in
+    /// `build_chat_request()` each iteration (supports mid-session model switch).
+    /// Can also be overridden per-session via `set_reasoning_effort()`.
+    reasoning_effort: Option<ReasoningEffort>,
+    /// Anthropic thinking mode: "extended" or "adaptive".
+    /// Resolved from ModelCapabilitiesInfo.thinking_mode in `build_chat_request()`.
+    thinking_mode: Option<String>,
     /// Reusable token counter for system prompt estimation.
     counter: TokenCounter,
 }
@@ -61,6 +69,8 @@ impl ContextBuilder {
             ambiguous_confirmation_hint: None,
             skill_instructions: None,
             todo_context: None,
+            reasoning_effort: None,
+            thinking_mode: None,
             counter: TokenCounter::new(),
         }
     }
@@ -87,6 +97,25 @@ impl ContextBuilder {
     pub fn with_tools(mut self, tools: Vec<serde_json::Value>) -> Self {
         self.tool_definitions = Some(tools);
         self
+    }
+
+    /// Set the reasoning effort level for LLM requests.
+    ///
+    /// Called by `build_chat_request()` each iteration after resolving
+    /// from the current model's capabilities (supports mid-session
+    /// model switch). Can also be set directly for per-session overrides.
+    pub fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffort>) {
+        self.reasoning_effort = effort;
+    }
+
+    /// Set the Anthropic thinking mode ("extended" or "adaptive").
+    pub fn set_thinking_mode(&mut self, mode: Option<String>) {
+        self.thinking_mode = mode;
+    }
+
+    /// Get the current reasoning effort level, if set.
+    pub fn reasoning_effort(&self) -> Option<&ReasoningEffort> {
+        self.reasoning_effort.as_ref()
     }
 
     /// Set model override (from `model_switch` or session initialization)
@@ -598,6 +627,8 @@ impl ContextBuilder {
             temperature: manifest.llm.temperature,
             max_tokens,
             tools: self.tool_definitions.clone(),
+            reasoning_effort: self.reasoning_effort.clone(),
+            thinking_mode: self.thinking_mode.clone(),
         }
     }
 }

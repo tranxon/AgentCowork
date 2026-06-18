@@ -108,6 +108,17 @@ pub struct ModelCapabilitiesInfo {
     /// Knowledge cutoff date (e.g. "2025-04", "2024-10")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub knowledge_cutoff: Option<String>,
+
+    // ── Reasoning configuration ──
+    /// Default reasoning effort level for this model (user-configured).
+    /// Values: "off", "low", "medium", "high", "max".
+    /// When `None`, the model's built-in default is used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_reasoning_effort: Option<String>,
+    /// Anthropic thinking mode: "extended" (budget_tokens) or "adaptive".
+    /// When `None`, the provider auto-detects based on model capabilities.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_mode: Option<String>,
 }
 
 impl ModelCapabilitiesInfo {
@@ -243,7 +254,6 @@ pub struct McpKeyEntry {
 }
 
 /// ── Web Search Provider types ──
-
 /// Search provider list item — delivered by Gateway to Runtime via AgentHelloResult.
 ///
 /// Describes an available web search provider with its metadata.
@@ -294,23 +304,17 @@ pub struct AgentSearchConfig {
 }
 
 /// ── Embedding Model types ──
-
 /// Pooling strategy for embedding models.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PoolingStrategy {
     /// Use [CLS] token output (BGE models).
+    #[default]
     Cls,
     /// Mean pooling over token embeddings weighted by attention_mask (MiniLM).
     Mean,
     /// Use last token output (causal LMs).
     LastToken,
-}
-
-impl Default for PoolingStrategy {
-    fn default() -> Self {
-        Self::Cls
-    }
 }
 
 /// A file or selection attached to a chat message from the Desktop App.
@@ -389,7 +393,6 @@ pub struct EmbeddingModelsFile {
 }
 
 /// ── User Identity types ──
-
 /// A single user's identity profile.
 ///
 /// Persisted in `user_profiles.json` in Gateway's data directory.

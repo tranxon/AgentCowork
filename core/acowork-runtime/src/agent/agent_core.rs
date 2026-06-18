@@ -738,7 +738,7 @@ impl AgentCore {
             urgent_stop: Some(Arc::new(Notify::new())),
             approval_gate: self.approval_gate.clone(),
             approval_handle: self.approval_handle.clone(),
-            shell_approval_threshold: self.shell_approval_threshold.clone(),
+            shell_approval_threshold: self.shell_approval_threshold,
             status_tx: None, // set separately by SessionTask
             embedding_provider: self.embedding_provider.clone(),
             // P3-1: Metrics aggregator is shared across sessions via Arc clone.

@@ -55,6 +55,12 @@ pub enum SessionMessage {
         model: String,
         provider: Option<String>,
     },
+    /// Set per-session reasoning effort override (from frontend toggle).
+    /// When set, overrides the model's default_reasoning_effort.
+    /// Set to "none"/"off" to disable reasoning for this session.
+    ReasoningEffort {
+        effort: String,
+    },
     /// Apply runtime config overrides from Gateway
     UpdateRuntimeConfig {
         max_output_tokens: Option<u64>,
@@ -135,6 +141,10 @@ impl std::fmt::Debug for SessionMessage {
                 .debug_struct("ModelSwitch")
                 .field("model", model)
                 .field("provider", provider)
+                .finish(),
+            SessionMessage::ReasoningEffort { effort } => f
+                .debug_struct("ReasoningEffort")
+                .field("effort", effort)
                 .finish(),
             SessionMessage::UpdateRuntimeConfig {
                 max_output_tokens,
@@ -336,12 +346,11 @@ impl SessionTask {
         // ADR-012: Rebuild LLM Provider from SessionState.provider so the
         // session always sends requests to the correct API endpoint.
         // Without this, clone_for_session inherits the global startup provider.
-        if let Some(ref provider_id) = session.provider {
-            if let Some(new_provider) = core_for_session.build_provider_for(provider_id) {
+        if let Some(ref provider_id) = session.provider
+            && let Some(new_provider) = core_for_session.build_provider_for(provider_id) {
                 let model = session.model.clone().unwrap_or_default();
                 core_for_session.update_provider(new_provider, model);
             }
-        }
 
         // Apply accumulated runtime config overrides from Gateway pushes.
         // (temperature_override, system_prompt_override, shell_approval_threshold,
@@ -545,9 +554,9 @@ impl SessionTask {
                     content_parts,
                     attached_context,
                 }) => {
-                    let has_documents = documents.as_ref().map_or(false, |d| !d.is_empty());
-                    let has_content_parts = content_parts.as_ref().map_or(false, |p| !p.is_empty());
-                    let has_attached = attached_context.as_ref().map_or(false, |a| !a.is_empty());
+                    let has_documents = documents.as_ref().is_some_and(|d| !d.is_empty());
+                    let has_content_parts = content_parts.as_ref().is_some_and(|p| !p.is_empty());
+                    let has_attached = attached_context.as_ref().is_some_and(|a| !a.is_empty());
                     if content.trim().is_empty()
                         && !has_documents
                         && !has_content_parts
@@ -567,11 +576,10 @@ impl SessionTask {
 
                     // Persist document upload records to the conversation JSONL
                     // before running the agent loop, so they appear in session history.
-                    if let Some(ref docs) = documents {
-                        if !docs.is_empty() {
+                    if let Some(ref docs) = documents
+                        && !docs.is_empty() {
                             agent_loop.write_document_entries(docs);
                         }
-                    }
 
                     // Build enriched user message: pre-extract user-uploaded document
                     // content via doc_reader tool (simulating an LLM tool call) and
@@ -580,8 +588,8 @@ impl SessionTask {
                     // doc_reader. The doc_reader tool remains available for
                     // non-user-uploaded documents (e.g., files in workspace).
                     let mut enriched_content = content.clone();
-                    if let Some(ref docs) = documents {
-                        if !docs.is_empty() {
+                    if let Some(ref docs) = documents
+                        && !docs.is_empty() {
                             let filenames: Vec<&str> = docs
                                 .iter()
                                 .filter_map(|d| d.get("filename").and_then(|v| v.as_str()))
@@ -662,20 +670,19 @@ impl SessionTask {
                                 "SessionTask: document pre-extraction complete"
                             );
                         }
-                    }
 
                     // Build attached context: read workspace files selected by the user
                     // from the workspace explorer or editor "Add to Chat" button, and
                     // inject their contents directly into the user message. This avoids
                     // an extra LLM round-trip where the agent would re-read the file
                     // using the workspace read_file tool.
-                    if let Some(ref att_ctx) = attached_context {
-                        if !att_ctx.is_empty() {
+                    if let Some(ref att_ctx) = attached_context
+                        && !att_ctx.is_empty() {
                             let workspace_root = agent_loop
                                 .core
                                 .current_work_dir
                                 .as_ref()
-                                .map(|s| std::path::PathBuf::from(s))
+                                .map(std::path::PathBuf::from)
                                 .unwrap_or_else(|| {
                                     // fallback: agent_home (no workspace configured)
                                     std::path::PathBuf::from(&agent_loop.core.config().work_dir)
@@ -831,7 +838,6 @@ impl SessionTask {
                                 "SessionTask: attached workspace file pre-extraction complete"
                             );
                         }
-                    }
 
                     // Apply skill instructions to ContextBuilder (system prompt injection).
                     // This replaces the old behavior of prepending skill text to the user message,
@@ -881,7 +887,7 @@ impl SessionTask {
                         match guard.state {
                             crate::debug::controller::DebugState::Paused
                             | crate::debug::controller::DebugState::Stopped => {
-                                let old_state = guard.state.clone();
+                                let old_state = guard.state;
                                 guard.state = crate::debug::controller::DebugState::Running;
                                 let iteration = guard.iteration;
                                 drop(guard);
@@ -985,7 +991,7 @@ impl SessionTask {
                         agent_loop.session.set_provider(p.clone());
                     }
                     // Persist to JSONL conversation file
-                    if let Some(ref conv) = agent_loop.session.conversation() {
+                    if let Some(conv) = agent_loop.session.conversation() {
                         conv.update_model_provider(&model, provider.as_deref());
                     }
                     // If the provider also changed, rebuild the LLM Provider
@@ -1008,7 +1014,25 @@ impl SessionTask {
                         }
                     }
                     // Update context builder for next iteration
-                    context_builder.set_override_model(model);
+                    context_builder.set_override_model(model.clone());
+                    // Reset reasoning_effort to new model's default (clear user override).
+                    // This ensures model switch doesn't carry over the previous model's effort.
+                    let default_effort = agent_loop
+                        .core
+                        .get_model_capabilities(&model)
+                        .and_then(|c| c.default_reasoning_effort)
+                        .and_then(|s| acowork_core::providers::traits::ReasoningEffort::from_str_loose(&s));
+                    agent_loop.session.set_reasoning_effort(default_effort);
+                }
+                Some(SessionMessage::ReasoningEffort { effort }) => {
+                    let parsed = acowork_core::providers::traits::ReasoningEffort::from_str_loose(&effort);
+                    tracing::info!(
+                        session_id = %session_id,
+                        effort = %effort,
+                        parsed = ?parsed,
+                        "SessionTask: reasoning effort override"
+                    );
+                    agent_loop.session.set_reasoning_effort(parsed);
                 }
                 Some(SessionMessage::UpdateRuntimeConfig {
                     max_output_tokens,

@@ -10,5 +10,6 @@ pub use error_patterns::{classify_stream_error, is_context_overflow, is_stream_d
 pub use mock::{MockProvider, MockResponse};
 pub use traits::{
     ChatMessage, ChatRequest, ChatResponse, ContentPart, FunctionCall, ImageUrlPart, MessageRole,
-    Provider, ProviderError, ProviderErrorType, StreamError, StreamEvent, ToolCall, UsageInfo,
+    Provider, ProviderError, ProviderErrorType, ReasoningEffort, StreamError, StreamEvent,
+    ToolCall, UsageInfo,
 };

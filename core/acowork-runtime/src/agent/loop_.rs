@@ -178,6 +178,13 @@ pub struct AgentLoop {
     /// Total input chars of the most recent ChatRequest, used for token
     /// ratio calibration together with the API-reported prompt_tokens.
     pub(crate) last_input_chars: usize,
+    /// The reasoning_effort from the most recent build_chat_request() call.
+    /// Preserved for emergency trim retry in call_llm_streaming_inner()
+    /// where the context_builder is immutable.
+    pub(crate) last_reasoning_effort: Option<acowork_core::providers::traits::ReasoningEffort>,
+    /// The thinking_mode from the most recent build_chat_request() call.
+    /// Preserved for emergency trim retry in call_llm_streaming_inner().
+    pub(crate) last_thinking_mode: Option<String>,
 }
 
 impl AgentLoop {
@@ -220,6 +227,8 @@ impl AgentLoop {
             approval_handle: approval_handle.clone(),
             approval_next_id: AtomicU64::new(0),
             last_input_chars: 0,
+            last_reasoning_effort: None,
+            last_thinking_mode: None,
         };
         // Initialize persistent model ratio store from agent config dir.
         let ratio_config_dir = Path::new(&loop_.core.config.work_dir).join("config");
@@ -288,6 +297,8 @@ impl AgentLoop {
             approval_handle: approval_handle.clone(),
             approval_next_id: AtomicU64::new(0),
             last_input_chars: 0,
+            last_reasoning_effort: None,
+            last_thinking_mode: None,
         };
         // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
         session_loop.core.approval_handle = Some(approval_handle);
@@ -651,7 +662,7 @@ impl AgentLoop {
 
                 let state = {
                     let ctrl_guard = ctrl.lock().await;
-                    ctrl_guard.state.clone()
+                    ctrl_guard.state
                 };
                 match state {
                     crate::debug::controller::DebugState::Running => {
@@ -731,10 +742,10 @@ impl AgentLoop {
             .on_phase_enter(crate::debug::protocol::DebugPhase::BudgetCheck)
             .await;
         self.check_budget_and_warn()?;
-        self.trim_history_to_budget(&current_model);
-        let mut chat_request = self.build_chat_request(context_builder, &current_model);
-        if self.check_context_overflow_and_trim(&current_model) {
-            chat_request = self.build_chat_request(context_builder, &current_model);
+        self.trim_history_to_budget(current_model);
+        let mut chat_request = self.build_chat_request(context_builder, current_model);
+        if self.check_context_overflow_and_trim(current_model) {
+            chat_request = self.build_chat_request(context_builder, current_model);
         }
         self.core
             .debug_observer
@@ -745,7 +756,7 @@ impl AgentLoop {
             .on_context_built(crate::debug::observer::ContextSnapshotRequest {
                 context_builder,
                 iteration: debug_iter,
-                model: &current_model,
+                model: current_model,
                 all_tools: &self.core.all_tools,
             })
             .await;
@@ -786,7 +797,7 @@ impl AgentLoop {
             .debug_observer
             .on_phase_enter(crate::debug::protocol::DebugPhase::ParseResponse)
             .await;
-        self.process_llm_response_usage(&response, &current_model)
+        self.process_llm_response_usage(&response, current_model)
             .await;
 
         // ── ④ Text response → early return ──
@@ -940,7 +951,7 @@ mod tests {
     use crate::agent::loop_llm::make_incomplete_marker;
     use crate::agent::loop_tools::execute_single_tool;
     use acowork_core::providers::mock::MockProvider;
-    use acowork_core::providers::traits::{ChatResponse, FunctionCall, MessageRole, ToolCall};
+    use acowork_core::providers::traits::{FunctionCall, MessageRole, ToolCall};
 
     /// Simple echo tool for testing
     struct EchoTool;

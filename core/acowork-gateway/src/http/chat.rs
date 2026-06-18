@@ -152,6 +152,9 @@ struct WsClientMessage {
     model: Option<String>,
     /// Provider name for model_switch messages
     provider: Option<String>,
+    /// Reasoning effort for reasoning_effort messages (Off/Low/Medium/High/Max)
+    #[serde(default)]
+    effort: Option<String>,
     /// Session ID for multi-session routing (explicit pass-through)
     #[serde(default)]
     session_id: Option<String>,
@@ -248,24 +251,21 @@ pub async fn send_message(
                 params["session_id"] = serde_json::json!(sid);
 
                 // Resolve document references if document_ids was provided
-                if let Some(ref doc_ids) = body.document_ids {
-                    if !doc_ids.is_empty() {
-                        if let Some(docs) = resolve_document_refs(&state, sid, doc_ids).await {
+                if let Some(ref doc_ids) = body.document_ids
+                    && !doc_ids.is_empty()
+                        && let Some(docs) = resolve_document_refs(&state, sid, doc_ids).await {
                             params["documents"] = docs;
                         }
-                    }
-                }
             }
             // Pass through multimodal content_parts (e.g. text + image_url)
             if let Some(ref parts) = body.content_parts {
                 params["content_parts"] = serde_json::json!(parts);
             }
             // Pass through attached_context (files/selections added by user)
-            if let Some(ref ctx) = body.attached_context {
-                if !ctx.is_empty() {
+            if let Some(ref ctx) = body.attached_context
+                && !ctx.is_empty() {
                     params["attached_context"] = serde_json::json!(ctx);
                 }
-            }
             let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-api".to_string(),
                 action: "chat_message".to_string(),
@@ -646,6 +646,74 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
         return;
     }
 
+    if client_msg.msg_type == "reasoning_effort" {
+        // Handle reasoning effort override: push to running agent via IPC.
+        // The Runtime persists and applies the override per-session.
+        let effort = match client_msg.effort {
+            Some(ref e) if !e.is_empty() => e.clone(),
+            _ => {
+                let err = serde_json::json!({
+                    "type": "error",
+                    "message": "reasoning_effort requires a non-empty effort field",
+                });
+                let _ = socket.send(Message::Text(err.to_string().into())).await;
+                return;
+            }
+        };
+
+        tracing::info!(agent = %agent_id, effort = %effort, "Forwarding reasoning_effort to agent");
+
+        let message_id = format!("msg-{}", uuid::Uuid::new_v4());
+        let mut pushed_ok = false;
+        if let Some(session_mgr) = &state.session_mgr {
+            let mgr = session_mgr.lock().await;
+            if let Some((_, session)) = mgr.find_by_agent_id(agent_id) {
+                let mut params = serde_json::json!({
+                    "effort": effort,
+                    "message_id": message_id,
+                });
+                if let Some(ref sid) = client_msg.session_id {
+                    params["session_id"] = serde_json::json!(sid);
+                }
+                let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
+                    from: "http-ws".to_string(),
+                    action: "reasoning_effort".to_string(),
+                    params,
+                    command: None,
+                };
+                pushed_ok = session.push_message(intent).await;
+            }
+        }
+
+        if pushed_ok {
+            let ack = serde_json::json!({
+                "type": "ack",
+                "message_id": message_id,
+            });
+            let _ = socket.send(Message::Text(ack.to_string().into())).await;
+            let mut confirmed = serde_json::json!({
+                "type": "reasoning_effort_confirmed",
+                "effort": effort,
+                "agentId": agent_id,
+            });
+            if let Some(ref sid) = client_msg.session_id {
+                confirmed["session_id"] = serde_json::json!(sid);
+            }
+            let _ = socket
+                .send(Message::Text(confirmed.to_string().into()))
+                .await;
+        } else {
+            let err = serde_json::json!({
+                "type": "error",
+                "message": format!("Agent {} is not running, cannot set reasoning effort", agent_id),
+                "message_id": message_id,
+                "agentId": agent_id,
+            });
+            let _ = socket.send(Message::Text(err.to_string().into())).await;
+        }
+        return;
+    }
+
     if client_msg.msg_type == "stop" {
         // Handle stop: send interrupt signal to running agent via IPC
         tracing::info!(agent = %agent_id, "Forwarding stop signal to agent");
@@ -784,24 +852,21 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
                 params["session_id"] = serde_json::json!(sid);
 
                 // Resolve document references if document_ids was provided
-                if let Some(ref doc_ids) = client_msg.document_ids {
-                    if !doc_ids.is_empty() {
-                        if let Some(docs) = resolve_document_refs(&state, sid, doc_ids).await {
+                if let Some(ref doc_ids) = client_msg.document_ids
+                    && !doc_ids.is_empty()
+                        && let Some(docs) = resolve_document_refs(state, sid, doc_ids).await {
                             params["documents"] = docs;
                         }
-                    }
-                }
             }
             // Pass through multimodal content_parts (e.g. text + image_url)
             if let Some(ref parts) = client_msg.content_parts {
                 params["content_parts"] = serde_json::json!(parts);
             }
             // Pass through attached_context (files/selections added by user)
-            if let Some(ref ctx) = client_msg.attached_context {
-                if !ctx.is_empty() {
+            if let Some(ref ctx) = client_msg.attached_context
+                && !ctx.is_empty() {
                     params["attached_context"] = serde_json::json!(ctx);
                 }
-            }
             let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-ws".to_string(),
                 action: "chat_message".to_string(),
@@ -1640,8 +1705,8 @@ async fn resolve_document_refs(
             // (e.g. 九年级春季学习计划.docx.meta.json, NOT 九年级春季学习计划.meta.json)
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let meta_path = docs_dir.join(format!("{}.meta.json", filename));
-            if let Ok(meta_bytes) = std::fs::read_to_string(&meta_path) {
-                if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_bytes) {
+            if let Ok(meta_bytes) = std::fs::read_to_string(&meta_path)
+                && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_bytes) {
                     docs.push(serde_json::json!({
                         "id": doc_id,
                         "filename": meta.get("filename").and_then(|v| v.as_str()).unwrap_or(""),
@@ -1650,7 +1715,6 @@ async fn resolve_document_refs(
                         "size": meta.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
                     }));
                 }
-            }
             break;
         }
     }

@@ -40,6 +40,7 @@ pub struct ResourceCache {
 
 /// Versioned provider list persisted to disk.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct ProviderListFile {
     pub version: u64,
     pub providers: Vec<ProviderListItem>,
@@ -47,6 +48,7 @@ pub struct ProviderListFile {
 
 /// Versioned MCP server list persisted to disk.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct McpListFile {
     pub version: u64,
     pub servers: Vec<McpListItem>,
@@ -54,6 +56,7 @@ pub struct McpListFile {
 
 /// Versioned search provider list persisted to disk.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Default)]
 pub struct SearchListFile {
     pub version: u64,
     pub providers: Vec<SearchProviderListItem>,
@@ -264,8 +267,8 @@ fn load_embedding_models(data_dir: &Path) -> EmbeddingModelsFile {
     //    distributes the binary (dev build script, package installer,
     //    Tauri bundler) is responsible for placing it there.
     let bundled = bundled_embedding_models_path();
-    if let Some(ref bundled_path) = bundled {
-        if let Ok(raw) = std::fs::read_to_string(&bundled_path) {
+    if let Some(ref bundled_path) = bundled
+        && let Ok(raw) = std::fs::read_to_string(bundled_path) {
             match serde_json::from_str::<EmbeddingModelsFile>(&raw) {
                 Ok(list) => {
                     tracing::info!(
@@ -301,7 +304,6 @@ fn load_embedding_models(data_dir: &Path) -> EmbeddingModelsFile {
                 }
             }
         }
-    }
 
     tracing::error!(
         data_dir = %path.display(),
@@ -446,6 +448,8 @@ pub(crate) async fn rebuild_and_save_provider_cache(
                         name: None,
                         family: None,
                         knowledge_cutoff: None,
+                        default_reasoning_effort: None,
+                        thinking_mode: None,
                     },
                 )
             };
@@ -698,32 +702,8 @@ fn extract_api_key_from_mcp_config(
 
 // ── Defaults ───────────────────────────────────────────────────────────
 
-impl Default for ProviderListFile {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            providers: Vec::new(),
-        }
-    }
-}
 
-impl Default for McpListFile {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            servers: Vec::new(),
-        }
-    }
-}
 
-impl Default for SearchListFile {
-    fn default() -> Self {
-        Self {
-            version: 0,
-            providers: Vec::new(),
-        }
-    }
-}
 
 impl Default for ResourceCache {
     fn default() -> Self {
@@ -788,6 +768,8 @@ mod tests {
                         name: Some("GPT-4o".to_string()),
                         family: Some("gpt".to_string()),
                         knowledge_cutoff: Some("2025-04".to_string()),
+                        default_reasoning_effort: None,
+                        thinking_mode: None,
                     },
                     max_output_tokens_limit: 32768,
                 }],

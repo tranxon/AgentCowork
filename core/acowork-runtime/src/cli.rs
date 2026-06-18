@@ -114,13 +114,10 @@ impl Cli {
 
     /// Initialize tracing subscriber with both stderr and file output.
     ///
-
     /// Logs are written to stderr (for Gateway capture) AND to
     /// `{work_dir}/logs/YYYYMMDD_HHMMSS.log` for user inspection.
-
     ///
     /// Returns a reload handle that allows dynamic log level changes
-
     /// at runtime (e.g. when Gateway pushes LogLevelUpdate).
     fn init_tracing(&self) -> Option<LogReloadHandle> {
         let env_filter =
@@ -194,8 +191,6 @@ impl Cli {
         Some(reload_handle)
     }
 }
-
-/// Attempt to connect to Gateway via the given socket path.
 
 // ── Resource cache (version-driven diff sync) ─────────────────────────
 
@@ -349,8 +344,8 @@ async fn async_main(
     // messages are needed during handshake.
     let mut grpc_client: Option<crate::grpc::client::GatewayGrpcClient> = None;
     let mut hello_config: Option<crate::grpc::client::AgentHelloConfig> = None;
-    if let Some(endpoint) = config.get_gateway_address() {
-        if let Some((client, cfg)) = connect_gateway_client(
+    if let Some(endpoint) = config.get_gateway_address()
+        && let Some((client, cfg)) = connect_gateway_client(
             endpoint,
             &loaded.manifest.agent_id,
             &loaded.manifest.version,
@@ -377,8 +372,7 @@ async fn async_main(
             grpc_client = Some(client);
             hello_config = Some(cfg);
             save_resource_cache(std::path::Path::new(&config.work_dir), &new_cache);
-        }
-    };
+        };
     if grpc_client.is_some() {
         tracing::info!("Gateway gRPC client initialized");
     } else {
@@ -729,7 +723,7 @@ async fn async_main(
     let identity_context: Option<String> = hello_config
         .as_ref()
         .and_then(|cfg| cfg.user_identity.as_ref())
-        .map(|u| crate::agent::session::session_manager::format_user_profile_context(u));
+        .map(crate::agent::session::session_manager::format_user_profile_context);
 
     // Clone tool_definitions and identity_context for SessionManagerConfig
     // (Gateway mode) before they are moved into the standalone ContextBuilder.
@@ -815,7 +809,7 @@ async fn async_main(
         //    provider that was already resolved at startup.
         let is_valid = match (&session_model, &session_provider) {
             (Some(model), Some(provider_id)) => {
-                let in_cache = resource_cache.providers.as_ref().map_or(true, |providers| {
+                let in_cache = resource_cache.providers.as_ref().is_none_or(|providers| {
                     providers
                         .iter()
                         .any(|p| p.id == *provider_id && p.models.iter().any(|m| m.id == *model))
@@ -825,7 +819,7 @@ async fn async_main(
                 } else {
                     // Same provider as startup-resolved → already has API key.
                     gateway_current_provider_id.as_deref() == Some(provider_id.as_str())
-                        || hello_config.as_ref().map_or(false, |cfg| {
+                        || hello_config.as_ref().is_some_and(|cfg| {
                             cfg.provider_key_vault
                                 .iter()
                                 .any(|k| k.provider_id == *provider_id)
@@ -1012,8 +1006,8 @@ async fn async_main(
         // (base_url + API key from the cached provider list + key vault).
         // This handles the case where the session's provider differs from
         // the startup-resolved provider (e.g. session saved with different provider).
-        if let (Some(sm), Some(sp)) = (&resumed_model, &resumed_provider) {
-            if startup_provider_id.as_deref() != Some(sp.as_str()) {
+        if let (Some(sm), Some(sp)) = (&resumed_model, &resumed_provider)
+            && startup_provider_id.as_deref() != Some(sp.as_str()) {
                 tracing::info!(
                     session_id = %initial_session_id,
                     session_provider = %sp,
@@ -1037,7 +1031,6 @@ async fn async_main(
                     );
                 }
             }
-        }
 
         // Step 9.5: Apply workspace context and runtime overrides from AgentHelloResult
         //
@@ -1103,11 +1096,10 @@ async fn async_main(
                 .unwrap_or_default();
 
             // If this is first start, persist the default config so the file exists.
-            let is_first_start = std::path::Path::new(&config.work_dir)
+            let is_first_start = !std::path::Path::new(&config.work_dir)
                 .join("config")
                 .join("agent_config.json")
-                .exists()
-                == false;
+                .exists();
 
             if is_first_start {
                 let _ = crate::agent_config::save_agent_config(work_dir_path, &agent_cfg);
@@ -1159,8 +1151,8 @@ async fn async_main(
         // so that MCP connections use the freshest config (e.g. --stdio flags,
         // updated env vars). Without this, a stale agent_mcp.json from a
         // previous session would be used for connections.
-        if let Some(ref cfg) = hello_config {
-            if let Some(ref mcp_list) = cfg.mcp_list {
+        if let Some(ref cfg) = hello_config
+            && let Some(ref mcp_list) = cfg.mcp_list {
                 use acowork_core::protocol::McpServerConfigDef;
                 let catalog: Vec<McpServerConfigDef> = mcp_list
                     .iter()
@@ -1191,7 +1183,6 @@ async fn async_main(
                     );
                 }
             }
-        }
 
         // ── MCP server auto-connect at startup (background, non-blocking) ──
         // Spawn MCP connect in a background task. Results are sent through an
@@ -2009,7 +2000,7 @@ async fn process_gateway_recv(
                     // require_session_id check.
 
                     if action == "list_sessions" {
-                        handle_list_sessions(work_dir, grpc_client, &params, &session_manager)
+                        handle_list_sessions(work_dir, grpc_client, &params, session_manager)
                             .await;
                         return LoopAction::Continue;
                     }
@@ -2314,6 +2305,38 @@ async fn process_gateway_recv(
                         return LoopAction::Continue;
                     }
 
+                    // Handle reasoning_effort: per-session reasoning depth override.
+                    // The frontend sends this via WebSocket; Gateway forwards as IntentReceived.
+                    if action == "reasoning_effort" {
+                        if let Some(effort) = params.get("effort").and_then(|v| v.as_str()) {
+                            let effort_session_id = params
+                                .get("session_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or(&target_session_id);
+                            if let Err(e) = session_manager.route_reasoning_effort(
+                                effort_session_id,
+                                effort.to_string(),
+                            ) {
+                                tracing::warn!(
+                                    session_id = %effort_session_id,
+                                    effort = %effort,
+                                    error = %e,
+                                    "Failed to route reasoning_effort to session"
+                                );
+                            } else {
+                                tracing::info!(
+                                    session_id = %effort_session_id,
+                                    effort = %effort,
+                                    "Reasoning effort override applied"
+                                );
+                            }
+                        } else {
+                            tracing::warn!("reasoning_effort message missing 'effort' field, ignoring");
+                        }
+
+                        return LoopAction::Continue;
+                    }
+
                     // Handle interrupt: route directly to the target session's
                     // AgentLoop inbound channel via SessionHandle::send_inbound,
                     // BYPASSING SessionTask's SessionMessage loop — the latter
@@ -2564,8 +2587,7 @@ async fn process_gateway_recv(
                     // Extract document references if present (for doc_reader integration)
                     let documents: Option<Vec<serde_json::Value>> = params
                         .get("documents")
-                        .and_then(|v| v.as_array())
-                        .map(|arr| arr.clone());
+                        .and_then(|v| v.as_array()).cloned();
 
                     // Extract multimodal content_parts if present (e.g. text + image_url)
                     let content_parts: Option<Vec<acowork_core::providers::traits::ContentPart>> =
@@ -2605,7 +2627,7 @@ async fn process_gateway_recv(
                             .await;
                     }
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::ProviderListUpdate {
@@ -2638,7 +2660,7 @@ async fn process_gateway_recv(
                     cache.providers = Some(providers_for_cache);
                     save_resource_cache(std::path::Path::new(&work_dir), &cache);
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::SearchConfigDelivery {
@@ -2662,7 +2684,7 @@ async fn process_gateway_recv(
                     cache.search_list_version = search_list_version;
                     save_resource_cache(std::path::Path::new(&work_dir), &cache);
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::UserProfileUpdate {
@@ -2683,7 +2705,7 @@ async fn process_gateway_recv(
                     cache.user_profile_version = version;
                     save_resource_cache(std::path::Path::new(&work_dir), &cache);
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::WorkspaceConfigUpdate { config_json } => {
@@ -2734,7 +2756,7 @@ async fn process_gateway_recv(
                         session_count = active_sessions.len(),
                         "Workspace config applied: file written, resolver reloaded, contexts refreshed"
                     );
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::SetSessionWorkspace {
@@ -2780,7 +2802,7 @@ async fn process_gateway_recv(
                     // Format and send per-session workspace context
                     session_manager.update_session_workspace_context(&session_id, &resolver_guard);
                     drop(resolver_guard);
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::LogLevelUpdate { log_level } => {
@@ -2808,7 +2830,7 @@ async fn process_gateway_recv(
                         );
                     }
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::LogRotate => {
@@ -2837,7 +2859,7 @@ async fn process_gateway_recv(
                         tracing::info!("Deleted {} runtime log files", deleted);
                     }
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::LogFileCountUpdate { log_file_count } => {
@@ -2857,7 +2879,7 @@ async fn process_gateway_recv(
                             "Runtime log file count updated dynamically"
                         );
                     }
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::RuntimeConfigUpdate {
@@ -3048,7 +3070,7 @@ async fn process_gateway_recv(
                         }
                     }
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::EnableDebugMode { debug_port } => {
@@ -3066,7 +3088,7 @@ async fn process_gateway_recv(
                     //    sessions created *after* this call inherit debug mode.
                     session_manager.enable_debug_mode(debug_port).await;
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 GatewayResponse::EmbeddingConfigUpdate {
@@ -3090,12 +3112,12 @@ async fn process_gateway_recv(
                         embed_dimension,
                     );
 
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 _ => {
                     tracing::debug!("Ignoring non-IntentReceived Gateway message");
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
             }
         }
@@ -3109,12 +3131,12 @@ async fn process_gateway_recv(
             {
                 Ok(()) => {
                     tracing::info!("Reconnected to Gateway successfully");
-                    return LoopAction::Continue;
+                    LoopAction::Continue
                 }
 
                 Err(e) => {
                     tracing::error!("Failed to reconnect to Gateway: {}", e);
-                    return LoopAction::Break;
+                    LoopAction::Break
                 }
             }
         }
@@ -3127,7 +3149,7 @@ async fn process_gateway_recv(
                 GATEWAY_RECV_RETRY_INTERVAL_MS,
             ))
             .await;
-            return LoopAction::Continue;
+            LoopAction::Continue
         }
     }
 }
@@ -3182,7 +3204,6 @@ async fn spawn_memory_query_handler(
 
 /// Handle MemoryNodesQuery — list nodes with pagination, filtering, search.
 /// Maximum number of nodes to scan without any filter (keyword or type).
-
 /// Queries exceeding this limit are rejected to prevent unbounded memory
 /// allocation and excessive CPU usage on the Runtime side.
 const MAX_UNFILTERED_MEMORY_SCAN: usize = 10_000;
@@ -3289,18 +3310,17 @@ fn handle_memory_nodes_query(
                     .get_property("created_at")
                     .and_then(|v| v.as_timestamp())
                     .map(|ts| ts.as_secs())
-                    .unwrap_or(0) as i64;
+                    .unwrap_or(0);
                 // Time range filter: skip nodes older than the cutoff.
-                if let Some(cutoff_ts) = cutoff {
-                    if created_at < cutoff_ts {
+                if let Some(cutoff_ts) = cutoff
+                    && created_at < cutoff_ts {
                         continue;
                     }
-                }
                 let last_accessed_at = n
                     .get_property("last_accessed_at")
                     .and_then(|v| v.as_timestamp())
                     .map(|ts| ts.as_secs())
-                    .unwrap_or(created_at) as i64;
+                    .unwrap_or(created_at);
                 let access_count = n
                     .get_property("access_count")
                     .and_then(|v| v.as_int64())
@@ -3343,7 +3363,7 @@ fn handle_memory_nodes_query(
 
     let total = all_entries.len() as u64;
     let page = query.page.max(1);
-    let size = query.size.max(1).min(100) as usize;
+    let size = query.size.clamp(1, 100) as usize;
     let start = ((page - 1) as usize) * size;
     let nodes: Vec<_> = if start < all_entries.len() {
         all_entries.into_iter().skip(start).take(size).collect()
@@ -3616,7 +3636,7 @@ async fn handle_list_sessions(
     let total_pages = if total_count == 0 {
         1
     } else {
-        (total_count + page_size - 1) / page_size
+        total_count.div_ceil(page_size)
     };
 
     // ADR-014: Collect live session statuses from SessionManager
@@ -3796,10 +3816,8 @@ async fn relay_stream_chunk(
 
 /// Relay an IntentSend message to Gateway (used by chunk relay task).
 ///
-
 /// IntentSend is the full-round-trip path for discrete events
 /// (tool_call, tool_result, agent_response, etc.) that may require
-
 /// ack/nack handling downstream.
 async fn relay_intent(
     outbound_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
@@ -3853,7 +3871,6 @@ async fn send_session_response(
 }
 
 #[cfg(test)]
-
 mod tests {
 
     use super::*;

@@ -13,6 +13,7 @@ use crate::agent::history::HistoryManager;
 use crate::agent::inbound::InboundMessage;
 use crate::agent::loop_detector::LoopDetector;
 use crate::conversation::ConversationSession;
+use acowork_core::providers::traits::ReasoningEffort;
 
 /// A single item in the session-level todo list.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -45,8 +46,10 @@ pub enum TodoStatus {
 /// optimistic local writes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "status", content = "detail")]
+#[derive(Default)]
 pub enum SessionStatus {
     /// Session is idle — no LLM call in progress
+    #[default]
     Idle,
     /// LLM is generating a response. `message_id` matches the streaming message.
     Streaming { message_id: Option<String> },
@@ -59,11 +62,6 @@ pub enum SessionStatus {
     },
 }
 
-impl Default for SessionStatus {
-    fn default() -> Self {
-        Self::Idle
-    }
-}
 
 impl SessionStatus {
     /// Returns true if the session is actively processing (streaming or awaiting approval).
@@ -122,6 +120,10 @@ pub struct SessionState {
     /// Current model chars/token ratio (calibrated from API feedback).
     /// Updated after each LLM call via `calibrate_from_usage`.
     pub(crate) model_ratio: Option<f64>,
+    /// Per-session reasoning effort override (set by frontend toggle).
+    /// When None, falls back to model capabilities default_reasoning_effort.
+    /// Reset to None on model switch (so new model's default applies).
+    pub(crate) reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl SessionState {
@@ -144,6 +146,7 @@ impl SessionState {
             model: None,
             provider: None,
             model_ratio: None,
+            reasoning_effort: None,
         }
     }
 
@@ -274,6 +277,18 @@ impl SessionState {
     /// Set the current model chars/token ratio (from API calibration).
     pub fn set_model_ratio(&mut self, ratio: f64) {
         self.model_ratio = Some(ratio);
+    }
+
+    /// Get the per-session reasoning effort override.
+    /// Returns None if no override has been set (use model default).
+    pub fn reasoning_effort(&self) -> Option<&ReasoningEffort> {
+        self.reasoning_effort.as_ref()
+    }
+
+    /// Set the per-session reasoning effort override.
+    /// Set to None to clear the override and fall back to model default.
+    pub fn set_reasoning_effort(&mut self, effort: Option<ReasoningEffort>) {
+        self.reasoning_effort = effort;
     }
 
     /// Get the per-session workspace_id (from JSONL metadata, persisted by

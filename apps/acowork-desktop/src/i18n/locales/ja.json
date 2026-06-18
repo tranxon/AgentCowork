@@ -52,6 +52,7 @@
         "imageUnsupportedDesc": "以下の画像対応モデルに切り替えてください：",
         "inputParams": "パラメータを入力...（Enterで送信、Shift+Enterで改行）",
         "inputParamsConnecting": "パラメータを入力...（Agentに接続中...）",
+        "selectReasoningEffort": "思考深度",
         "selectModel": "Select model",
         "startAgent": "Start Agent",
         "llmNotConfigured": "LLM プロバイダーが設定されていません。Harness → Providers で API キーを追加してください。"
@@ -283,7 +284,9 @@
         "removeKey": "Remove key",
         "enterCustomModelName": "Enter custom model name",
         "localProviderNoKey": "Local provider — no API key needed",
-        "compactModelHint": "Compact model for summarization"
+        "compactModelHint": "Compact model for summarization",
+        "defaultReasoningEffort": "デフォルトの推論深度（このプロバイダの全推論モデルに適用）",
+        "useModelDefault": "モデルのデフォルトを使用"
     },
     "harnessSearch": {
         "searchProviderManagement": "検索プロバイダー管理",

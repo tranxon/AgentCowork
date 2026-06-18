@@ -52,6 +52,7 @@
         "imageUnsupportedDesc": "請切換至以下支援圖片輸入的模型：",
         "inputParams": "輸入參數...（Enter 傳送，Shift+Enter 換行）",
         "inputParamsConnecting": "輸入參數...（正在連線至 Agent...）",
+        "selectReasoningEffort": "思考深度",
         "llmNotConfigured": "未設定 LLM 服務商。請在 Harness → 模型服務商 中新增 API 金鑰。"
     },
     "sessionTabBar": {
@@ -281,7 +282,9 @@
         "removeKey": "Remove key",
         "enterCustomModelName": "Enter custom model name",
         "localProviderNoKey": "Local provider — no API key needed",
-        "compactModelHint": "Compact model for summarization"
+        "compactModelHint": "Compact model for summarization",
+        "defaultReasoningEffort": "預設思考深度（對該服務商所有推理模型生效）",
+        "useModelDefault": "使用模型預設"
     },
     "harnessSearch": {
         "searchProviderManagement": "搜尋服務提供者管理",
