@@ -163,6 +163,10 @@ export function ChatPanel() {
    *  bottom (jump, not smooth) in the next useLayoutEffect, even when the user
    *  had scrolled far up into history. */
   const userJustSentRef = useRef(false);
+  /** True while the user is at / near the bottom and hasn't manually scrolled
+   *  away.  Used by the ResizeObserver to keep content pinned when virtual
+   *  items grow (e.g. thinking block streams in). */
+  const pinnedToBottomRef = useRef(false);
   /** Tracks whether the thinking indicator was visible in the previous render.
    *  When it transitions from false → true (first appearance in a turn),
    *  we force-scroll to bottom so the expanded thinking content is visible. */
@@ -514,6 +518,7 @@ export function ChatPanel() {
       if (prevCount === 0) {
          // Agent switch or initial load: jump to bottom instantly (before paint)
         virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
+        pinnedToBottomRef.current = true;
       } else if (virtualCount > prevCount) {
         // New message arrived or thinking indicator appeared
         if (userJustSentRef.current) {
@@ -521,10 +526,12 @@ export function ChatPanel() {
           // even if they had scrolled far up into history.
           userJustSentRef.current = false;
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
+          pinnedToBottomRef.current = true;
         } else if (!thinkingWasShowingRef.current && showThinkingItem) {
           // Thinking block first appeared in this turn — jump to bottom so
           // the expanded content is visible without manual scrolling.
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
+          pinnedToBottomRef.current = true;
         } else {
           // Auto-generated (streaming chunk, thinking toggle, etc.) — smooth scroll
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end", behavior: "smooth" });
@@ -536,7 +543,28 @@ export function ChatPanel() {
     thinkingWasShowingRef.current = showThinkingItem;
   }, [messages, virtualCount, virtualizer, selectedAgentId, currentSessionId, showThinkingItem]);
 
+  // Sticky-bottom: when the virtualizer re-measures a bottom item
+  // (e.g. thinking block content streams in), the scroll position drifts
+  // above the true bottom because the jump used estimateSize.  A
+  // ResizeObserver catches every height change and re-pins if the user
+  // was already near the bottom.
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    let prevHeight = container.scrollHeight;
+    const observer = new ResizeObserver(() => {
+      const newHeight = container.scrollHeight;
+      if (newHeight > prevHeight && pinnedToBottomRef.current) {
+        virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
+      }
+      prevHeight = newHeight;
+    });
+    observer.observe(container);
+    return () => observer.disconnect();
+  }, [virtualCount, virtualizer]);
+
   const scrollToBottom = useCallback(() => {
+    pinnedToBottomRef.current = true;
     virtualizer.scrollToIndex(virtualCount - 1, { align: "end", behavior: "smooth" });
   }, [virtualizer, virtualCount]);
 
@@ -549,6 +577,14 @@ export function ChatPanel() {
     // ── Scroll-to-bottom button visibility ──
     const distFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
     setShowScrollToBottom(distFromBottom > container.clientHeight);
+
+    // When the user manually scrolls away from the bottom, stop pinning
+    // so the ResizeObserver doesn't steal their scroll position.
+    if (distFromBottom > 120) {
+      pinnedToBottomRef.current = false;
+    } else if (distFromBottom < 5) {
+      pinnedToBottomRef.current = true;
+    }
 
     const { isLoadingMore } = useChatStore.getState();
     const agent = useChatStore.getState().agentStates[selectedAgentId];
