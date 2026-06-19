@@ -147,7 +147,7 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
 
   return (
     <nav
-      className="flex w-[var(--spacing-nav)] flex-col items-center gap-2 py-2"
+      className="flex w-[var(--spacing-nav)] flex-col items-center gap-2 pt-2"
       role="navigation"
       aria-label="Main navigation"
     >
