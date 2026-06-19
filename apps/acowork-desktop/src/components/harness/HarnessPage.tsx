@@ -75,6 +75,7 @@ function ProvidersTab() {
   const [newContextWindow, setNewContextWindow] = useState("");
   const [newMaxOutputTokens, setNewMaxOutputTokens] = useState("");
   const [newSupportsToolCalling, setNewSupportsToolCalling] = useState(true);
+  const [newDefaultReasoningEffort, setNewDefaultReasoningEffort] = useState("auto");
   const [newCompactModel, setNewCompactModel] = useState("");
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; message: string } | null>(null);
@@ -93,7 +94,7 @@ function ProvidersTab() {
   const [editMaxOutputTokens, setEditMaxOutputTokens] = useState("");
   const [editSupportsToolCalling, setEditSupportsToolCalling] = useState(true);
   const [editCompactModel, setEditCompactModel] = useState("");
-  const [editDefaultReasoningEffort, setEditDefaultReasoningEffort] = useState("");
+  const [editDefaultReasoningEffort, setEditDefaultReasoningEffort] = useState("auto");
   // Gateway config for default provider indication
   const [config, setConfig] = useState<GatewayConfig | null>(null);
 
@@ -209,6 +210,7 @@ function ProvidersTab() {
               max_output_tokens: mi?.max_tokens ?? 4096,
               supports_tool_calling: mi?.tool_call ?? newSupportsToolCalling,
               supports_reasoning: mi?.reasoning ?? undefined,
+              default_reasoning_effort: mi?.reasoning ? (newDefaultReasoningEffort || undefined) : undefined,
               modalities: mi?.input_modalities?.length ? { input: mi.input_modalities } : undefined,
             };
           }
@@ -228,6 +230,7 @@ function ProvidersTab() {
         setNewContextWindow("");
         setNewMaxOutputTokens("");
         setNewSupportsToolCalling(true);
+        setNewDefaultReasoningEffort("auto");
         setTestResult(null);
         await fetchKeys();
         await fetchConfig();
@@ -296,6 +299,7 @@ function ProvidersTab() {
           max_output_tokens: mi?.max_tokens ?? maxOutTokens,
           supports_tool_calling: mi?.tool_call ?? effectiveSupportsToolCalling,
           supports_reasoning: mi?.reasoning ?? undefined,
+          default_reasoning_effort: mi?.reasoning ? (newDefaultReasoningEffort || undefined) : undefined,
           modalities: mi?.input_modalities?.length ? { input: mi.input_modalities } : undefined,
         };
       }
@@ -316,6 +320,7 @@ function ProvidersTab() {
       setNewContextWindow("");
       setNewMaxOutputTokens("");
       setNewSupportsToolCalling(true);
+      setNewDefaultReasoningEffort("auto");
       setTestResult(null);
       await fetchKeys();
       await fetchConfig();
@@ -371,7 +376,7 @@ function ProvidersTab() {
     setEditMaxOutputTokens(vaultMot && vaultMot > 0 ? vaultMot.toString() : "4096");
     setEditSupportsToolCalling(firstCaps?.supports_tool_calling ?? true);
     setEditCompactModel(keyEntry?.compact_model ?? "");
-    setEditDefaultReasoningEffort(firstCaps?.default_reasoning_effort ?? "");
+    setEditDefaultReasoningEffort(firstCaps?.default_reasoning_effort ?? "auto");
     setShowEditDialog(provider);
     // Fetch models
     setEditModelsLoading(true);
@@ -940,6 +945,33 @@ function ProvidersTab() {
                 );
               })()}
 
+              {/* Default reasoning effort (applies to reasoning models in this provider) */}
+              {newModels.length > 0 && newModels.some((m) => availableModels.find((mi) => mi.id === m)?.reasoning === true) && (
+                <div>
+                  <label className="mb-1 block text-xs text-zinc-500">
+                    {t("harness.defaultReasoningEffort")}
+                  </label>
+                  <select
+                    value={newDefaultReasoningEffort}
+                    onChange={(e) => setNewDefaultReasoningEffort(e.target.value)}
+                    className="w-full appearance-none rounded border border-zinc-200 bg-white px-2.5 py-1.5 text-xs text-zinc-800 outline-none transition-colors focus:border-[var(--color-accent)] dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
+                    style={{
+                      backgroundImage: `url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e")`,
+                      backgroundPosition: 'right 0.5rem center',
+                      backgroundRepeat: 'no-repeat',
+                      backgroundSize: '1.5em 1.5em',
+                      paddingRight: '2rem',
+                    }}
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                  </select>
+                </div>
+              )}
+
               {/* Compact model for LLM summarization */}
               {newModels.length > 0 && (
                 <div>
@@ -1267,12 +1299,11 @@ function ProvidersTab() {
                       paddingRight: '2rem',
                     }}
                   >
-                    <option value="">{t("harness.useModelDefault")}</option>
-                    <option value="Off">Off</option>
-                    <option value="Low">Low</option>
-                    <option value="Medium">Medium</option>
-                    <option value="High">High</option>
-                    <option value="Max">Max</option>
+                    <option value="auto">Auto</option>
+                    <option value="off">Off</option>
+                    <option value="low">Low</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
                   </select>
                 </div>
               )}
@@ -1475,64 +1506,64 @@ function McpTab() {
               const healthErr = healthErrors[server.name];
               const toolCount = healthToolCounts[server.name];
               return (
-              <div
-                key={server.name}
-                className="rounded border border-zinc-100 px-3 py-2 dark:border-zinc-600"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    {/* Health indicator dot */}
-                    {status === "probing" && (
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" title={t("harnessMcp.testing")} />
-                    )}
-                    {status === "healthy" && (
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" title={t("harnessMcp.connected", { count: toolCount })} />
-                    )}
-                    {status === "unhealthy" && (
-                      <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={healthErr || t("harnessMcp.connFailed")} />
-                    )}
-                    <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-700 shrink-0">
-                      {server.transport}
-                    </span>
-                    {(() => {
-                      const iconName = presetIconMap[server.name];
-                      const Icon = iconName ? MCP_ICON_MAP[iconName] : undefined;
-                      return Icon ? <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null;
-                    })()}
-                    <span className="text-xs font-medium truncate">{server.name}</span>
-                    {server.has_secrets && (
-                      <span className="text-[10px] text-amber-500 shrink-0">{t("harnessMcp.hasApiKey")}</span>
-                    )}
-                    {status === "healthy" && toolCount > 0 && (
-                      <span className="text-[10px] text-green-500 shrink-0">{toolCount} tools</span>
-                    )}
+                <div
+                  key={server.name}
+                  className="rounded border border-zinc-100 px-3 py-2 dark:border-zinc-600"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-2 min-w-0">
+                      {/* Health indicator dot */}
+                      {status === "probing" && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400 animate-pulse" title={t("harnessMcp.testing")} />
+                      )}
+                      {status === "healthy" && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" title={t("harnessMcp.connected", { count: toolCount })} />
+                      )}
+                      {status === "unhealthy" && (
+                        <span className="h-2 w-2 shrink-0 rounded-full bg-red-500" title={healthErr || t("harnessMcp.connFailed")} />
+                      )}
+                      <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono text-zinc-500 dark:bg-zinc-700 shrink-0">
+                        {server.transport}
+                      </span>
+                      {(() => {
+                        const iconName = presetIconMap[server.name];
+                        const Icon = iconName ? MCP_ICON_MAP[iconName] : undefined;
+                        return Icon ? <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" /> : null;
+                      })()}
+                      <span className="text-xs font-medium truncate">{server.name}</span>
+                      {server.has_secrets && (
+                        <span className="text-[10px] text-amber-500 shrink-0">{t("harnessMcp.hasApiKey")}</span>
+                      )}
+                      {status === "healthy" && toolCount > 0 && (
+                        <span className="text-[10px] text-green-500 shrink-0">{toolCount} tools</span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        onClick={() => probeByName(server.name)}
+                        disabled={status === "probing"}
+                        className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
+                      >
+                        {status === "probing" ? "..." : t("harnessMcp.testConn")}
+                      </button>
+                      <button
+                        onClick={() => removeServer(server.name)}
+                        className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium"
+                      >
+                        {t("harnessMcp.remove")}
+                      </button>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => probeByName(server.name)}
-                      disabled={status === "probing"}
-                      className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium disabled:opacity-50"
-                    >
-                      {status === "probing" ? "..." : t("harnessMcp.testConn")}
-                    </button>
-                    <button
-                      onClick={() => removeServer(server.name)}
-                      className="inline-flex items-center gap-1 rounded btn-solid px-2 py-1 text-[11px] font-medium"
-                    >
-                      {t("harnessMcp.remove")}
-                    </button>
-                  </div>
+                  {(server.command || server.url) && (
+                    <p className="mt-1 text-[10px] text-zinc-400 break-all">
+                      {server.command || server.url}
+                    </p>
+                  )}
+                  {/* Show health error inline */}
+                  {status === "unhealthy" && healthErr && (
+                    <p className="mt-1 text-[10px] text-red-500 break-all">{healthErr}</p>
+                  )}
                 </div>
-                {(server.command || server.url) && (
-                  <p className="mt-1 text-[10px] text-zinc-400 break-all">
-                    {server.command || server.url}
-                  </p>
-                )}
-                {/* Show health error inline */}
-                {status === "unhealthy" && healthErr && (
-                  <p className="mt-1 text-[10px] text-red-500 break-all">{healthErr}</p>
-                )}
-              </div>
               );
             })}
           </div>
