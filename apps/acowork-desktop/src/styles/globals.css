@@ -5,6 +5,16 @@
   --color-text-secondary: hsl(240 3.7% 46.9%);
   /* ~zinc-500: secondary labels & icons */
 
+  /* Chat palette — title/body background shades for nested blocks
+     inside the chat surface. Used by:
+       - CodeBlock.tsx       (title bar / code body)
+       - ChatPanel.tsx       (table th/td in markdown)
+       - MermaidBlock.tsx    (diagram container)
+     The .dark block below overrides both with dark-mode values,
+     so consumers just write `bg-chat-title` / `bg-chat-body`. */
+  --color-chat-title: hsl(240 5.9% 90.6%);  /* = zinc-200, #e4e4e7 */
+  --color-chat-body:  hsl(240 4.8% 95.9%);  /* = zinc-100, #f4f4f5 */
+
   /* Border radius — 3-tier unified scale
      sm (4px): buttons, inputs, labels, badges
      md (6px): card containers, dialogs, message boxes
@@ -131,6 +141,10 @@
   --color-text: hsl(0 0% 98%);
   --color-text-secondary: hsl(240 5% 64.9%);
   /* ~zinc-400 for dark mode */
+
+  /* Chat palette (dark) — auto-flips the @theme light values */
+  --color-chat-title: hsl(240 5.9% 10%);    /* = zinc-900, #18181b */
+  --color-chat-body:  hsl(240 5.2% 26.1%);  /* = zinc-700, #3f3f46 */
 
   /* Shimmer gradient stops (dark) */
   --shimmer-from: hsl(240 5% 40%);
@@ -274,9 +288,11 @@ body {
 
 /* Code blocks — softer background, proper padding & scrolling.
    The pre is the 'body' of the code block (the language title bar
-   lives in CodeBlock.tsx at the deeper title shade). */
+   lives in CodeBlock.tsx at the deeper title shade).
+   Background comes from --color-chat-body which auto-flips in .dark;
+   only the border needs an explicit dark override. */
 .prose pre {
-  background-color: hsl(240 4.8% 95.9%); /* = zinc-100 */
+  background-color: var(--color-chat-body);
   border: 1px solid hsl(240 5% 80%);
   border-radius: var(--radius-md);
   padding: 0.75em 1em;
@@ -286,7 +302,6 @@ body {
 }
 
 .dark .prose pre {
-  background-color: hsl(240 5.2% 26.1%); /* = zinc-700 */
   border: 1px solid hsl(240 5% 28%);
 }
 
@@ -632,36 +647,21 @@ body {
   border-bottom: none;
 }
 
-/* Chat palette — keep in sync with Tailwind zinc classes used in
-   CodeBlock.tsx and the [&_th]/[&_td] variants in ChatPanel.tsx:
-     title light = zinc-200 = hsl(240 5.9% 90.6%)   #e4e4e7
-     title dark  = zinc-900 = hsl(240 5.9% 10%)    #18181b
-     body  light = zinc-100 = hsl(240 4.8% 95.9%)  #f4f4f5
-     body  dark  = zinc-700 = hsl(240 5.2% 26.1%)  #3f3f46
-*/
-
+/* Table body — subtle zebra striping for readability.
+   th (title) is one shade deeper than td (body) so the header row
+   visually grounds the table; the body is a touch lighter.
+   Title/body colors come from @theme's --color-chat-* tokens,
+   which auto-flip in .dark — no per-rule override needed. */
 .prose th {
-  background-color: hsl(240 5.9% 90.6%); /* = zinc-200 */
+  background-color: var(--color-chat-title);
   border-color: var(--tw-prose-th-borders);
   border-bottom: 1px solid var(--tw-prose-th-borders);
   font-weight: 600;
   color: hsl(240 5% 12%);
 }
 
-.dark .prose th {
-  background-color: hsl(240 5.9% 10%); /* = zinc-900 */
-  color: hsl(240 5% 90%);
-}
-
-/* Table body — subtle zebra striping for readability.
-   th (title) is one shade deeper than td (body) so the header row
-   visually grounds the table; the body is a touch lighter. */
 .prose tbody tr:nth-child(even) {
-  background-color: hsl(240 4.8% 95.9%); /* = zinc-100 */
-}
-
-.dark .prose tbody tr:nth-child(even) {
-  background-color: hsl(240 5.2% 26.1%); /* = zinc-700 */
+  background-color: var(--color-chat-body);
 }
 
 /* Horizontal rules — refined */
