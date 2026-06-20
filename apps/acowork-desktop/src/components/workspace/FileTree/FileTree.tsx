@@ -36,6 +36,8 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
 
     /** Build cache key prefix: agentId:workspaceId (tree cache is NOT per-session) */
     const treeCachePrefix = `${agentId}:${workspaceId}`;
+    const treeRoots = useWorkspaceStore((s) => s.treeRoots);
+    const workspaceRoot = treeRoots[`${agentId}:${workspaceId}`] ?? "";
 
     // Expanded paths from the session — Zustand selector is reactive
     const expandedPathsArr = useChatStore((s) => {
@@ -174,6 +176,7 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
                                 agentId={agentId}
                                 sessionId={sessionId}
                                 relPath={node.relPath}
+                                absPath={workspaceRoot ? `${workspaceRoot}/${node.relPath}` : node.relPath}
                                 isExpanded={expandedPaths.has(node.relPath)}
                                 isLoading={isLoading}
                                 isSelected={selectedPath === node.relPath}

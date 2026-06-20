@@ -40,8 +40,8 @@ pub enum SessionMessage {
         /// instead of ChatMessage::user(), enabling image inputs to flow to the LLM.
         content_parts: Option<Vec<acowork_core::providers::traits::ContentPart>>,
         /// Files/selections attached by the user from workspace explorer / editor.
-        /// Each entry: { rel_path, type ("file"/"selection"), start_line?, end_line? }
-        /// The Runtime reads the actual file content from the workspace filesystem
+        /// Each entry: { abs_path, type ("file"/"selection"), start_line?, end_line? }
+        /// The Runtime reads the file content directly from the absolute path
         /// and injects it into the enriched user message (same pattern as documents).
         attached_context: Option<Vec<acowork_core::protocol::AttachedContextItem>>,
     },
@@ -289,6 +289,139 @@ async fn extract_document_text(path: &std::path::Path) -> Result<String, String>
     .await
     .map_err(|e| format!("Document extraction error: {e}"))
     .and_then(|r| r)
+}
+
+/// Build Markdown file blocks from attached context items.
+///
+/// The frontend now sends absolute paths (`abs_path`), so this function reads
+/// directly from the provided path without joining against a workspace root.
+async fn build_attached_context_blocks(
+    items: &[acowork_core::protocol::AttachedContextItem],
+    session_id: &str,
+) -> Vec<String> {
+    let mut file_blocks: Vec<String> = Vec::new();
+
+    for item in items {
+        // Only process file and selection types
+        if item.context_type == "directory" {
+            continue;
+        }
+        let abs_path = std::path::Path::new(&item.abs_path);
+        tracing::info!(
+            session_id = %session_id,
+            abs_path = %abs_path.display(),
+            "SessionTask: reading attached workspace file"
+        );
+
+        // Read file content — use doc_reader for binary document
+        // formats (PDF, DOCX, PPTX, XLSX) which would fail
+        // utf-8 parsing; use read_to_string for text files.
+        let is_document_format = abs_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|ext| matches!(ext, "pdf" | "docx" | "pptx" | "xlsx"))
+            .unwrap_or(false);
+
+        let file_content = if is_document_format {
+            match extract_document_text(&abs_path).await {
+                Ok(text) => text,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        abs_path = %item.abs_path,
+                        error = %e,
+                        "SessionTask: failed to extract attached document"
+                    );
+                    file_blocks.push(format!(
+                        "## `{}` — [Failed to extract: {}]\n",
+                        item.abs_path, e
+                    ));
+                    continue;
+                }
+            }
+        } else {
+            match std::fs::read_to_string(&abs_path) {
+                Ok(content) => content,
+                Err(e) => {
+                    tracing::warn!(
+                        session_id = %session_id,
+                        abs_path = %item.abs_path,
+                        error = %e,
+                        "SessionTask: failed to read attached workspace file"
+                    );
+                    file_blocks.push(format!(
+                        "## `{}` — [Failed to read: {}]\n",
+                        item.abs_path, e
+                    ));
+                    continue;
+                }
+            }
+        };
+
+        // For selection type, extract the specified line range.
+        // Only applies to text files — binary documents don't
+        // support line-level selection.
+        let content = if !is_document_format
+            && item.context_type == "selection"
+            && (item.start_line.is_some() || item.end_line.is_some())
+        {
+            let lines: Vec<&str> = file_content.lines().collect();
+            let start = item.start_line.unwrap_or(1).saturating_sub(1) as usize;
+            let end = item
+                .end_line
+                .unwrap_or(lines.len() as u32)
+                .min(lines.len() as u32)
+                as usize;
+            if start >= lines.len() {
+                file_content
+            } else {
+                lines[start..end.min(lines.len())].join("\n")
+            }
+        } else {
+            file_content
+        };
+
+        // Truncate very large files to avoid token explosion
+        const MAX_ATTACHED_LEN: usize = 15000;
+        let truncated = content.len() > MAX_ATTACHED_LEN;
+        let display_content = if truncated {
+            &content[..MAX_ATTACHED_LEN]
+        } else {
+            &content
+        };
+
+        let ext = abs_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+        let line_label = match (item.start_line, item.end_line) {
+            (Some(s), Some(e)) if s != e => {
+                format!(" (L{}-L{})", s, e)
+            }
+            (Some(s), _) => format!(" (L{})", s),
+            _ => String::new(),
+        };
+        let trunc_label = if truncated { " [truncated]" } else { "" };
+        if is_document_format {
+            // Document text already has page/slide markers —
+            // render without a code fence.
+            file_blocks.push(format!(
+                "## `{}{}`{}\n\n{}\n",
+                item.abs_path, line_label, trunc_label, display_content
+            ));
+        } else {
+            file_blocks.push(format!(
+                "## `{}{}`{}\n```{}\n{}\n```",
+                item.abs_path,
+                line_label,
+                trunc_label,
+                ext,
+                display_content
+            ));
+        }
+    }
+
+    file_blocks
 }
 
 impl SessionTask {
@@ -746,146 +879,18 @@ impl SessionTask {
                     // inject their contents directly into the user message. This avoids
                     // an extra LLM round-trip where the agent would re-read the file
                     // using the workspace read_file tool.
+                    //
+                    // The frontend sends absolute paths (abs_path) — the Runtime uses
+                    // them directly without workspace_root joining.
                     if let Some(ref att_ctx) = attached_context
                         && !att_ctx.is_empty() {
-                            let workspace_root = agent_loop
-                                .core
-                                .current_work_dir
-                                .as_ref()
-                                .map(std::path::PathBuf::from)
-                                .unwrap_or_else(|| {
-                                    // fallback: agent_home (no workspace configured)
-                                    std::path::PathBuf::from(&agent_loop.core.config().work_dir)
-                                });
                             tracing::info!(
                                 session_id = %session_id,
                                 count = att_ctx.len(),
-                                workspace = %workspace_root.display(),
                                 "SessionTask: pre-extracting attached workspace files"
                             );
 
-                            let mut file_blocks: Vec<String> = Vec::new();
-                            for item in att_ctx {
-                                // Only process file and selection types
-                                if item.context_type == "directory" {
-                                    continue;
-                                }
-                                let abs_path = workspace_root.join(&item.rel_path);
-                                tracing::info!(
-                                    session_id = %session_id,
-                                    rel_path = %item.rel_path,
-                                    abs_path = %abs_path.display(),
-                                    "SessionTask: reading attached workspace file"
-                                );
-
-                                // Read file content — use doc_reader for binary document
-                                // formats (PDF, DOCX, PPTX, XLSX) which would fail
-                                // utf-8 parsing; use read_to_string for text files.
-                                let is_document_format = abs_path
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .map(|ext| matches!(ext, "pdf" | "docx" | "pptx" | "xlsx"))
-                                    .unwrap_or(false);
-
-                                let file_content = if is_document_format {
-                                    match extract_document_text(&abs_path).await {
-                                        Ok(text) => text,
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                session_id = %session_id,
-                                                rel_path = %item.rel_path,
-                                                error = %e,
-                                                "SessionTask: failed to extract attached document"
-                                            );
-                                            file_blocks.push(format!(
-                                                "## `{}` — [Failed to extract: {}]\n",
-                                                item.rel_path, e
-                                            ));
-                                            continue;
-                                        }
-                                    }
-                                } else {
-                                    match std::fs::read_to_string(&abs_path) {
-                                        Ok(content) => content,
-                                        Err(e) => {
-                                            tracing::warn!(
-                                                session_id = %session_id,
-                                                rel_path = %item.rel_path,
-                                                error = %e,
-                                                "SessionTask: failed to read attached workspace file"
-                                            );
-                                            file_blocks.push(format!(
-                                                "## `{}` — [Failed to read: {}]\n",
-                                                item.rel_path, e
-                                            ));
-                                            continue;
-                                        }
-                                    }
-                                };
-
-                                // For selection type, extract the specified line range.
-                                // Only applies to text files — binary documents don't
-                                // support line-level selection.
-                                let content = if !is_document_format
-                                    && item.context_type == "selection"
-                                    && (item.start_line.is_some() || item.end_line.is_some())
-                                {
-                                    let lines: Vec<&str> = file_content.lines().collect();
-                                    let start =
-                                        item.start_line.unwrap_or(1).saturating_sub(1) as usize;
-                                    let end = item
-                                        .end_line
-                                        .unwrap_or(lines.len() as u32)
-                                        .min(lines.len() as u32)
-                                        as usize;
-                                    if start >= lines.len() {
-                                        file_content
-                                    } else {
-                                        lines[start..end.min(lines.len())].join("\n")
-                                    }
-                                } else {
-                                    file_content
-                                };
-
-                                // Truncate very large files to avoid token explosion
-                                const MAX_ATTACHED_LEN: usize = 15000;
-                                let truncated = content.len() > MAX_ATTACHED_LEN;
-                                let display_content = if truncated {
-                                    &content[..MAX_ATTACHED_LEN]
-                                } else {
-                                    &content
-                                };
-
-                                let ext = std::path::Path::new(&item.rel_path)
-                                    .extension()
-                                    .and_then(|e| e.to_str())
-                                    .unwrap_or("");
-                                let line_label = match (item.start_line, item.end_line) {
-                                    (Some(s), Some(e)) if s != e => {
-                                        format!(" (L{}-L{})", s, e)
-                                    }
-                                    (Some(s), _) => format!(" (L{})", s),
-                                    _ => String::new(),
-                                };
-                                let trunc_label = if truncated { " [truncated]" } else { "" };
-                                if is_document_format {
-                                    // Document text already has page/slide markers —
-                                    // render without a code fence.
-                                    file_blocks.push(format!(
-                                        "## `{}{}`{}\n\n{}\n",
-                                        item.rel_path, line_label, trunc_label, display_content
-                                    ));
-                                } else {
-                                    file_blocks.push(format!(
-                                        "## `{}{}`{}\n```{}\n{}\n```",
-                                        item.rel_path,
-                                        line_label,
-                                        trunc_label,
-                                        ext,
-                                        display_content
-                                    ));
-                                }
-                            }
+                            let file_blocks = build_attached_context_blocks(att_ctx, &session_id).await;
 
                             if !file_blocks.is_empty() {
                                 let prefix = if enriched_content.trim().is_empty() {
@@ -1338,5 +1343,82 @@ impl SessionTask {
                 "SessionTask: failed to close session with distillation (non-fatal)"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[tokio::test]
+    async fn test_attached_context_file_uses_absolute_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("test.rs");
+        let mut file = std::fs::File::create(&file_path).unwrap();
+        writeln!(file, "fn main() {{\n    println!(\"hello\");\n}}").unwrap();
+        let abs_path = file_path.to_string_lossy().to_string();
+
+        // Simulate the frontend JSON payload (camelCase absPath).
+        let json = serde_json::json!([{
+            "absPath": abs_path,
+            "type": "file",
+        }]);
+        let items: Vec<acowork_core::protocol::AttachedContextItem> =
+            serde_json::from_value(json).unwrap();
+
+        let blocks = build_attached_context_blocks(&items, "test-session").await;
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].contains("fn main()"));
+        assert!(blocks[0].contains("println!"));
+    }
+
+    #[tokio::test]
+    async fn test_attached_context_selection_line_range() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file_path = tmp.path().join("test.rs");
+        std::fs::write(&file_path, "line1\nline2\nline3\nline4\n").unwrap();
+        let abs_path = file_path.to_string_lossy().to_string();
+
+        let items = vec![acowork_core::protocol::AttachedContextItem {
+            abs_path,
+            context_type: "selection".to_string(),
+            start_line: Some(2),
+            end_line: Some(3),
+        }];
+
+        let blocks = build_attached_context_blocks(&items, "test-session").await;
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].contains("line2"));
+        assert!(blocks[0].contains("line3"));
+        assert!(!blocks[0].contains("line1"));
+        assert!(!blocks[0].contains("line4"));
+    }
+
+    #[tokio::test]
+    async fn test_attached_context_directory_skipped() {
+        let items = vec![acowork_core::protocol::AttachedContextItem {
+            abs_path: "/some/dir".to_string(),
+            context_type: "directory".to_string(),
+            start_line: None,
+            end_line: None,
+        }];
+
+        let blocks = build_attached_context_blocks(&items, "test-session").await;
+        assert!(blocks.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_attached_context_missing_file() {
+        let items = vec![acowork_core::protocol::AttachedContextItem {
+            abs_path: "/nonexistent/path/file.rs".to_string(),
+            context_type: "file".to_string(),
+            start_line: None,
+            end_line: None,
+        }];
+
+        let blocks = build_attached_context_blocks(&items, "test-session").await;
+        assert_eq!(blocks.len(), 1);
+        assert!(blocks[0].contains("[Failed to read:"));
     }
 }

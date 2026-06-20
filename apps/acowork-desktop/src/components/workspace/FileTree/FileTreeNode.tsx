@@ -27,6 +27,7 @@ interface FileTreeNodeProps {
   agentId: string;
   sessionId: string;
   relPath: string;
+  absPath: string;
   isExpanded: boolean;
   isLoading: boolean;
   isSelected: boolean;
@@ -47,6 +48,7 @@ export const FileTreeNode = memo(function FileTreeNode({
   agentId,
   sessionId,
   relPath,
+  absPath,
   isExpanded,
   isLoading,
   isSelected,
@@ -128,10 +130,10 @@ export const FileTreeNode = memo(function FileTreeNode({
       id: `${agentId}:${relPath}`,
       type: isDir ? "directory" : "file",
       name: entry.name,
-      relPath,
+      absPath,
     });
     setContextMenu(null);
-  }, [agentId, sessionId, isDir, relPath, entry.name, addAttachedContext]);
+  }, [agentId, sessionId, isDir, relPath, entry.name, absPath, addAttachedContext]);
 
   const handleDelete = useCallback(async () => {
     const label = isDir ? `directory "${entry.name}"` : `file "${entry.name}"`;

@@ -323,11 +323,14 @@ pub enum PoolingStrategy {
 /// The Gateway forwards them through `IntentReceived.params`, and the
 /// Runtime reads the actual file content from the filesystem and injects
 /// it into the LLM system prompt via ContextBuilder.
+///
+/// The frontend is responsible for resolving the absolute path before
+/// sending — the Runtime uses `abs_path` directly without path joining.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AttachedContextItem {
-    /// Relative path within the workspace (e.g. "src/main.rs")
-    pub rel_path: String,
+    /// Absolute path to the file on the filesystem (e.g. "/home/user/project/src/main.rs")
+    pub abs_path: String,
     /// Context type: "file", "directory", or "selection"
     #[serde(rename = "type")]
     pub context_type: String,
@@ -1307,5 +1310,33 @@ mod tests {
         } else {
             panic!("Expected IntentReceived variant");
         }
+    }
+
+    #[test]
+    fn test_attached_context_item_roundtrip() {
+        // Frontend sends camelCase absPath; runtime uses snake_case abs_path.
+        let item = AttachedContextItem {
+            abs_path: "/workspace/src/main.rs".to_string(),
+            context_type: "selection".to_string(),
+            start_line: Some(10),
+            end_line: Some(20),
+        };
+        let json = serde_json::to_string(&item).unwrap();
+        assert!(json.contains("\"absPath\":"));
+        assert!(!json.contains("\"abs_path\":"));
+
+        let parsed: AttachedContextItem = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed.abs_path, item.abs_path);
+        assert_eq!(parsed.context_type, item.context_type);
+        assert_eq!(parsed.start_line, item.start_line);
+        assert_eq!(parsed.end_line, item.end_line);
+
+        // Also verify deserialization from the frontend payload shape.
+        let frontend_json = r#"{"absPath":"D:\\project\\foo.rs","type":"file","startLine":5,"endLine":15}"#;
+        let parsed: AttachedContextItem = serde_json::from_str(frontend_json).unwrap();
+        assert_eq!(parsed.abs_path, "D:\\project\\foo.rs");
+        assert_eq!(parsed.context_type, "file");
+        assert_eq!(parsed.start_line, Some(5));
+        assert_eq!(parsed.end_line, Some(15));
     }
 }

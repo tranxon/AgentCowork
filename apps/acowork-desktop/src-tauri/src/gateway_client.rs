@@ -344,6 +344,7 @@ impl GatewayClient {
         session_id: Option<&str>,
         command: Option<&str>,
         document_ids: Option<&[String]>,
+        attached_context: Option<&[serde_json::Value]>,
     ) -> Result<SendMessageResponse> {
         let mut body = serde_json::json!({ "content": content });
         if let Some(sid) = session_id {
@@ -355,6 +356,11 @@ impl GatewayClient {
         if let Some(ids) = document_ids {
             if !ids.is_empty() {
                 body["document_ids"] = serde_json::json!(ids);
+            }
+        }
+        if let Some(ctx) = attached_context {
+            if !ctx.is_empty() {
+                body["attached_context"] = serde_json::json!(ctx);
             }
         }
         let resp = self

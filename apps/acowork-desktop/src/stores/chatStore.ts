@@ -80,7 +80,7 @@ interface SessionChatState {
     id: string;
     type: "file" | "directory" | "selection";
     name: string;
-    relPath: string;
+    absPath: string;
     /** Line range for selection type (1-based, inclusive) */
     startLine?: number;
     endLine?: number;
@@ -345,7 +345,7 @@ interface ChatStore {
   /** Toggle a file tree directory expansion (per-session) */
   toggleTreeExpandedPath: (agentId: string, sessionId: string, relPath: string) => void;
   /** Add a file/directory/selection to attached chat context */
-  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; relPath: string; startLine?: number; endLine?: number }) => void;
+  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; absPath: string; startLine?: number; endLine?: number }) => void;
   /** Remove a file/directory from attached chat context */
   removeAttachedContext: (agentId: string, sessionId: string, id: string) => void;
   /** Clear all attached chat context for a session */
@@ -845,7 +845,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     // A human-readable summary is also prepended to the user message so the
     // chat history shows what was attached (LLM also sees this as fallback).
     let attachedContextBlock = "";
-    let attachedContextPayload: Array<{ relPath: string; type: string; startLine?: number; endLine?: number }> | undefined;
+    let attachedContextPayload: Array<{ absPath: string; type: string; startLine?: number; endLine?: number }> | undefined;
     if (sessionId) {
       const ss = getSessionState(get(), agentId, sessionId);
       if (ss.attachedContext.length > 0) {
@@ -853,11 +853,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           const lineInfo = ctx.startLine != null
             ? ` (L${ctx.startLine}${ctx.endLine && ctx.endLine !== ctx.startLine ? `-L${ctx.endLine}` : ""})`
             : "";
-          return `- ${ctx.type === "directory" ? "folder: " : "file: "}\`${ctx.relPath}\`${lineInfo}`;
+          return `- ${ctx.type === "directory" ? "folder: " : "file: "}\`${ctx.absPath}\`${lineInfo}`;
         });
         attachedContextBlock = `[Attached context:]\n${lines.join("\n")}\n\n`;
         attachedContextPayload = ss.attachedContext.map((ctx) => ({
-          relPath: ctx.relPath,
+          absPath: ctx.absPath,
           type: ctx.type,
           startLine: ctx.startLine,
           endLine: ctx.endLine,
@@ -1359,7 +1359,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     });
   },
 
-  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; relPath: string; startLine?: number; endLine?: number }) => {
+  addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; absPath: string; startLine?: number; endLine?: number }) => {
     set((state) => {
       const ss = getSessionState(state, agentId, sessionId);
       // Avoid duplicates

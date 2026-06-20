@@ -1012,11 +1012,15 @@ export function FileEditorPanel({ width }: { width: number }) {
 
         const { startLine, endLine } = selectionRange;
         const lineLabel = startLine === endLine ? `L${startLine}` : `L${startLine}-L${endLine}`;
+        // Resolve absolute path from tree root
+        const treeRoots = useWorkspaceStore.getState().treeRoots;
+        const workspaceRoot = treeRoots[`${agentId}:${activeFile.workspaceId}`] ?? "";
+        const absPath = workspaceRoot ? `${workspaceRoot}/${activeFile.relPath}` : activeFile.relPath;
         addAttachedContext(agentId, sessionId, {
             id: `${agentId}:${activeFile.relPath}:${startLine}:${endLine}`,
             type: "selection",
             name: `${activeFile.relPath.split("/").pop() || activeFile.relPath} ${lineLabel}`,
-            relPath: activeFile.relPath,
+            absPath,
             startLine,
             endLine,
         });

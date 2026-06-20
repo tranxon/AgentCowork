@@ -1,5 +1,6 @@
 //! Chat commands
 
+use serde_json::Value as JsonValue;
 use tauri::State;
 
 use crate::gateway_client::{DocumentUploadResponse, SendMessageResponse};
@@ -14,6 +15,7 @@ pub async fn send_message(
     session_id: Option<String>,
     command: Option<String>,
     document_ids: Option<Vec<String>>,
+    attached_context: Option<Vec<JsonValue>>,
 ) -> Result<SendMessageResponse, String> {
     let client = state.gateway.read().await;
     client
@@ -23,6 +25,7 @@ pub async fn send_message(
             session_id.as_deref(),
             command.as_deref(),
             document_ids.as_deref(),
+            attached_context.as_deref(),
         )
         .await
         .map_err(|e| e.to_string())
