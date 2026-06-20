@@ -555,9 +555,18 @@ export function ChatPanel() {
   // useVirtualizer tracks measurements in React state, so getTotalSize()
   // returns a new value after recalculation, triggering this effect before
   // the next paint.
+  //
+  // IMPORTANT: Only force scroll when new items were added (virtualCount
+  // increased).  When existing items grow (e.g. mermaid diagram finishes
+  // rendering), the height change can push content down — forcing a scroll
+  // in that case creates visible jank.  The virtualizer's automatic
+  // re-measurement handles size changes of existing items just fine.
+  const prevStickyCountRef = useRef(0);
   const totalSize = virtualizer.getTotalSize();
   useLayoutEffect(() => {
-    if (pinnedToBottomRef.current && virtualCount > 0) {
+    const countChanged = virtualCount !== prevStickyCountRef.current;
+    prevStickyCountRef.current = virtualCount;
+    if (pinnedToBottomRef.current && virtualCount > 0 && countChanged) {
       virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
     }
   }, [totalSize, virtualCount, virtualizer]);

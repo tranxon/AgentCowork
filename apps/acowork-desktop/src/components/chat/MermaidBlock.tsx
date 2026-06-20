@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useLayoutEffect, useState } from "react";
 import mermaid from "mermaid";
 
 /** (Re-)initialize mermaid global config. Safe to call multiple times. */
@@ -81,7 +81,7 @@ function hashStr(s: string): number {
 }
 
 const wrapperClass =
-  "my-2 w-full overflow-x-auto rounded-md border border-chat-border bg-chat-body p-3";
+  "my-2 w-full overflow-x-auto rounded-md border border-chat-border bg-chat-body";
 
 /** Applied to the SVG-rendered container — forces SVG to fill available width */
 const svgContainerClass =
@@ -95,6 +95,7 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const instanceIdRef = useRef(`m-${Math.random().toString(36).slice(2, 8)}`);
   const [svgContent, setSvgContent] = useState<string | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     ensureInit();
@@ -122,9 +123,26 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
     };
   }, [chart]);
 
+  // After SVG is injected, measure and lock the height so the virtualizer
+  // doesn't see further re-layouts on subsequent renders.
+  useLayoutEffect(() => {
+    if (svgContent && containerRef.current) {
+      const el = containerRef.current;
+      // Wait a microtask for the SVG to render, then measure
+      requestAnimationFrame(() => {
+        if (el) {
+          const h = el.offsetHeight;
+          if (h > 0) {
+            el.style.minHeight = `${h}px`;
+          }
+        }
+      });
+    }
+  }, [svgContent]);
+
   if (renderFailed) {
     return (
-      <div className={wrapperClass}>
+      <div className={`${wrapperClass} p-3`}>
         <pre className="m-0 whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
           {chart}
         </pre>
@@ -132,10 +150,40 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
     );
   }
 
+  // Loading state: show a placeholder with visible min-height so the
+  // virtualizer has a stable measure, avoiding scroll jank when the
+  // async mermaid.render() finally injects the SVG.
+  if (!svgContent) {
+    return (
+      <div
+        ref={containerRef}
+        className={`${wrapperClass} min-h-[140px] flex items-center justify-center p-3`}
+      >
+        <div className="flex items-center gap-2 text-zinc-300 dark:text-zinc-500 select-none">
+          <svg
+            className="h-4 w-4 animate-spin"
+            xmlns="http://www.w3.org/2000/svg"
+            fill="none"
+            viewBox="0 0 24 24"
+          >
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+            <path
+              className="opacity-75"
+              fill="currentColor"
+              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+            />
+          </svg>
+          <span className="text-xs">Rendering diagram...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className={`${wrapperClass} ${svgContainerClass} [&_.label]:text-zinc-600`}
-      dangerouslySetInnerHTML={svgContent ? { __html: svgContent } : undefined}
+      ref={containerRef}
+      className={`${wrapperClass} ${svgContainerClass} [&_.label]:text-zinc-600 p-3`}
+      dangerouslySetInnerHTML={{ __html: svgContent }}
     />
   );
 }

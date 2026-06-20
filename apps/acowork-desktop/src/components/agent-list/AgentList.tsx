@@ -320,8 +320,8 @@ export function AgentList({ width }: AgentListProps) {
                     </div>
                   </div>
                   {/* Bottom row: current session title */}
-                  <div className="mt-0.5 truncate" style={{ fontSize: "calc(var(--ui-font-size, 0.875rem) * 0.85)" }}>
-                    <span className={cn(selectedAgentId === agent.agent_id ? "text-white/70" : "text-zinc-500 dark:text-zinc-400")}>
+                  <div className="mt-0.5" style={{ fontSize: "calc(var(--ui-font-size, 0.875rem) * 0.85)" }}>
+                    <span className={cn("block truncate", selectedAgentId === agent.agent_id ? "text-white/70" : "text-zinc-500 dark:text-zinc-400")}>
                       {sessionTitle === undefined ? "" : (sessionTitle === null ? "No session" : (sessionTitle || "Untitled session"))}
                     </span>
                   </div>
