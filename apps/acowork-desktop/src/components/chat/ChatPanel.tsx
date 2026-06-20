@@ -1687,7 +1687,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
                 <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{liveAgentName}</span>
               )}
               {message.senderRole && (
-                <span className="rounded bg-zinc-200 px-1 py-0 text-[10px] font-medium text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">{message.senderRole}</span>
+                <span className="rounded bg-chat-badge px-1 py-0 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{message.senderRole}</span>
               )}
             </div>
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
@@ -1727,7 +1727,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
                 <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{liveAgentName}</span>
               )}
               {message.senderRole && (
-                <span className="rounded bg-zinc-200 px-1 py-0 text-[10px] font-medium text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">{message.senderRole}</span>
+                <span className="rounded bg-chat-badge px-1 py-0 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{message.senderRole}</span>
               )}
             </div>
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
@@ -1762,7 +1762,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
                 <span className="text-xs font-medium text-zinc-400 dark:text-zinc-500">{liveAgentName}</span>
               )}
               {message.senderRole && (
-                <span className="rounded bg-zinc-200 px-1 py-0 text-[10px] font-medium text-zinc-500 dark:bg-zinc-700 dark:text-zinc-400">{message.senderRole}</span>
+                <span className="rounded bg-chat-badge px-1 py-0 text-[10px] font-medium text-zinc-500 dark:text-zinc-400">{message.senderRole}</span>
               )}
             </div>
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words overflow-hidden" style={fontSizeStyle}>

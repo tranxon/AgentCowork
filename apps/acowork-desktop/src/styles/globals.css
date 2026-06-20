@@ -8,15 +8,19 @@
   /* Chat palette — background shades for the message surface and
      nested blocks inside it. Used by:
        - ChatPanel.tsx       (assistant/thought/error/system message bubbles)
-       - CodeBlock.tsx       (title bar / code body)
+       - ChatPanel.tsx       (sender-role label pill next to agent name)
+       - CodeBlock.tsx       (title bar / code body / wrapper border / title-body separator)
        - ChatPanel.tsx       (table th/td in markdown)
-       - MermaidBlock.tsx    (diagram container)
-     The .dark block below overrides all three with dark-mode values,
+       - MermaidBlock.tsx    (diagram container + border)
+     The .dark block below overrides all five with dark-mode values,
      so consumers just write `bg-chat-bubble` / `bg-chat-title` /
-     `bg-chat-body` with no `dark:` prefix needed. */
+     `bg-chat-body` / `border-chat-border` / `bg-chat-badge` with no
+     `dark:` prefix needed. */
   --color-chat-bubble: hsl(240 5.9% 90.6% / 0.5); /* = zinc-200/50 — message surface */
   --color-chat-title:  hsl(240 5.9% 90.6%);       /* = zinc-200, #e4e4e7 — block title */
   --color-chat-body:   hsl(240 4.8% 95.9%);       /* = zinc-100, #f4f4f5 — block body */
+  --color-chat-border: hsl(240 5.9% 90.6%);       /* = zinc-200, #e4e4e7 — container border (CodeBlock/Mermaid wrapper & title separator) */
+  --color-chat-badge:  hsl(240 5.9% 90.6%);       /* = zinc-200, #e4e4e7 — sender-role label pill */
 
   /* Border radius — 3-tier unified scale
      sm (4px): buttons, inputs, labels, badges
@@ -145,10 +149,12 @@
   --color-text-secondary: hsl(240 5% 64.9%);
   /* ~zinc-400 for dark mode */
 
-  /* Chat palette (dark) — auto-flips the @theme light values */
+  /* Chat palette (dark) — auto-flips the @theme light values (5 tokens) */
   --color-chat-bubble: hsl(240 3.8% 15.7%);  /* = zinc-800, #27272a — message surface */
   --color-chat-title:  hsl(240 5.9% 10%);    /* = zinc-900, #18181b — block title */
   --color-chat-body:   hsl(240 5.2% 26.1%);  /* = zinc-700, #3f3f46 — block body */
+  --color-chat-border: hsl(240 5.2% 26.1%);  /* = zinc-700, #3f3f46 — container border */
+  --color-chat-badge:  hsl(240 5.2% 26.1%);  /* = zinc-700, #3f3f46 — sender-role label pill */
 
   /* Shimmer gradient stops (dark) */
   --shimmer-from: hsl(240 5% 40%);
