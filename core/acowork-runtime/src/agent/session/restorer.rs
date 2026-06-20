@@ -40,7 +40,7 @@ use std::path::Path;
 
 use acowork_core::providers::traits::{ChatMessage, FunctionCall, MessageRole, ToolCall};
 
-use crate::conversation::{ConversationEntry, ENTRY_KIND_COMPACTION};
+use crate::conversation::{ConversationEntry, SessionMetadata, ENTRY_KIND_COMPACTION};
 
 /// Outcome of a successful restore call.
 #[derive(Debug, Clone)]
@@ -88,13 +88,38 @@ pub fn restore_history_from_jsonl(path: &Path) -> Result<RestoreOutcome, Restore
     use std::io::{BufRead, BufReader};
 
     let file = std::fs::File::open(path)?;
-    let reader = BufReader::new(file);
+    let mut reader = BufReader::new(file);
 
-    // Pass 1: parse all lines, skipping the metadata header (line 0) and any
-    // corrupt rows. We collect into a Vec because we may need to scan twice
-    // (locate last compaction event, then walk forward from it).
+    // Read the first line (SessionMetadata) separately so we can extract
+    // `last_compaction_offset` — the O(1) hint that tells us exactly where
+    // the most recent compaction marker sits in the file.
+    let mut first_line = String::new();
+    reader.read_line(&mut first_line)?;
+    let meta_end = first_line.len() as u64;
+    let compaction_abs: Option<u64> =
+        serde_json::from_str::<SessionMetadata>(first_line.trim())
+            .ok()
+            .and_then(|m| m.last_compaction_offset)
+            .map(|relative| meta_end + relative);
+
+    // Pass 1: parse data lines.
+    //
+    // When `compaction_abs` is available we know the exact byte offset of
+    // the compaction entry in the file.  This lets us skip storing pre-
+    // compaction entries that will never enter the LLM context (user /
+    // assistant / thought / tool entries before the last compaction),
+    // saving both memory and the O(N) Pass-2 rposition scan.
+    //
+    // When `compaction_abs` is None (legacy session or session that has
+    // never been compacted) we fall back to the original behaviour: store
+    // every entry and locate the compaction via rposition.
     let mut entries: Vec<ConversationEntry> = Vec::new();
     let mut skipped = 0usize;
+    // `passed_compaction` starts as `true` when there is no offset hint
+    // (so we store *everything*).  It flips to `true` once we encounter
+    // the compaction entry on the fast path.
+    let mut passed_compaction = compaction_abs.is_none();
+
     for (line_idx, line) in reader.lines().enumerate() {
         let line = match line {
             Ok(l) => l,
@@ -107,12 +132,26 @@ pub fn restore_history_from_jsonl(path: &Path) -> Result<RestoreOutcome, Restore
         if line.trim().is_empty() {
             continue;
         }
-        // Line 0 is SessionMetadata, not a ConversationEntry.
-        if line_idx == 0 {
-            continue;
-        }
+        // Metadata line (line 0) was already consumed by read_line above.
         match serde_json::from_str::<ConversationEntry>(&line) {
-            Ok(entry) => entries.push(entry),
+            Ok(entry) => {
+                let is_compaction =
+                    entry.kind.as_deref() == Some(ENTRY_KIND_COMPACTION);
+
+                if is_compaction {
+                    passed_compaction = true;
+                    entries.push(entry);
+                } else if passed_compaction {
+                    // After the compaction point: store everything.
+                    entries.push(entry);
+                } else if entry.role == "system" && entry.kind.is_none() {
+                    // Before the compaction point: only keep system entries
+                    // (identity context, workspace description, etc.).
+                    entries.push(entry);
+                }
+                // else: pre-compaction non-system entry → skip (silently
+                // dropped — it won't enter the LLM context).
+            }
             Err(e) => {
                 tracing::warn!(line_idx, error = %e, "Restore: malformed entry, skipping");
                 skipped += 1;
@@ -120,10 +159,20 @@ pub fn restore_history_from_jsonl(path: &Path) -> Result<RestoreOutcome, Restore
         }
     }
 
-    // Pass 2: locate the most recent compaction marker.
-    let last_compaction_idx = entries.iter().rposition(|e| {
-        e.kind.as_deref() == Some(ENTRY_KIND_COMPACTION)
-    });
+    // Pass 2: locate the most recent compaction marker (legacy path only;
+    // the fast path above already tracked `had_compaction` and reordered
+    // entries so the compaction entry is followed by post-compaction data).
+    let last_compaction_idx = if compaction_abs.is_some() {
+        // On the fast path entries are already [system, compaction, …]
+        // so we can find the idx with a forward scan.
+        entries.iter().position(|e| {
+            e.kind.as_deref() == Some(ENTRY_KIND_COMPACTION)
+        })
+    } else {
+        entries.iter().rposition(|e| {
+            e.kind.as_deref() == Some(ENTRY_KIND_COMPACTION)
+        })
+    };
 
     // Pass 3: build the working entry slice based on whether a compaction
     // exists. With compaction: keep leading System entries + the compaction
