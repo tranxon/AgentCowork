@@ -272,9 +272,11 @@ body {
   --tw-prose-td-borders: hsl(240 5% 25%);
 }
 
-/* Code blocks — softer background, proper padding & scrolling */
+/* Code blocks — softer background, proper padding & scrolling.
+   The pre is the 'body' of the code block (the language title bar
+   lives in CodeBlock.tsx at the deeper title shade). */
 .prose pre {
-  background-color: hsl(240 5% 92%);
+  background-color: hsl(240 4.8% 95.9%); /* = zinc-100 */
   border: 1px solid hsl(240 5% 80%);
   border-radius: var(--radius-md);
   padding: 0.75em 1em;
@@ -284,7 +286,7 @@ body {
 }
 
 .dark .prose pre {
-  background-color: hsl(240 5% 18%);
+  background-color: hsl(240 5.2% 26.1%); /* = zinc-700 */
   border: 1px solid hsl(240 5% 28%);
 }
 
@@ -630,8 +632,16 @@ body {
   border-bottom: none;
 }
 
+/* Chat palette — keep in sync with Tailwind zinc classes used in
+   CodeBlock.tsx and the [&_th]/[&_td] variants in ChatPanel.tsx:
+     title light = zinc-200 = hsl(240 5.9% 90.6%)   #e4e4e7
+     title dark  = zinc-900 = hsl(240 5.9% 10%)    #18181b
+     body  light = zinc-100 = hsl(240 4.8% 95.9%)  #f4f4f5
+     body  dark  = zinc-700 = hsl(240 5.2% 26.1%)  #3f3f46
+*/
+
 .prose th {
-  background-color: hsl(240 5% 92%);
+  background-color: hsl(240 5.9% 90.6%); /* = zinc-200 */
   border-color: var(--tw-prose-th-borders);
   border-bottom: 1px solid var(--tw-prose-th-borders);
   font-weight: 600;
@@ -639,7 +649,7 @@ body {
 }
 
 .dark .prose th {
-  background-color: hsl(240 5% 18%);
+  background-color: hsl(240 5.9% 10%); /* = zinc-900 */
   color: hsl(240 5% 90%);
 }
 
@@ -647,11 +657,11 @@ body {
    th (title) is one shade deeper than td (body) so the header row
    visually grounds the table; the body is a touch lighter. */
 .prose tbody tr:nth-child(even) {
-  background-color: hsl(240 5% 96%);
+  background-color: hsl(240 4.8% 95.9%); /* = zinc-100 */
 }
 
 .dark .prose tbody tr:nth-child(even) {
-  background-color: hsl(240 5% 30%);
+  background-color: hsl(240 5.2% 26.1%); /* = zinc-700 */
 }
 
 /* Horizontal rules — refined */
