@@ -450,13 +450,17 @@ export function AgentList({ width }: AgentListProps) {
             <Package className="h-3.5 w-3.5" /> Publish
           </button>
 
-          <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
-          <button
-            className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
-            onClick={() => handleUninstall(contextMenu.agentId)}
-          >
-            <Trash2 className="h-3.5 w-3.5" /> Uninstall
-          </button>
+          {contextAgent && contextAgent.agent_id !== "com.acowork.system" && (
+            <>
+              <div className="my-1 border-t border-zinc-200 dark:border-zinc-700" />
+              <button
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
+                onClick={() => handleUninstall(contextMenu.agentId)}
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Uninstall
+              </button>
+            </>
+          )}
         </div>
       )}
 
