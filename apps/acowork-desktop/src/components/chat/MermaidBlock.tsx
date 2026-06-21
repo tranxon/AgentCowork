@@ -87,6 +87,55 @@ const wrapperClass =
 const svgContainerClass =
   "[&_svg]:w-full [&_svg]:max-w-full";
 
+/**
+ * Quick validation: skip rendering if the content is clearly incomplete.
+ * ReactMarkdown fires the pre component on every streaming chunk, so partial
+ * code (e.g. just "sequenceDiagram\n    part") would otherwise trigger a
+ * cascade of parse errors from mermaid.render().
+ */
+function isPlausibleMermaid(code: string): boolean {
+  const trimmed = code.trim();
+  if (!trimmed) return false;
+
+  // Needs at least a header line + one content line
+  const lines = trimmed.split("\n");
+  if (lines.length < 2) return false;
+
+  const firstLine = lines[0].trim();
+  const supported = [
+    "flowchart",
+    "graph",
+    "sequenceDiagram",
+    "classDiagram",
+    "stateDiagram",
+    "stateDiagram-v2",
+    "erDiagram",
+    "gantt",
+    "pie",
+    "gitGraph",
+    "mindmap",
+    "timeline",
+    "quadrantChart",
+    "xyChart",
+    "block",
+    "architecture",
+    "kanban",
+    "sankey",
+    "xychart",
+  ];
+  if (!supported.some((t) => firstLine.startsWith(t))) return false;
+
+  // Skip if the last non-empty line looks incomplete — it ends with an
+  // edge marker that expects more tokens on the same line (streaming).
+  const lastNonEmpty = [...lines].reverse().find((l) => l.trim().length > 0);
+  if (lastNonEmpty) {
+    const endsWithPartial = /(?:-->|->|==>|=>|-\.>$|--x|--o)$/.test(lastNonEmpty.trim());
+    if (endsWithPartial) return false;
+  }
+
+  return true;
+}
+
 interface MermaidBlockProps {
   chart: string;
 }
@@ -98,28 +147,38 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    ensureInit();
+    // Debounce: wait 200ms for the stream to settle before attempting render.
+    // Rapid prop updates during streaming would otherwise fire a cascade of
+    // partial renders, each failing on incomplete content.
+    const timer = setTimeout(() => {
+      // Don't attempt render on partial streaming chunks
+      if (!isPlausibleMermaid(chart)) return;
 
-    let cancelled = false;
-    const id = `${instanceIdRef.current}-${hashStr(chart)}`;
+      ensureInit();
 
-    (async () => {
-      try {
-        const { svg } = await mermaid.render(id, chart);
-        if (!cancelled) {
-          setSvgContent(svg);
-          setRenderFailed(false);
+      let cancelled = false;
+      const id = `${instanceIdRef.current}-${hashStr(chart)}`;
+
+      (async () => {
+        try {
+          const { svg } = await mermaid.render(id, chart);
+          if (!cancelled) {
+            setSvgContent(svg);
+            setRenderFailed(false);
+          }
+        } catch (err) {
+          console.error("[MermaidBlock] render failed:", err);
+          console.error("[MermaidBlock] chart content:", chart.slice(0, 500));
+          if (!cancelled) {
+            setSvgContent(null);
+            setRenderFailed(true);
+          }
         }
-      } catch {
-        if (!cancelled) {
-          setSvgContent(null);
-          setRenderFailed(true);
-        }
-      }
-    })();
+      })();
+    }, 200);
 
     return () => {
-      cancelled = true;
+      clearTimeout(timer);
     };
   }, [chart]);
 

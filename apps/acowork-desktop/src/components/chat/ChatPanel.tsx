@@ -23,8 +23,60 @@ import type { ChatMessage, VaultKeyEntry, ModelInfo, ModelEntry, ModelCapabiliti
 import { ThinkBlock } from "./ThinkBlock";
 import { ExploreBlock } from "./ExploreBlock";
 import { CodeBlock } from "./CodeBlock";
+import { MermaidBlock } from "./MermaidBlock";
 import { ContextUsageIcon } from "./ContextUsageIcon";
 import { CompactionCard } from "./CompactionCard";
+
+/**
+ * Strip common leading whitespace from multi-line strings.
+ * Useful when a code block arrives indented inside a list item.
+ */
+function dedent(code: string): string {
+  const lines = code.split("\n");
+  const nonEmpty = lines.filter((l) => l.trim().length > 0);
+  if (nonEmpty.length === 0) return code.trim();
+
+  const minIndent = Math.min(
+    ...nonEmpty.map((l) => l.match(/^ */)?.[0].length ?? 0),
+  );
+  return lines.map((l) => l.slice(minIndent)).join("\n").trim();
+}
+
+/**
+ * Split streaming markdown content by mermaid code blocks so that
+ * ReactMarkdown never sees the ```mermaid fences — it would otherwise
+ * misparse them during streaming (e.g. swallowing the first diagram
+ * into a larger "markdown"-language code block).
+ *
+ * Text segments → ReactMarkdown
+ * Mermaid blocks → MermaidBlock (no fence, no indentation confusion)
+ */
+function StreamMarkdown({ content }: { content: string }) {
+  // Split on ```mermaid ... ``` (non-greedy, handles indented closing fences)
+  const segments = content.split(/(```mermaid\n[\s\S]*?\n[ \t]*```)/g).filter(Boolean);
+
+  if (segments.length <= 1) {
+    // Fast path: no mermaid blocks at all
+    return <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{content}</ReactMarkdown>;
+  }
+
+  return (
+    <>
+      {segments.map((seg, i) => {
+        const mermaidMatch = seg.match(/^```mermaid\n([\s\S]*?)\n[ \t]*```$/);
+        if (mermaidMatch) {
+          const code = dedent(mermaidMatch[1]);
+          return <MermaidBlock key={i} chart={code} />;
+        }
+        return (
+          <ReactMarkdown key={i} remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {seg}
+          </ReactMarkdown>
+        );
+      })}
+    </>
+  );
+}
 
 /** ReactMarkdown component overrides — code blocks with title bar */
 const markdownComponents = {
@@ -37,7 +89,7 @@ const markdownComponents = {
     if (codeEl) {
       const { className, children: codeContent } = codeEl.props;
       const language = className?.replace(/^language-/, "") || "";
-      const code = Children.toArray(codeContent).join("");
+      const code = dedent(Children.toArray(codeContent).join(""));
       return <CodeBlock language={language} code={code} />;
     }
     return <pre>{children}</pre>;
@@ -1702,7 +1754,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
               {message.content && (
                 <div className="prose prose-sm prose-zinc max-w-none prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-headings:font-semibold select-text break-words [&_th]:bg-chat-title [&_td]:bg-chat-body [&_tbody_tr]:!bg-transparent" style={fontSizeStyle}>
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{message.content}</ReactMarkdown>
+                  <StreamMarkdown content={message.content} />
                 </div>
               )}
               {showPlaceholder && (
