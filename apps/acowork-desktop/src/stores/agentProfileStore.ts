@@ -204,10 +204,24 @@ export const useAgentProfileStore = create<AgentProfileStore>((set, get) => ({
     for (const agent of agents) {
       const id = agent.agent_id;
       if (!id) continue;
-      if (agent.avatar) continue; // has packaged avatar
       const current = state.profiles[id];
+      if (agent.avatar) {
+        // Packaged avatar present (manifest.avatar) — the design doc
+        // (`docs/design/zh/02-agent-package.md`) makes it the highest
+        // priority. Auto-heal any stale `avatarIconId` left in the
+        // profile from a previous install (when the manifest had no
+        // `avatar`). The AgentAvatar component will then fall through
+        // to the packaged avatar on the next render.
+        if (current && current.avatarIconId) {
+          updates[id] = { ...current, avatarIconId: null };
+          dirty = true;
+        }
+        continue;
+      }
       if (current && current.avatarIconId) continue; // user already set one
-      // Prefer the manifest's builtin_avatar hint; fall back to a random pick.
+      // No packaged avatar and no profile icon — pick the manifest's
+      // `builtin_avatar` hint, else a random builtin. This is the
+      // self-heal backfill for agents that ship without an `avatar`.
       const iconId = normalizeBuiltinAvatarId(agent.builtin_avatar) ?? pickRandomBuiltinIconId();
       if (!iconId) continue;
       updates[id] = { ...(current ?? { ...DEFAULT_SETTINGS }), avatarIconId: iconId };

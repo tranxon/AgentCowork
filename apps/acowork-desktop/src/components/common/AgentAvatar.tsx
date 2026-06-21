@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { BUILTIN_ICONS } from "./UserAvatar";
 import {
   pickDeterministicBuiltinIconId,
+  resolveAgentAvatarObjectUrl,
   resolveAgentAvatarUrl,
 } from "../../lib/avatar";
 import { useAgentProfileStore } from "../../stores/agentProfileStore";
@@ -30,11 +31,17 @@ export interface AgentAvatarProps {
   displayName?: string;
   /**
    * Raw avatar path from manifest.avatar (e.g. "assets/avatar.png").
-   * When set AND the agent has a profile iconId, profile icon wins.
-   * When set AND no profile icon is set, the gateway avatar endpoint is tried.
-   * Pass `null`/omit to skip the packaged avatar entirely.
+   * When set, the packaged avatar wins over any auto-assigned or user-chosen
+   * builtin icon — see `docs/design/zh/02-agent-package.md` for the priority
+   * contract. The Gateway URL is built lazily via `resolveAgentAvatarUrl`
+   * and the bytes are fetched once via the in-flight dedup helper.
    */
   avatarUrl?: string | null;
+  /**
+   * Manifest version (semver). Appended as `?v=<version>` to bust the HTTP
+   * cache when the package is re-installed with a new version.
+   */
+  version?: string | null;
   /** Built-in icon ID from profile settings (e.g. "icon-02") */
   iconId?: string | null;
   /** Size in pixels */
@@ -46,24 +53,38 @@ export interface AgentAvatarProps {
 export function AgentAvatar({
   agentId,
   avatarUrl,
+  version,
   iconId,
   size = 32,
   className,
 }: AgentAvatarProps) {
-  // 1. Profile icon takes priority (explicit user choice)
+  // Avatar resolution priority (per `docs/design/zh/02-agent-package.md`):
+  //
+  // 1. Packaged avatar from `manifest.avatar` (highest priority — the
+  //    package author ships an asset, the client should render it). Always
+  //    wins over any auto-assigned or user-chosen builtin icon.
+  // 2. Profile-store iconId — either an auto-assigned fallback (kept when
+  //    the manifest has no `avatar`) or a user's explicit pick from the
+  //    icon picker in AgentSetupTab.
+  // 3. Deterministic random builtin icon — the first render before the
+  //    install hook has persisted a profile entry. Self-heals via
+  //    `useEffect` so subsequent renders match the saved state.
+  if (avatarUrl) {
+    return (
+      <PackagedAgentAvatar
+        agentId={agentId}
+        version={version}
+        fallbackSeed={agentId}
+        size={size}
+        className={className}
+      />
+    );
+  }
+
   if (iconId && BUILTIN_ICONS[iconId]) {
     return <BuiltinIconAvatar iconId={iconId} size={size} className={className} />;
   }
 
-  // 2. Packaged avatar (manifest.avatar) — try to load from gateway endpoint.
-  //    On 404 / network error, fall through to the deterministic random icon.
-  if (avatarUrl) {
-    return <PackagedAgentAvatar agentId={agentId} fallbackSeed={agentId} size={size} className={className} />;
-  }
-
-  // 3. No profile icon, no packaged avatar — deterministic random builtin icon.
-  //    This is the same icon the install hook will persist via
-  //    `assignRandomAvatarIfMissing`, so first paint matches the saved state.
   return <DeterministicBuiltinAvatar seed={agentId} size={size} className={className} />;
 }
 
@@ -71,27 +92,57 @@ export function AgentAvatar({
 
 function PackagedAgentAvatar({
   agentId,
+  version,
   fallbackSeed,
   size,
   className,
 }: {
   agentId: string;
+  version?: string | null;
   fallbackSeed: string;
   size: number;
   className?: string;
 }) {
-  const url = useMemo(() => resolveAgentAvatarUrl(agentId), [agentId]);
+  // We always start with the direct HTTP URL so the first paint is
+  // synchronous — no empty avatar flash. In parallel we kick off the
+  // blob-URL fetch (deduped + cached) and swap to it once it resolves;
+  // the browser will not re-decode the image because the URL change keeps
+  // the rendered frame stable (and modern browsers cross-fade naturally).
+  const directUrl = useMemo(
+    () => resolveAgentAvatarUrl(agentId, version),
+    [agentId, version],
+  );
+  const [resolvedUrl, setResolvedUrl] = useState<string | null>(directUrl);
   const [errored, setErrored] = useState(false);
 
-  // If the URL builder or image load failed, fall back to a deterministic
-  // random builtin icon (persisted by the install hook in the background).
-  if (!url || errored) {
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedUrl(directUrl);
+    setErrored(false);
+    if (!directUrl) return;
+    resolveAgentAvatarObjectUrl(agentId, version)
+      .then((url) => {
+        if (cancelled) return;
+        if (url) setResolvedUrl(url);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // keep directUrl
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, version, directUrl]);
+
+  // If the URL builder failed or the image load errored, fall back to a
+  // deterministic random builtin icon.
+  if (!resolvedUrl || errored) {
     return <DeterministicBuiltinAvatar seed={fallbackSeed} size={size} className={className} />;
   }
 
   return (
     <img
-      src={url}
+      src={resolvedUrl}
       alt={agentId}
       draggable={false}
       onError={() => setErrored(true)}

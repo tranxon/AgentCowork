@@ -354,6 +354,16 @@ progressive = false
 - `display_name` / `role`：UI 展示用的短名称和角色标题。`display_name` 默认为 `name`。
 - `avatar`：可选，包内头像图片路径（如 `"assets/avatar.png"`）。优先级最高。
 - `builtin_avatar`：可选，内置头像索引（如 `"icon-05"` 或裸数字 `"5"`），用于在没有 `avatar` 时给首次安装的客户端一个确定的默认图标。客户端按字母数字顺序归一化为 `"icon-XX"`，并对照自身捆绑的图标集校验；无法识别时回退到随机。
+
+#### 头像解析优先级（客户端契约）
+
+Agent 客户端在渲染 Agent 头像时必须遵循以下优先级（与 [Avatar resolution priority policy](../development_practice/agent-avatar-priority.md) 一致）：
+
+1. **`manifest.avatar` 包内头像**（最高优先级）。Desktop App 通过 Gateway 的 `GET /api/agents/:id/avatar` 端点获取，URL 拼接 `?v=<manifest.version>` 作为 HTTP 缓存击穿键。当包重新安装（`agent_id` 不变但 `version` 变化）时，URL 自动变化，浏览器/WebView 重新下载。
+2. **Profile store 里的 `avatarIconId`**（本地持久化）。覆盖两类来源：`AgentSetupTab` 中用户手动挑选的图标；以及首次安装时 `ensureBuiltinAvatars` 后台分配的默认图标。Profile store 会在每次 `fetchAgents` 后自愈：若 manifest 新加了 `avatar`，则清除残留的 `avatarIconId`（让包内头像生效）。
+3. **确定性随机内置图标**。根据 `agentId` 做哈希选择 `BUILTIN_ICONS[id]`，与 `ensureBuiltinAvatars` 即将分配的图标一致，避免首次渲染闪动。
+
+该优先级在远端 Gateway 场景下也必须保持一致（详见 [04-gateway.md § 9.6](./04-gateway.md#96-安全设计)）。
 - `permissions`：使用 TOML 数组表语法，每条包含 `type` 和可选的 `value`。支持 `Network`、`FilesystemRead`、`FilesystemWrite`、`MemoryRead`、`MemoryWrite`、`IntentSend` 等类型。
 - `triggers`：激活触发器数组。支持 `cron`、`event`、`manual` 类型。`cron` 使用标准 5 段表达式（UTC 时区），不支持秒级精度和特殊宏。
 - `llm.providers`：支持配置多个 LLM Provider，每个引用 Vault 中的密钥。

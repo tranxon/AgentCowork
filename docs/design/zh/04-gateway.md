@@ -408,6 +408,26 @@ Gateway 启动时生成随机 token → 写入 ~/.config/agent-gateway/http_toke
 Desktop App 首次连接时读取该文件 → 后续请求携带
 ```
 
+**Avatar 端点不受 Auth Token 约束（设计决策）：**
+
+`GET /api/agents/:id/avatar` 是由浏览器 `<img>` 标签直接发起的请求，无法携带 `Authorization` 头。若该端点强制 Auth，远端 Gateway 场景下头像会全部无法加载。鉴于此：
+
+- Avatar 端点永远允许匿名访问（即使开启了 `auth_enabled`）。
+- 路径穿越保护仍然生效（canonicalize 镜像 + 前缀检查）。
+- 远端 Gateway 部署时，依赖网络隔离 / TLS / 防火墙 / 反向代理来限制访问面，而非 Auth Token。
+
+#### 9.6.1 远端 Gateway 场景
+
+如果用户将 Gateway 部署在与 Desktop App 不同的机器上（例如家用服务器 / 云主机），需要手动调整以下配置：
+
+| 配置项 | 本机默认值 | 远端场景必填 | 说明 |
+|--------|------------|--------------|------|
+| `[http].host` | `127.0.0.1` | `0.0.0.0` 或具体网卡 IP | 否则 Desktop App 跨主机请求会被 RST |
+| `[http].cors_enabled` | `false` | `true` | 启用 `CorsLayer::permissive()`，允许 Tauri WebView 跨源请求 |
+| `[http].auth_enabled` | `false` | 视需求 | 即便开启，avatar 端点仍是公开的（见上） |
+
+远端场景下，包内头像文件位于 Gateway 机器的 `install_path` 下，Desktop App 仍然通过 `GET /api/agents/:id/avatar` 拉取，由 Gateway 从本地文件系统读取后流式响应。头像 URL 拼接 `?v=<version>` 用于 HTTP 缓存击穿，Gateway 端响应头包含 `Cache-Control: public, max-age=31536000, immutable`。
+
 ### 9.7 Desktop App 发现 Gateway
 
 Desktop App 需要自动发现 Gateway 的 HTTP API 端口：

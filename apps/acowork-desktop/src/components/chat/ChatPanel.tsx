@@ -1686,6 +1686,8 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
           <AgentAvatar
             agentId={agentId}
             displayName={liveAgentName}
+            avatarUrl={agentInfo?.avatar}
+            version={agentInfo?.version}
             iconId={agentIconId}
             size={40}
             className="shrink-0 mt-1"
@@ -1726,6 +1728,8 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
           <AgentAvatar
             agentId={agentId}
             displayName={liveAgentName}
+            avatarUrl={agentInfo?.avatar}
+            version={agentInfo?.version}
             iconId={agentIconId}
             size={40}
             className="shrink-0 mt-1"
@@ -1761,6 +1765,8 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
           <AgentAvatar
             agentId={agentId}
             displayName={liveAgentName}
+            avatarUrl={agentInfo?.avatar}
+            version={agentInfo?.version}
             iconId={agentIconId}
             size={40}
             className="shrink-0 mt-1"

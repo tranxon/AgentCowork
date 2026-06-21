@@ -303,6 +303,7 @@ export function AgentList({ width }: AgentListProps) {
                   agentId={agent.agent_id}
                   displayName={agent.display_name ?? agent.name}
                   avatarUrl={agent.avatar}
+                  version={agent.version}
                   iconId={agentProfiles[agent.agent_id]?.avatarIconId}
                   size={40}
                   className={isCollapsed ? "mx-auto" : ""}

@@ -373,10 +373,18 @@ pub async fn get_agent_avatar(
     })?;
 
     let content_type = guess_avatar_content_type(&canonical_avatar);
+    // Long-lived immutable cache: the avatar bytes for a given (agent_id,
+    // manifest.avatar) tuple are stable until the package is re-installed.
+    // The Desktop client appends `?v=<manifest.version>` to bust the cache
+    // when the version changes, so a one-year `max-age` is safe and lets the
+    // browser/WebView skip the conditional request entirely on repeat views.
+    // `immutable` further tells caches the response body will never change
+    // for the lifetime of the URL, so the user agent may skip revalidation
+    // even when the user explicitly reloads the page.
     let resp = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "public, max-age=3600")
+        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
         .body(Body::from(bytes))
         .map_err(|e| ApiError::internal(&format!("Failed to build avatar response: {}", e)))?;
     Ok(resp)
