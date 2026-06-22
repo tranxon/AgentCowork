@@ -313,38 +313,41 @@ export function ChatPanel() {
     gap: 4,
   });
 
-  // Load available models from Vault keys (capabilities come from persisted model_capabilities)
+  // Load available models: configured providers (from vault) + capabilities (from models API)
   const loadModels = useCallback(async () => {
     try {
       const keys = await invoke<VaultKeyEntry[]>("list_keys");
+
+      // Build (provider, configuredModelIds) pairs, skipping empty entries
+      const entries = keys.map(key => ({
+        provider: key.provider,
+        modelIds: key.models?.length
+          ? key.models
+          : key.default_model ? [key.default_model] : [],
+      })).filter(e => e.modelIds.length > 0);
+
+      // Fetch capabilities for all providers in parallel
+      const results = await Promise.allSettled(
+        entries.map(e => fetchProviderModels(e.provider))
+      );
+
       const allModels: ModelEntry[] = [];
-      for (const key of keys) {
-        const provider = key.provider;
-        const capsMap = key.model_capabilities;
-        if (key.models?.length) {
-          for (const model of key.models) {
-            const caps = capsMap?.[model];
-            allModels.push({
-              name: model,
-              provider,
-              tool_call: caps?.supports_tool_calling ?? undefined,
-              reasoning: caps?.supports_reasoning ?? undefined,
-              input_modalities: caps?.modalities?.input ?? undefined,
-              default_reasoning_effort: caps?.default_reasoning_effort ?? undefined,
-            });
-          }
-        } else if (key.default_model) {
-          const caps = capsMap?.[key.default_model];
+      entries.forEach((entry, i) => {
+        const apiModels = results[i].status === "fulfilled"
+          ? (results[i].value.models ?? [])
+          : [];
+        for (const modelId of entry.modelIds) {
+          const info = apiModels.find(m => m.id === modelId);
           allModels.push({
-            name: key.default_model,
-            provider,
-            tool_call: caps?.supports_tool_calling ?? undefined,
-            reasoning: caps?.supports_reasoning ?? undefined,
-            input_modalities: caps?.modalities?.input ?? undefined,
-            default_reasoning_effort: caps?.default_reasoning_effort ?? undefined,
+            name: modelId,
+            provider: entry.provider,
+            tool_call: info?.tool_call ?? undefined,
+            reasoning: info?.reasoning ?? undefined,
+            input_modalities: info?.input_modalities ?? undefined,
           });
         }
-      }
+      });
+
       // Deduplicate by model name + provider
       const uniqueModels = allModels.filter(
         (m, i, arr) => arr.findIndex(x => x.name === m.name && x.provider === m.provider) === i
@@ -571,7 +574,7 @@ export function ChatPanel() {
 
     if (virtualCount > 0) {
       if (prevCount === 0) {
-         // Agent switch or initial load: jump to bottom instantly (before paint)
+        // Agent switch or initial load: jump to bottom instantly (before paint)
         virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
         pinnedToBottomRef.current = true;
       } else if (virtualCount > prevCount) {

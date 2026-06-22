@@ -363,26 +363,24 @@ function ProvidersTab() {
     const dynamicProvider = dynamicProviders.find((p) => p.id === provider);
     setEditKey(keyEntry?.key_preview ?? "");
     setEditBaseUrl(keyEntry?.base_url ?? dynamicProvider?.api ?? "");
-    setEditModels(keyEntry?.models?.length ? keyEntry.models : keyEntry?.default_model ? [keyEntry.default_model] : []);
+    const configuredModels = keyEntry?.models?.length ? keyEntry.models : keyEntry?.default_model ? [keyEntry.default_model] : [];
+    setEditModels(configuredModels);
     setEditModelSearchTerm("");
     setEditModelCapabilityFilter([]);
-    // Load existing capabilities from VaultKeyEntry (per-model map, take first entry)
-    const firstCaps = keyEntry?.model_capabilities ? Object.values(keyEntry.model_capabilities)[0] : undefined;
-    // Use defaults (128000/4096) when capabilities are 0 or missing — this
-    // handles old Vault entries that saved 0 before the fallback was fixed
-    const vaultCtx = firstCaps?.context_window;
-    const vaultMot = firstCaps?.max_output_tokens;
-    setEditContextWindow(vaultCtx && vaultCtx > 0 ? vaultCtx.toString() : "128000");
-    setEditMaxOutputTokens(vaultMot && vaultMot > 0 ? vaultMot.toString() : "4096");
-    setEditSupportsToolCalling(firstCaps?.supports_tool_calling ?? true);
     setEditCompactModel(keyEntry?.compact_model ?? "");
-    setEditDefaultReasoningEffort(firstCaps?.default_reasoning_effort ?? "auto");
     setShowEditDialog(provider);
-    // Fetch models
+    // Fetch models from Gateway API (includes input_modalities, context_window, etc.)
     setEditModelsLoading(true);
     const models = await fetchModels(provider);
     setEditAvailableModels(models);
     setEditModelsLoading(false);
+    // Read capabilities from API models (not vault — vault only stores keys now)
+    const firstModelId = configuredModels[0];
+    const firstInfo = firstModelId ? models.find(m => m.id === firstModelId) : undefined;
+    setEditContextWindow(firstInfo?.context_window && firstInfo.context_window > 0 ? firstInfo.context_window.toString() : "128000");
+    setEditMaxOutputTokens(firstInfo?.max_tokens && firstInfo.max_tokens > 0 ? firstInfo.max_tokens.toString() : "4096");
+    setEditSupportsToolCalling(firstInfo?.tool_call ?? true);
+    setEditDefaultReasoningEffort("auto");
   };
 
   const handleEditSave = async () => {

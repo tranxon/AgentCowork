@@ -611,7 +611,7 @@ async fn fetch_ollama_models(client: &reqwest::Client, base_url: &str) -> Option
 }
 
 /// Look up a model ID in `offline_providers.json` and copy known capabilities
-/// (context_window, max_tokens, tool_call, reasoning, etc.) into the model.
+/// (context_window, max_tokens, tool_call, reasoning, modalities, etc.) into the model.
 ///
 /// Search strategy:
 ///   1. Exact match — search all providers for the full model ID
@@ -683,6 +683,29 @@ fn enrich_model_from_offline(model: &mut ModelInfo) {
             }
             if let Some(family) = model_data.get("family").and_then(|v| v.as_str()) {
                 model.family = Some(family.to_string());
+            }
+            // Copy modalities (input/output) when not already set
+            if model.input_modalities.is_none() {
+                model.input_modalities = model_data
+                    .get("modalities")
+                    .and_then(|v| v.get("input"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    });
+            }
+            if model.output_modalities.is_none() {
+                model.output_modalities = model_data
+                    .get("modalities")
+                    .and_then(|v| v.get("output"))
+                    .and_then(|v| v.as_array())
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                            .collect()
+                    });
             }
             return; // Found the best match, stop searching
         }
