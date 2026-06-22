@@ -64,8 +64,8 @@ fn classify_mcp_error(msg: &str) -> &'static str {
 
 /// A AgentCowork [`Tool`](acowork_core::tools::Tool) backed by an MCP server tool.
 ///
-/// The `prefixed_name` (e.g. `mcp:filesystem__read_file`) is what the agent sees.
-/// The `mcp:` prefix is a stable marker that distinguishes MCP tools from built-in
+/// The `prefixed_name` (e.g. `mcp_filesystem__read_file`) is what the agent sees.
+/// The `mcp_` prefix is a stable marker that distinguishes MCP tools from built-in
 /// tools in the tool registry, and is used for filtering during rebuilds.
 /// The registry knows how to route it to the correct server.
 pub struct McpToolWrapper {
@@ -163,9 +163,9 @@ mod tests {
     async fn spec_returns_prefixed_name_and_description() {
         let registry = empty_registry().await;
         let def = make_def("read_file", Some("Reads a file"), json!({}));
-        let wrapper = McpToolWrapper::new("mcp:filesystem__read_file".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_filesystem__read_file".to_string(), def, registry);
         let spec = wrapper.spec();
-        assert_eq!(spec.name, "mcp:filesystem__read_file");
+        assert_eq!(spec.name, "mcp_filesystem__read_file");
         assert_eq!(spec.description, "Reads a file");
     }
 
@@ -173,7 +173,7 @@ mod tests {
     async fn description_falls_back_to_default_when_none() {
         let registry = empty_registry().await;
         let def = make_def("mystery", None, json!({}));
-        let wrapper = McpToolWrapper::new("mcp:srv__mystery".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_srv__mystery".to_string(), def, registry);
         let spec = wrapper.spec();
         assert_eq!(spec.description, "MCP tool");
     }
@@ -187,7 +187,7 @@ mod tests {
             "required": ["path"]
         });
         let def = make_def("read_file", Some("Read"), schema.clone());
-        let wrapper = McpToolWrapper::new("mcp:fs__read_file".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_fs__read_file".to_string(), def, registry);
         let spec = wrapper.spec();
         assert_eq!(spec.input_schema, schema);
     }
@@ -196,7 +196,7 @@ mod tests {
     async fn execute_returns_non_fatal_error_for_unknown_tool() {
         let registry = empty_registry().await;
         let def = make_def("ghost", Some("Ghost tool"), json!({}));
-        let wrapper = McpToolWrapper::new("mcp:nowhere__ghost".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_nowhere__ghost".to_string(), def, registry);
         let result = wrapper
             .execute(json!({}), None)
             .await
@@ -219,7 +219,7 @@ mod tests {
     async fn execute_strips_approved_field_from_object_args() {
         let registry = empty_registry().await;
         let def = make_def("do_thing", Some("Do a thing"), json!({}));
-        let wrapper = McpToolWrapper::new("mcp:srv__do_thing".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_srv__do_thing".to_string(), def, registry);
         let result = wrapper
             .execute(json!({ "approved": true, "param": "value" }), None)
             .await
@@ -236,7 +236,7 @@ mod tests {
     async fn execute_handles_non_object_args_without_panic() {
         let registry = empty_registry().await;
         let def = make_def("noop", None, json!({}));
-        let wrapper = McpToolWrapper::new("mcp:srv__noop".to_string(), def, registry);
+        let wrapper = McpToolWrapper::new("mcp_srv__noop".to_string(), def, registry);
         for non_obj in [json!(null), json!("a string"), json!([1, 2, 3])] {
             let result = wrapper
                 .execute(non_obj.clone(), None)

@@ -337,7 +337,7 @@ pub struct McpConnectionFailure {
 
 /// Registry of all connected MCP servers, with a flat tool index.
 ///
-/// Tools are indexed by a prefixed name (`mcp:<server_name>__<tool_name>`) to
+/// Tools are indexed by a prefixed name (`mcp_<server_name>__<tool_name>`) to
 /// prevent name collisions across servers.
 pub struct McpRegistry {
     servers: Vec<McpClient>,
@@ -391,7 +391,7 @@ impl McpRegistry {
                     let server_idx = servers.len();
                     let tools = server.tools();
                     for tool in tools {
-                        let prefixed = format!("mcp:{}__{}", name, tool.name);
+                        let prefixed = format!("mcp_{}__{}", name, tool.name);
                         tool_index.insert(prefixed, (server_idx, tool));
                     }
                     servers.push(server);
@@ -494,8 +494,8 @@ mod tests {
 
     #[test]
     fn tool_name_prefix_format() {
-        let prefixed = format!("mcp:{}__{}", "filesystem", "read_file");
-        assert_eq!(prefixed, "mcp:filesystem__read_file");
+        let prefixed = format!("mcp_{}__{}", "filesystem", "read_file");
+        assert_eq!(prefixed, "mcp_filesystem__read_file");
     }
 
     #[tokio::test]
@@ -556,7 +556,7 @@ mod tests {
         let (registry, _) = McpRegistry::connect_all(&[])
             .await
             .expect("connect_all should succeed");
-        let result = registry.get_tool_def("mcp:nonexistent__tool");
+        let result = registry.get_tool_def("mcp_nonexistent__tool");
         assert!(result.is_none());
     }
 
@@ -566,7 +566,7 @@ mod tests {
             .await
             .expect("connect_all should succeed");
         let err = registry
-            .call_tool("mcp:nonexistent__tool", serde_json::json!({}))
+            .call_tool("mcp_nonexistent__tool", serde_json::json!({}))
             .await
             .expect_err("should fail for unknown tool");
         assert!(err.to_string().contains("unknown MCP tool"), "got: {err}");

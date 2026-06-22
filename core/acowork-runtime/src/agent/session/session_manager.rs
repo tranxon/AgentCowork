@@ -417,8 +417,27 @@ impl SessionManager {
         &self,
         conversation: Option<ConversationSession>,
     ) -> SessionState {
-        let initial_model = conversation.as_ref().and_then(|c| c.model());
-        let initial_provider = conversation.as_ref().and_then(|c| c.provider());
+        let mut initial_model = conversation.as_ref().and_then(|c| c.model());
+        let mut initial_provider = conversation.as_ref().and_then(|c| c.provider());
+
+        // Fall back to Runtime-internal default when the session has no
+        // explicit model/provider (new agent, first session ever created).
+        // current_model_and_provider() atomically returns the (model, provider)
+        // pair from the most recently active session, or the first entry from
+        // global_provider_list if no session has ever been activated.
+        if initial_model.is_none() || initial_provider.is_none() {
+            let (fallback_model, fallback_provider) = self.current_model_and_provider();
+
+            // Persist the fallback to JSONL so activate_session returns
+            // consistent metadata to the frontend on subsequent requests.
+            if let (Some(conv), Some(model)) = (&conversation, &fallback_model)
+                && conv.model().is_none()
+            {
+                conv.update_model_provider(model, fallback_provider.as_deref());
+            }
+            initial_model = fallback_model;
+            initial_provider = fallback_provider;
+        }
 
         // Resume path: rebuild HistoryManager from the JSONL log so the LLM
         // sees the prior conversation on the first new turn after cold-start.
@@ -837,8 +856,8 @@ After installation, ask the user to re-enable the MCP server.",
         // We store these separately to avoid losing them on rebuild.
         let mut specs = self.config.full_tool_specs.clone();
 
-        // Remove any previous MCP entries (prefixed with "mcp:")
-        specs.retain(|(name, _)| !name.starts_with("mcp:"));
+        // Remove any previous MCP entries (prefixed with "mcp_")
+        specs.retain(|(name, _)| !name.starts_with("mcp_"));
 
         // Add current MCP tool specs
         if let Some(ref wrappers) = self.mcp_tools {
@@ -1120,6 +1139,43 @@ After installation, ask the user to re-enable the MCP server.",
             .flat_map(|p| p.models.iter())
             .next()
             .map(|m| m.id.clone())
+    }
+
+    /// Returns the (model, provider) pair from the most recently active session.
+    ///
+    /// Unlike [`current_model_name`] which only returns the model, this method
+    /// atomically retrieves both model and provider from the **same** session
+    /// snapshot, preventing cross-contamination when different providers
+    /// expose identically-named models (e.g. "gpt-4" in both OpenAI and Azure).
+    ///
+    /// Falls back to the first (model, provider) from `global_provider_list`.
+    /// Returns `(None, None)` only when no provider is configured at all.
+    pub fn current_model_and_provider(&self) -> (Option<String>, Option<String>) {
+        // 1. Try the most recently active session that has both model and provider set.
+        if let Some((model, provider)) = self
+            .sessions
+            .values()
+            .filter_map(|handle| {
+                let snap = handle.snapshot_slot.read().ok()?;
+                let model = snap.as_ref()?.model.clone()?;
+                let provider = snap.as_ref()?.provider.clone()?;
+                let ts = *handle.last_active_at.lock().ok()?;
+                Some((ts, model, provider))
+            })
+            .max_by_key(|(ts, _, _)| *ts)
+            .map(|(_, model, provider)| (model, provider))
+        {
+            return (Some(model), Some(provider));
+        }
+
+        // 2. Fall back to the first provider+model from the global provider list.
+        let list = self.core.global_provider_list.read().unwrap();
+        let provider = list.first().map(|p| p.id.clone());
+        let model = list
+            .first()
+            .and_then(|p| p.models.first())
+            .map(|m| m.id.clone());
+        (model, provider)
     }
 
     /// Access the Grafeo memory store from the shared core.

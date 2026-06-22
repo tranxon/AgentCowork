@@ -474,7 +474,7 @@ impl AgentLoop {
         if let Some(ref mut tools) = chat_request.tools {
             for tool in &self.core.all_tools {
                 let spec = tool.spec();
-                if spec.name.starts_with("mcp:") {
+                if spec.name.starts_with("mcp_") {
                     let val = serde_json::to_value(&spec).unwrap_or_default();
                     tools.push(val);
                 }
