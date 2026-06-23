@@ -164,7 +164,7 @@ else
     # Fallback: Auto-detect from Cargo cache if download-ort feature was used
     if [ -z "$ORT_LIB_LOCATION" ]; then
         echo -e "${YELLOW}  .ort/ not found, searching Cargo registry cache...${NC}"
-        for cached_ort in ~/.cargo/registry/cache/*/onnxruntime-osx-aarch64-* ~/.cargo/registry/cache/*/onnxruntime-osx-x64-* 2>/dev/null; do
+        for cached_ort in $(find ~/.cargo/registry/cache -maxdepth 5 -type d \( -name "onnxruntime-osx-aarch64-*" -o -name "onnxruntime-osx-x64-*" \) 2>/dev/null); do
             [ -d "$cached_ort" ] || continue
             if [ "$OS" = "macos" ]; then
                 lib_path="$cached_ort/lib/libonnxruntime.dylib"
