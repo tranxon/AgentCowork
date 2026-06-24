@@ -268,7 +268,7 @@ export function AgentList({ width }: AgentListProps) {
       </div>
 
       {/* Agent list */}
-      <div className="flex-1 overflow-y-auto" role="list" aria-label="Agent list">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden" role="list" aria-label="Agent list">
 
         {loading && agentsList.length === 0 && (
           <div className="flex items-center justify-center py-8">
@@ -283,7 +283,8 @@ export function AgentList({ width }: AgentListProps) {
             <div
               key={agent.agent_id}
               className={cn(
-                "relative flex cursor-pointer items-center gap-3 rounded-md px-3 py-2.5 transition-colors duration-150",
+                "relative flex cursor-pointer items-center rounded-md px-3 py-2.5 transition-colors duration-150",
+                isCollapsed ? "gap-0" : "gap-3",
                 selectedAgentId === agent.agent_id
                   ? "bg-[var(--color-accent)]/90 text-white"
                   : "hover:bg-[#E2E3E6] dark:hover:bg-[#38383A]",
@@ -319,9 +320,8 @@ export function AgentList({ width }: AgentListProps) {
                 />
               </Tooltip>
 
-              {/* Content area — hidden when collapsed */}
-              {!isCollapsed && (
-                <div className="min-w-0 flex-1">
+              {/* Content area — width-collapsed when sidebar is collapsed to preserve item height */}
+              <div className={cn("min-w-0 overflow-hidden", isCollapsed ? "w-0" : "flex-1")}>
                   {/* Top row: name */}
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0 flex items-center gap-1.5">
@@ -371,7 +371,6 @@ export function AgentList({ width }: AgentListProps) {
                     )}
                   </div>
                 </div>
-              )}
             </div>
           );
         })}
@@ -383,7 +382,7 @@ export function AgentList({ width }: AgentListProps) {
         )}
       </div>
 
-      <div ref={addMenuRef} className={cn("relative", isCollapsed ? "p-1" : "p-1.5")}>
+      <div ref={addMenuRef} className="relative p-1.5">
         <button
           onClick={() => setAddMenuOpen(!addMenuOpen)}
           className="flex w-full items-center justify-center rounded-md bg-[#D8D9DC] px-0 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-600 transition-colors hover:bg-[#C8C9CC] dark:bg-[#3D3D3F] dark:text-zinc-300 dark:hover:bg-[#474749]"
