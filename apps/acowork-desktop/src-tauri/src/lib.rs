@@ -28,7 +28,7 @@ mod state;
 mod tray;
 
 use state::AppState;
-use tauri::{Emitter, Listener, Manager};
+use tauri::{Listener, Manager};
 
 // ── System-sleep detection (Windows / macOS / Linux) ────────────────────────
 //
@@ -148,7 +148,7 @@ mod power {
                 sleep_ms,
                 biased_delta_ms = biased_delta,
                 unbiased_delta_ms = unbiased_delta,
-                "Actual system sleep detected — emitting system-resume"
+                "Actual system sleep detected — triggering native webview reload"
             );
             true
         } else {
@@ -220,19 +220,39 @@ pub fn run() {
 
             // Spawn async task for automatic sleep detection.
             // Polls biased/unbiased monotonic clocks every 2 s via the
-            // existing tokio runtime — no dedicated thread needed.  The
-            // webview reloads within ~2 s of waking, without user interaction.
-            // The `Focused(true)` handler below provides immediate detection
-            // when the user clicks the window.  Both paths share the same
-            // atomic state in `power::check_resume`, so the event fires
-            // exactly once per sleep cycle.
+            // existing tokio runtime — no dedicated thread needed.  On
+            // detecting real sleep, the webview is reloaded natively
+            // (equivalent to F5) within ~2 s of waking, without user
+            // interaction.  The `Focused(true)` handler below provides
+            // immediate detection when the user clicks the window.  Both
+            // paths share the same atomic state in `power::check_resume`,
+            // so the reload fires exactly once per sleep cycle.
             let app_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
                 loop {
                     interval.tick().await;
                     if power::check_resume() {
-                        let _ = app_handle.emit("system-resume", ());
+                        // Native webview reload — calls ICoreWebView2::Reload()
+                        // (or equivalent), the same code path as pressing F5.
+                        // This works even when the WebView2 renderer/IPC is
+                        // broken after a GPU compositor crash during sleep.
+                        //
+                        // The previous approach (emit "system-resume" →
+                        // frontend JS listener → window.location.reload())
+                        // failed when the IPC channel was broken, leaving
+                        // the screen black until the user pressed F5.
+                        if let Some(window) = app_handle.get_webview_window("main") {
+                            // Set recovery flag so App.tsx skips the splash
+                            // screen.  Only effective if the JS renderer is
+                            // still alive; if not, the splash screen will
+                            // show briefly (gateway is already running).
+                            let _ = window.eval(
+                                "sessionStorage.setItem('acowork_recovery_reload', '1');",
+                            );
+                            // Native reload — primary recovery mechanism.
+                            let _ = window.reload();
+                        }
                     }
                 }
             });
@@ -253,7 +273,17 @@ pub fn run() {
                 // See the `power` module docs above for platform details.
                 tauri::WindowEvent::Focused(true) => {
                     if power::check_resume() {
-                        let _ = window.emit("system-resume", ());
+                        // Same native reload as the polling task.  Provides
+                        // immediate recovery when the user clicks the window
+                        // after wake, without waiting for the next poll tick.
+                        // `window` here is a `&Window` (OS-level); we look up
+                        // the associated `WebviewWindow` to access eval/reload.
+                        if let Some(webview) = window.get_webview_window(window.label()) {
+                            let _ = webview.eval(
+                                "sessionStorage.setItem('acowork_recovery_reload', '1');",
+                            );
+                            let _ = webview.reload();
+                        }
                     }
                 }
 
