@@ -75,6 +75,8 @@ interface SessionChatState {
   ratio: number | null;
   /** Per-session reasoning effort override (frontend display only, source of truth is Runtime) */
   reasoningEffort: string | null;
+  /** Per-session temperature override (from Runtime, persisted in JSONL metadata) */
+  temperature: number | null;
   /** Context compaction in progress (both manual and auto triggers) */
   isCompacting: boolean;
   /** File tree expanded directory paths (persisted per-session) */
@@ -117,6 +119,7 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   provider: null,
   ratio: null,
   reasoningEffort: null,
+  temperature: null,
   isCompacting: false,
   treeExpandedPaths: [],
   attachedContext: [],
@@ -1414,6 +1417,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (typeof data.provider === "string" && data.provider) sessionPatch.provider = data.provider;
       if (typeof data.ratio === "number") sessionPatch.ratio = data.ratio;
       if (typeof data.reasoning_effort === "string" && data.reasoning_effort) sessionPatch.reasoningEffort = data.reasoning_effort;
+      if (typeof data.temperature === "number") sessionPatch.temperature = data.temperature;
       if (Object.keys(sessionPatch).length > 0) {
         set((state) => updateSessionState(state, agentId, sessionId, sessionPatch));
       }
@@ -2201,6 +2205,8 @@ function handleMessageEvent(
             if (typeof data.ratio === "number") sessionPatch.ratio = data.ratio as number;
             // Reasoning effort level (thinking level) from Runtime session state.
             if (typeof data.reasoning_effort === "string") sessionPatch.reasoningEffort = data.reasoning_effort as string;
+            // Temperature override from Runtime session state.
+            if (typeof data.temperature === "number") sessionPatch.temperature = data.temperature as number;
 
             // When status transitions FROM Streaming, clear transient streaming state.
             // IMPORTANT: Before clearing thinkingMessageId, stamp endTime on the thinking

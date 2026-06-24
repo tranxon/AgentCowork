@@ -21,6 +21,7 @@ use crate::agent::loop_::SessionChunkEvent;
 use crate::agent::session::session_handle::SessionHandle;
 use crate::agent::session::session_task::{SessionMessage, SessionTask};
 use crate::agent::session_state::{SessionState, SessionStatus};
+use crate::config::DEFAULT_TEMPERATURE;
 use crate::conversation::ConversationSession;
 use crate::debug::controller::DebugController;
 use crate::error::{Result, RuntimeError};
@@ -541,15 +542,16 @@ impl SessionManager {
             session_state.set_provider(p.clone());
         }
 
-        // Propagate any cached temperature override to the session.
-        // Prefer runtime overrides pushed by Gateway, then the core template.
+        // Propagate temperature override to the session with fallback chain:
+        // runtime_overrides → core.temperature_override → DEFAULT_TEMPERATURE.
+        // Always set a concrete value so the model actually receives the configured
+        // temperature and the status panel can display it accurately.
         let temperature = self
             .runtime_overrides
             .temperature
-            .or(self.core.temperature_override);
-        if temperature.is_some() {
-            session_state.set_temperature(temperature);
-        }
+            .or(self.core.temperature_override)
+            .or(Some(DEFAULT_TEMPERATURE));
+        session_state.set_temperature(temperature);
 
         // Install the restored history *after* set_max_tokens has been applied,
         // so the lossless trim (if needed) operates against the model-correct

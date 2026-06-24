@@ -8,6 +8,7 @@ use acowork_core::protocol::ModelCapabilitiesInfo;
 use acowork_core::providers::traits::{ChatMessage, ChatRequest, ContentPart, MessageRole, ReasoningEffort};
 
 use crate::agent::history::HistoryManager;
+use crate::config::DEFAULT_TEMPERATURE;
 use crate::token::counter::TokenCounter;
 
 /// Context builder for LLM requests
@@ -50,6 +51,9 @@ pub struct ContextBuilder {
     /// Anthropic thinking mode: "extended" or "adaptive".
     /// Resolved from ModelCapabilitiesInfo.thinking_mode in `build_chat_request()`.
     thinking_mode: Option<String>,
+    /// LLM temperature override. `None` means fall back to DEFAULT_TEMPERATURE.
+    /// Set per-session via `set_temperature()` from AgentLoop before each build.
+    temperature: Option<f32>,
     /// Reusable token counter for system prompt estimation.
     counter: TokenCounter,
 }
@@ -71,6 +75,7 @@ impl ContextBuilder {
             todo_context: None,
             reasoning_effort: None,
             thinking_mode: None,
+            temperature: None,
             counter: TokenCounter::new(),
         }
     }
@@ -111,6 +116,13 @@ impl ContextBuilder {
     /// Set the Anthropic thinking mode ("extended" or "adaptive").
     pub fn set_thinking_mode(&mut self, mode: Option<String>) {
         self.thinking_mode = mode;
+    }
+
+    /// Set the LLM temperature override for this builder. `None` clears the
+    /// override and falls back to [`DEFAULT_TEMPERATURE`] when building the
+    /// ChatRequest. Called by AgentLoop each iteration from session/core state.
+    pub fn set_temperature(&mut self, temperature: Option<f32>) {
+        self.temperature = temperature;
     }
 
     /// Get the current reasoning effort level, if set.
@@ -624,7 +636,7 @@ impl ContextBuilder {
         ChatRequest {
             model,
             messages,
-            temperature: None,
+            temperature: Some(self.temperature.unwrap_or(DEFAULT_TEMPERATURE) as f64),
             max_tokens,
             tools: self.tool_definitions.clone(),
             reasoning_effort: self.reasoning_effort.clone(),

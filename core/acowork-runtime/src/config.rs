@@ -11,6 +11,11 @@ pub const DEFAULT_TOOL_HTTP_TIMEOUT_MS: u64 = 30_000;
 /// Default HTTP timeout for built-in tools as Duration.
 pub const DEFAULT_TOOL_HTTP_TIMEOUT: Duration = Duration::from_millis(DEFAULT_TOOL_HTTP_TIMEOUT_MS);
 
+/// Default LLM temperature when no override is configured (session-level,
+/// agent-level, or runtime override). Applied uniformly across all sessions
+/// unless an explicit override sets a different value.
+pub const DEFAULT_TEMPERATURE: f32 = 0.3;
+
 /// Runtime configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeConfig {

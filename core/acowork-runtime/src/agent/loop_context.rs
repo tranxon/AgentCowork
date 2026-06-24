@@ -452,6 +452,17 @@ impl AgentLoop {
         context_builder.set_thinking_mode(thinking_mode.clone());
         self.last_thinking_mode = thinking_mode;
 
+        // Resolve temperature: session override → core (agent/runtime) override →
+        // DEFAULT_TEMPERATURE. Always set a concrete value on the builder so the
+        // ChatRequest reflects what the model will actually receive, and so the
+        // value shown in the status panel matches the request payload.
+        let temperature = self
+            .session
+            .temperature()
+            .or(self.core.temperature_override)
+            .unwrap_or(crate::config::DEFAULT_TEMPERATURE);
+        context_builder.set_temperature(Some(temperature));
+
         let mut chat_request = context_builder.build(
             &self.core.manifest,
             &self.session.history,

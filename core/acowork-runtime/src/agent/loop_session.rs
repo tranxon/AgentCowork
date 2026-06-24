@@ -11,6 +11,7 @@
 use acowork_core::providers::traits::{ChatMessage, ChatResponse, MessageRole};
 
 use crate::agent::session_state::{SessionStateSnapshot, SessionStatus};
+use crate::config::DEFAULT_TEMPERATURE;
 use crate::error::Result;
 
 impl super::loop_::AgentLoop {
@@ -36,6 +37,14 @@ impl super::loop_::AgentLoop {
     /// the frontend always sees the latest model, provider, status and ratio.
     pub(crate) fn emit_session_state(&mut self) {
         let status = self.session.status.clone();
+        // Effective temperature with fallback chain: session → agent → DEFAULT_TEMPERATURE.
+        // Always emit a concrete value so the frontend can display the actual setting
+        // in use, not the absence of an override.
+        let effective_temperature = self
+            .session
+            .temperature()
+            .or(self.core.temperature_override)
+            .unwrap_or(DEFAULT_TEMPERATURE);
         // Emit chunk event to Gateway → frontend
         if !self
             .core
@@ -46,7 +55,7 @@ impl super::loop_::AgentLoop {
                 workspace_id: self.session.workspace_id(),
                 ratio: self.session.model_ratio(),
                 reasoning_effort: self.session.reasoning_effort().map(|e| e.to_string()),
-                temperature: self.session.temperature(),
+                temperature: Some(effective_temperature),
             })
         {
             tracing::debug!(
@@ -69,7 +78,7 @@ impl super::loop_::AgentLoop {
                 workspace_id: self.session.workspace_id(),
                 ratio: self.session.model_ratio(),
                 reasoning_effort: self.session.reasoning_effort().map(|e| e.to_string()),
-                temperature: self.session.temperature(),
+                temperature: Some(effective_temperature),
             };
             if let Ok(mut guard) = slot.write() {
                 *guard = Some(snapshot);
