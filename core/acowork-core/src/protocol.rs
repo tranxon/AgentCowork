@@ -325,8 +325,9 @@ pub enum PoolingStrategy {
 ///
 /// The frontend sends an array of these via WebSocket (`attached_context`).
 /// The Gateway forwards them through `IntentReceived.params`, and the
-/// Runtime reads the actual file content from the filesystem and injects
-/// it into the LLM system prompt via ContextBuilder.
+/// Runtime injects file-path references (with optional line ranges) into
+/// the user message so the LLM can use its own tools (`read_file`,
+/// `doc_reader`, etc.) to access the content on demand.
 ///
 /// The frontend is responsible for resolving the absolute path before
 /// sending — the Runtime uses `abs_path` directly without path joining.

@@ -287,8 +287,28 @@ function ToolCallItem({ call, result, pendingApproval, currentSessionId, onAppro
     const params = JSON.parse(call.content || "{}");
     if (isShell) {
       summary = (params.command as string) || "";
+    } else if (toolName === "file_read") {
+      // path + line range (L{s}-L{e})
+      let path = (params.path as string) || "";
+      const sl = params.start_line;
+      const el = params.end_line;
+      if (sl != null || el != null) {
+        path += ` (L${sl ?? "?"}–L${el ?? "?"})`;
+      }
+      summary = path;
+    } else if (toolName === "http_request") {
+      // method + url
+      const method = (params.method as string) || "GET";
+      const url = (params.url as string) || "";
+      summary = url ? `${method} ${url}` : "";
     } else if (params.path) {
       summary = params.path as string;
+    } else if (params.pattern) {
+      summary = params.pattern as string;
+    } else if (params.query) {
+      summary = params.query as string;
+    } else if (params.url) {
+      summary = params.url as string;
     } else {
       const entries = Object.entries(params);
       if (entries.length > 0) {
