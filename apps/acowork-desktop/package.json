@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "build": "npm run check:i18n && tsc && vite build",
+    "check:html-preview": "tsx scripts/check-html-preview.mts",
+    "build": "npm run check:i18n && npm run check:html-preview && tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -51,6 +52,7 @@
     "@types/react-dom": "^19",
     "@vitejs/plugin-react": "^4",
     "tailwindcss": "^4",
+    "tsx": "^4.20.6",
     "typescript": "^5",
     "vite": "^6"
   }
