@@ -1317,7 +1317,14 @@ export function FileEditorPanel({ width }: { width: number }) {
                         />
                     </div>
                 ) : activeFile.mode === "preview" && activeFile.mimeType === "text/html" ? (
-                    <HtmlPreviewView content={activeFile.content} gatewayUrl={getGatewayUrl()} agentId={activeFile.agentId} fileName={activeFile.fileName} />
+                    <HtmlPreviewView
+                        content={activeFile.content}
+                        gatewayUrl={getGatewayUrl()}
+                        agentId={activeFile.agentId}
+                        workspaceId={activeFile.workspaceId}
+                        relPath={activeFile.relPath}
+                        fileName={activeFile.fileName}
+                    />
                 ) : activeFile.mode === "preview" ? (
                     <MarkdownPreviewView file={activeFile} />
                 ) : (

@@ -440,7 +440,15 @@
         "copy": "コピー",
         "previewBadge": "プレビュー",
         "previewLoading": "プレビューを読み込み中...",
-        "previewDoubleClickHint": "ダブルクリックでエディタを開く"
+        "previewDoubleClickHint": "ダブルクリックでエディタを開く",
+        "loadingUrl": "ページを読み込み中...",
+        "urlLoadError": "このページを読み込めませんでした",
+        "openInBrowser": "ブラウザで開く",
+        "navBack": "戻る",
+        "navForward": "進む",
+        "navRefresh": "更新",
+        "iframeBlockedHint": "このサイトはアプリ内プレビューに対応していません",
+        "htmlPreviewTsModuleWarning": "TypeScript/TSX モジュールのエントリファイルを検出しました。Static Preview はファイルを読み込めますが、TS/TSX をコンパイルできません。Vite/React アプリでは dev server を起動し、localhost の URL プレビューを開いてください。"
     },
     "sessionPanel": {
         "loadingSessions": "セッションを読み込み中...",

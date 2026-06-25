@@ -445,7 +445,8 @@
         "navBack": "後退",
         "navForward": "前進",
         "navRefresh": "重新整理",
-        "iframeBlockedHint": "此網站不支援在應用程式內預覽"
+        "iframeBlockedHint": "此網站不支援在應用程式內預覽",
+        "htmlPreviewTsModuleWarning": "偵測到 TypeScript/TSX 模組入口。靜態 Preview 可以載入檔案，但不能編譯 TS/TSX。對於 Vite/React 專案，請執行 dev server 後開啟 localhost URL 預覽。"
     },
     "sessionPanel": {
         "loadingSessions": "載入工作階段中...",
