@@ -1,15 +1,30 @@
-import { useState, useCallback, useRef, useEffect } from "react";
-import { RefreshCw, FolderOpen, FilePlus, FolderPlus } from "lucide-react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
+import { Search, RefreshCw, FolderOpen, FilePlus, FolderPlus, X } from "lucide-react";
 import { useAgentStore } from "../../stores/agentStore";
-import { useWorkspaceStore } from "../../stores/workspaceStore";
+import { useWorkspaceStore, type TreeEntry } from "../../stores/workspaceStore";
 import { useChatStore } from "../../stores/chatStore";
 import { useFileEditorStore } from "../../stores/fileEditorStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { FileTree } from "./FileTree/FileTree";
 import { WorkspaceSelector } from "./WorkspaceSelector";
-import type { TreeEntry } from "../../stores/workspaceStore";
+import { SetiIcon } from "../common/SetiIcon";
+import { getFileIcon } from "./FileTree/fileIcons";
 import { useTranslation } from "../../i18n/useTranslation";
 import { Tooltip } from "../common/Tooltip";
+import { cn } from "../../lib/utils";
+
+/** Abbreviate a file path from the left: "…parent/filename.ext" */
+function abbreviatePath(path: string): string {
+    const maxLen = 38;
+    if (path.length <= maxLen) return path;
+    const parts = path.split("/");
+    const filename = parts[parts.length - 1];
+    for (let i = parts.length - 2; i >= 1; i--) {
+        const abbreviated = `…${parts.slice(i).join("/")}`;
+        if (abbreviated.length <= maxLen) return abbreviated;
+    }
+    return `…${filename}`;
+}
 
 export function WorkspaceExplorer() {
     const { t } = useTranslation();
@@ -18,6 +33,7 @@ export function WorkspaceExplorer() {
     const selectedAgent = useAgentStore((s) => s.selectedAgentId ? s.agents[s.selectedAgentId]?.meta : undefined);
     const invalidateTreeCache = useWorkspaceStore((s) => s.invalidateTreeCache);
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
+    const treeCache = useWorkspaceStore((s) => s.treeCache);
     const sessionWorkspaceMap = useWorkspaceStore((s) => s.sessionWorkspaceMap);
     const createFile = useWorkspaceStore((s) => s.createFile);
     const createDir = useWorkspaceStore((s) => s.createDir);
@@ -46,6 +62,117 @@ export function WorkspaceExplorer() {
             promptInputRef.current.focus();
         }
     }, [newItemPrompt]);
+
+    /* ── Search box state (Ctrl+P-style file search above the file tree) ── */
+    const [searchQuery, setSearchQuery] = useState("");
+    const [searchFocused, setSearchFocused] = useState(false);
+    const [focusedIdx, setFocusedIdx] = useState(0);
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
+    const ck = `${selectedAgentId}:${currentWorkspaceId}`;
+
+    // Auto-fetch unfetched directories when searching so the match scope grows
+    useEffect(() => {
+        if (!searchQuery || !selectedAgentId) return;
+        const doFetch = () => {
+            const toFetch: string[] = [];
+            for (const [key, entries] of Object.entries(treeCache)) {
+                if (!key.startsWith(`${ck}:`)) continue;
+                for (const entry of entries) {
+                    if (entry.type !== "directory") continue;
+                    const dirPath = key.slice(ck.length + 1);
+                    const childPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+                    if (!treeCache[`${ck}:${childPath}`]) {
+                        toFetch.push(childPath);
+                    }
+                }
+            }
+            for (const p of toFetch.slice(0, 20)) {
+                fetchTree(selectedAgentId, currentWorkspaceId, p);
+            }
+        };
+        doFetch();
+        const timer = setInterval(doFetch, 300);
+        return () => clearInterval(timer);
+    }, [searchQuery, ck, treeCache, selectedAgentId, currentWorkspaceId, fetchTree]);
+
+    // Collect matching files from cached tree entries
+    const matchingFiles = useMemo(() => {
+        if (!searchQuery) return [];
+        const q = searchQuery.toLowerCase();
+        const qParts = q.split(/[\s\/\\]+/).filter(Boolean);
+        if (qParts.length === 0) return [];
+        const results: { name: string; relPath: string; dir: string; score: number }[] = [];
+        const seen = new Set<string>();
+
+        for (const [key, entries] of Object.entries(treeCache)) {
+            if (!key.startsWith(`${ck}:`)) continue;
+            const dirPath = key.slice(ck.length + 1);
+
+            for (const entry of entries) {
+                if (entry.type !== "file") continue;
+                const fullPath = dirPath ? `${dirPath}/${entry.name}` : entry.name;
+                if (seen.has(fullPath)) continue;
+                seen.add(fullPath);
+
+                const nameLower = entry.name.toLowerCase();
+                const pathLower = fullPath.toLowerCase();
+
+                let score = 0;
+                if (qParts.every((p) => nameLower.includes(p))) {
+                    score = nameLower === q ? 3 : nameLower.startsWith(q) ? 2 : 1;
+                } else if (qParts.every((p) => pathLower.includes(p))) {
+                    score = 0.5;
+                } else {
+                    continue;
+                }
+
+                results.push({ name: entry.name, relPath: fullPath, dir: dirPath, score });
+            }
+        }
+
+        results.sort((a, b) => b.score - a.score || a.relPath.length - b.relPath.length);
+        return results;
+    }, [searchQuery, treeCache, ck]);
+
+    // Clamp focused index when the result list changes
+    useEffect(() => {
+        setFocusedIdx(0);
+    }, [searchQuery]);
+
+    const handleSearchSelect = useCallback((relPath: string) => {
+        if (!selectedAgentId) return;
+        // Image extensions open in preview (mirrors handleFileDoubleClick)
+        if (/\.(jpg|jpeg|png|gif|webp|svg)$/i.test(relPath)) {
+            void openPreview(selectedAgentId, currentWorkspaceId, relPath);
+        } else {
+            void openFile(selectedAgentId, currentWorkspaceId, relPath);
+        }
+        setSearchQuery("");
+        setSearchFocused(false);
+        searchInputRef.current?.blur();
+    }, [selectedAgentId, currentWorkspaceId, openFile, openPreview]);
+
+    const handleSearchKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (e.key === "Escape") {
+            e.preventDefault();
+            setSearchQuery("");
+            setSearchFocused(false);
+            searchInputRef.current?.blur();
+        } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setFocusedIdx((i) => Math.min(i + 1, matchingFiles.length - 1));
+        } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setFocusedIdx((i) => Math.max(i - 1, 0));
+        } else if (e.key === "Enter") {
+            e.preventDefault();
+            const item = matchingFiles[focusedIdx];
+            if (item) handleSearchSelect(item.relPath);
+        }
+    }, [matchingFiles, focusedIdx, handleSearchSelect]);
+
+    const showDropdown = searchFocused && searchQuery.trim().length > 0;
 
     const handleRefresh = useCallback(() => {
         if (!selectedAgentId) return;
@@ -233,6 +360,87 @@ export function WorkspaceExplorer() {
                     />
                 </div>
             )}
+
+            {/* Search box with file-search dropdown (Ctrl+P-style) */}
+            <div className="relative border-b border-zinc-200 dark:border-zinc-800">
+                <div className="flex items-center gap-1.5 px-3 py-1">
+                    <Search className="h-3 w-3 shrink-0 text-zinc-400" />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onFocus={() => setSearchFocused(true)}
+                        onBlur={() => setTimeout(() => setSearchFocused(false), 150)}
+                        onKeyDown={handleSearchKeyDown}
+                        placeholder={t("workspace.explorer.searchPlaceholder")}
+                        className="flex-1 bg-transparent text-xs text-zinc-700 outline-none placeholder:text-zinc-400 dark:text-zinc-400 dark:placeholder:text-zinc-500"
+                    />
+                    {searchQuery && (
+                        <button
+                            onClick={() => {
+                                setSearchQuery("");
+                                searchInputRef.current?.focus();
+                            }}
+                            className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
+                            title="Clear search"
+                        >
+                            <X className="h-3 w-3" />
+                        </button>
+                    )}
+                </div>
+
+                {/* Dropdown results */}
+                {showDropdown && (
+                    <div className="absolute left-0 right-0 top-full z-50 mt-1 rounded-lg border border-zinc-200 bg-white shadow-lg dark:border-zinc-700 dark:bg-zinc-800">
+                        {/* Header with count */}
+                        <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
+                            {matchingFiles.length > 0 ? (
+                                <span>{matchingFiles.length} matching file{matchingFiles.length === 1 ? "" : "s"}</span>
+                            ) : (
+                                <span>No matching files</span>
+                            )}
+                        </div>
+
+                        {/* Items */}
+                        <div className="max-h-80 overflow-y-auto py-1">
+                            {matchingFiles.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
+                                    No matching files
+                                </div>
+                            ) : (
+                                matchingFiles.map((f, idx) => {
+                                    const focused = idx === focusedIdx;
+                                    return (
+                                        <div
+                                            key={f.relPath}
+                                            onMouseDown={(e) => e.preventDefault()}
+                                            onMouseEnter={() => setFocusedIdx(idx)}
+                                            onClick={() => handleSearchSelect(f.relPath)}
+                                            className={cn(
+                                                "group flex items-center gap-2 px-3 py-1.5 transition-colors cursor-pointer",
+                                                focused
+                                                    ? "bg-[var(--color-accent)]/10 text-zinc-900 dark:text-zinc-100"
+                                                    : "hover:bg-zinc-50 dark:hover:bg-zinc-700/50",
+                                            )}
+                                        >
+                                            <div className="h-3.5 w-3.5 shrink-0 flex items-center justify-center">
+                                                <SetiIcon {...getFileIcon(f.name)} size={14} />
+                                            </div>
+                                            <span className="shrink-0 text-xs text-zinc-700 dark:text-zinc-300">
+                                                {f.name}
+                                            </span>
+                                            <span className="min-w-0 truncate text-[10px] text-zinc-400 dark:text-zinc-500 ml-3">
+                                                {abbreviatePath(f.dir)}
+                                            </span>
+                                        </div>
+                                    );
+                                })
+                            )}
+                        </div>
+                    </div>
+                )}
+            </div>
 
             {/* File tree (normal mode, no search filtering) */}
             {selectedAgentId && activeSessionId && (
