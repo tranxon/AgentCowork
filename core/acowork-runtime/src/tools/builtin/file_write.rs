@@ -21,13 +21,18 @@ impl FileWriteTool {
     pub fn spec_value() -> ToolSpec {
         ToolSpec {
             name: "file_write".to_string(),
-            description: "Write content to a file, creating or completely overwriting it. For targeted modifications to an existing file, use file_edit instead."
-                .to_string(),
+            description: "Write content to a file. Use mode='overwrite' to create or replace a file, mode='append' to add content to the end of an existing file for chunked writes.".to_string(),
             input_schema: serde_json::json!({
                 "type": "object",
                 "properties": {
                     "path": { "type": "string", "description": "Relative path to the file" },
-                    "content": { "type": "string", "description": "Content to write" }
+                    "content": { "type": "string", "description": "Content to write" },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["overwrite", "append"],
+                        "default": "overwrite",
+                        "description": "Write mode: 'overwrite' creates or replaces entire file, 'append' adds content to end of existing file"
+                    }
                 },
                 "required": ["path", "content"]
             }),
@@ -51,6 +56,8 @@ impl Tool for FileWriteTool {
             .unwrap_or("")
             .trim_start_matches('/');
         let content = params["content"].as_str().unwrap_or("");
+        let mode = params["mode"].as_str().unwrap_or("overwrite");
+        let is_append = mode == "append";
         if path.is_empty() {
             return Ok(ToolResult {
                 ok: false,
@@ -67,6 +74,7 @@ impl Tool for FileWriteTool {
             input_path = %path,
             full_path = %full_path.display(),
             exists = full_path.exists(),
+            mode,
             "file_write: resolving path"
         );
 
@@ -74,10 +82,25 @@ impl Tool for FileWriteTool {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
 
-        match tokio::fs::write(&full_path, content).await {
+        let write_result = if is_append {
+            use tokio::io::AsyncWriteExt;
+            match tokio::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&full_path)
+                .await
+            {
+                Ok(mut f) => f.write_all(content.as_bytes()).await,
+                Err(e) => Err(e),
+            }
+        } else {
+            tokio::fs::write(&full_path, content).await
+        };
+
+        match write_result {
             Ok(()) => Ok(ToolResult {
                 ok: true,
-                content: format!("Written {} bytes to {path}", content.len()),
+                content: format!("{} {} bytes to {path}", if is_append { "Appended" } else { "Written" }, content.len()),
                 error: None,
                 token_usage: None,
             }),
@@ -86,6 +109,7 @@ impl Tool for FileWriteTool {
                     work_dir = %base,
                     input_path = %path,
                     full_path = %full_path.display(),
+                    mode,
                     error = %e,
                     "file_write: failed to write file"
                 );

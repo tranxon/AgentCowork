@@ -632,7 +632,6 @@ impl ContextBuilder {
             max_tokens = ?max_tokens,
             "Final max_tokens for ChatRequest"
         );
-
         ChatRequest {
             model,
             messages,
