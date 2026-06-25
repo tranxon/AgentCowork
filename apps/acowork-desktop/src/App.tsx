@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AppLayout } from "./components/layout/AppLayout";
 import { SplashScreen } from "./components/layout/SplashScreen";
 import { OnboardingFlow } from "./components/onboarding/OnboardingFlow";
@@ -28,6 +29,23 @@ function App() {
       sessionStorage.removeItem("acowork_recovery_reload");
     }
   }, [isRecoveryReload]);
+
+  // Show the window after first render. The window starts hidden (visible:false
+  // in tauri.conf.json) so the user never sees the empty/transparent window or
+  // the decoration flicker that occurs before React mounts. By the time this
+  // effect fires, SplashScreen / OnboardingFlow / AppLayout is already painted.
+  useEffect(() => {
+    const showWindow = async () => {
+      try {
+        const win = getCurrentWindow();
+        await win.show();
+        await win.setFocus();
+      } catch (e) {
+        console.error("Failed to show window:", e);
+      }
+    };
+    showWindow();
+  }, []);
 
   if (!gatewayReady && onboardingDone) {
     return (

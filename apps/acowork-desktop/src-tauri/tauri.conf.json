@@ -33,7 +33,7 @@
         "decorations": true,
         "transparent": true,
         "center": true,
-        "visible": true,
+        "visible": false,
         "shadow": true,
         "titleBarStyle": "Overlay",
         "hiddenTitle": true

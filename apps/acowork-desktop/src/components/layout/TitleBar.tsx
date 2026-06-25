@@ -48,6 +48,7 @@ export function TitleBar() {
   return (
     <div
       onMouseDown={handleDragStart}
+      onDoubleClick={handleMaximize}
       className={`flex h-8 w-full items-center justify-between select-none ${
         isMacOS ? "pl-[80px]" : "pl-3"
       }`}
@@ -61,7 +62,7 @@ export function TitleBar() {
 
       {/* Right: Window controls (Windows/Linux only) */}
       {!isMacOS && (
-        <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-1" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
           <button
             className="flex h-8 w-8 items-center justify-center rounded text-zinc-600 hover:bg-zinc-300 dark:text-zinc-400 dark:hover:bg-zinc-700"
             onClick={handleMinimize}
