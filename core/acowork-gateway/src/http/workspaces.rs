@@ -17,7 +17,6 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 use std::path::Path as StdPath;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 use crate::http::routes::{ApiError, AppState};
@@ -953,44 +952,24 @@ pub async fn read_raw_file(
     ))
 }
 
-/// `GET /ws-files/{agent_id}/{*path}` — serve a workspace file as a static asset
-///
-/// This endpoint serves files from the agent's workspace root so that HTML
-/// documents can reference sub-resources (scripts, styles, images) via
-/// root-relative URLs like `/src/main.tsx`.
-///
-/// The `{*path}` parameter captures the remainder of the URL after `/ws-files/{agent_id}/`,
-/// which is used as the relative path within the workspace root.
-pub async fn serve_ws_file(
-    State(state): State<AppState>,
-    Path((agent_id, file_rel_path)): Path<(String, String)>,
+/// Serve a raw file from a resolved workspace root with MIME and containment checks.
+fn serve_workspace_file_from_root(
+    workspace_root: String,
+    file_rel_path: &str,
 ) -> Result<(StatusCode, [(&'static str, String); 2], axum::body::Body), (StatusCode, Json<ApiError>)> {
     if file_rel_path.is_empty() || file_rel_path == "/" {
         return Err(ApiError::bad_request("Missing file path"));
     }
 
-    // Trim leading slash
     let file_rel_path = file_rel_path.trim_start_matches('/');
+    let (_canonical_root, abs_path, _rel_path) =
+        resolve_tree_path(&workspace_root, file_rel_path).map_err(|e| ApiError::bad_request(&e))?;
 
-    // Use agent home as workspace root (same as __agent_home__)
-    let workspace_root = resolve_workspace_root(&state, &agent_id, None).await?;
-    let workspace_root = PathBuf::from(workspace_root);
-
-    let abs_path = workspace_root.join(file_rel_path);
-
-    // Security: verify the resolved path is within the workspace root
-    let canonical = abs_path.canonicalize().map_err(|_| {
-        ApiError::not_found(&format!("File not found: {}", file_rel_path))
-    })?;
-    if !canonical.starts_with(&workspace_root) {
-        return Err(ApiError::bad_request("Path escapes workspace root"));
-    }
-
-    if !canonical.is_file() {
+    if !abs_path.is_file() {
         return Err(ApiError::not_found(&format!("File not found: {}", file_rel_path)));
     }
 
-    let metadata = std::fs::metadata(&canonical)
+    let metadata = std::fs::metadata(&abs_path)
         .map_err(|e| ApiError::internal(&format!("Cannot read metadata: {}", e)))?;
     if metadata.len() > MAX_FILE_SIZE {
         return Err((
@@ -1006,10 +985,9 @@ pub async fn serve_ws_file(
         ));
     }
 
-    let ext = canonical.extension().and_then(|e| e.to_str()).unwrap_or("");
+    let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let mime_type = detect_mime(ext).unwrap_or("application/octet-stream").to_string();
-
-    let bytes = std::fs::read(&canonical)
+    let bytes = std::fs::read(&abs_path)
         .map_err(|e| ApiError::internal(&format!("Failed to read file: {}", e)))?;
 
     Ok((
@@ -1017,6 +995,31 @@ pub async fn serve_ws_file(
         [("Content-Type", mime_type), ("Access-Control-Allow-Origin", "*".to_string())],
         axum::body::Body::from(bytes),
     ))
+}
+
+/// `GET /ws-files/{agent_id}/{*path}` — serve an agent-home file as a static asset
+///
+/// Legacy endpoint kept for compatibility. New HTML preview code should use
+/// `/workspace-files/{agent_id}/{workspace_id}/{*path}` so additional
+/// workspace directories resolve correctly.
+pub async fn serve_ws_file(
+    State(state): State<AppState>,
+    Path((agent_id, file_rel_path)): Path<(String, String)>,
+) -> Result<(StatusCode, [(&'static str, String); 2], axum::body::Body), (StatusCode, Json<ApiError>)> {
+    let workspace_root = resolve_workspace_root(&state, &agent_id, None).await?;
+    serve_workspace_file_from_root(workspace_root, &file_rel_path)
+}
+
+/// `GET /workspace-files/{agent_id}/{workspace_id}/{*path}` — serve a workspace file as a static asset
+///
+/// This endpoint is used by HTML preview so sub-resources are resolved against
+/// the same workspace as the HTML file being previewed.
+pub async fn serve_workspace_ws_file(
+    State(state): State<AppState>,
+    Path((agent_id, workspace_id, file_rel_path)): Path<(String, String, String)>,
+) -> Result<(StatusCode, [(&'static str, String); 2], axum::body::Body), (StatusCode, Json<ApiError>)> {
+    let workspace_root = resolve_workspace_root(&state, &agent_id, Some(&workspace_id)).await?;
+    serve_workspace_file_from_root(workspace_root, &file_rel_path)
 }
 
 /// `PUT /api/agents/{agent_id}/workspaces/file` — write content to a file
@@ -1586,6 +1589,10 @@ pub fn workspace_routes() -> Router<AppState> {
         .route(
             "/api/agents/{agent_id}/workspaces/search",
             get(search_files),
+        )
+        .route(
+            "/workspace-files/{agent_id}/{workspace_id}/{*path}",
+            get(serve_workspace_ws_file),
         )
         .route(
             "/ws-files/{agent_id}/{*path}",

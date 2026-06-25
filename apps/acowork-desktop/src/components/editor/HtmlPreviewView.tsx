@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
-import { Loader2 } from "lucide-react";
+import { AlertTriangle, Loader2 } from "lucide-react";
 import { useTranslation } from "../../i18n/useTranslation";
+import { transformHtmlPreview } from "./htmlPreviewTransform";
 
 interface HtmlPreviewViewProps {
     /** Raw HTML content fetched via the Gateway JSON API */
@@ -9,6 +10,10 @@ interface HtmlPreviewViewProps {
     gatewayUrl: string;
     /** Agent ID for constructing ws-files URLs */
     agentId: string;
+    /** Workspace ID for resolving preview sub-resources */
+    workspaceId: string;
+    /** Workspace-relative path of the HTML file being previewed */
+    relPath: string;
     fileName: string;
 }
 
@@ -22,24 +27,27 @@ interface HtmlPreviewViewProps {
  * Blob lifecycle is managed via useState + useEffect (not useMemo) to avoid
  * race conditions where the URL is revoked before the iframe loads it.
  */
-export function HtmlPreviewView({ content, gatewayUrl, agentId, fileName }: HtmlPreviewViewProps) {
+export function HtmlPreviewView({ content, gatewayUrl, agentId, workspaceId, relPath, fileName }: HtmlPreviewViewProps) {
     const { t } = useTranslation();
     const [loading, setLoading] = useState(true);
     const [blobUrl, setBlobUrl] = useState<string | null>(null);
+    const [hasTsModuleEntry, setHasTsModuleEntry] = useState(false);
 
     useEffect(() => {
         if (!content) return;
 
         setLoading(true);
 
-        // Inject <base> tag so root-relative URLs resolve to the Gateway
-        const baseHref = `${gatewayUrl}/ws-files/${agentId}/`;
-        const modified = content.replace(
-            /<head[^>]*>/i,
-            (match) => `${match}\n<base href="${baseHref}">`,
-        );
+        const transformed = transformHtmlPreview({
+            content,
+            gatewayUrl,
+            agentId,
+            workspaceId,
+            relPath,
+        });
+        setHasTsModuleEntry(transformed.hasTsModuleEntry);
 
-        const blob = new Blob([modified], { type: "text/html;charset=utf-8" });
+        const blob = new Blob([transformed.html], { type: "text/html;charset=utf-8" });
         const url = URL.createObjectURL(blob);
         setBlobUrl(url);
 
@@ -48,12 +56,18 @@ export function HtmlPreviewView({ content, gatewayUrl, agentId, fileName }: Html
             URL.revokeObjectURL(url);
             setBlobUrl((prev) => (prev === url ? null : prev));
         };
-    }, [content, gatewayUrl, agentId]);
+    }, [content, gatewayUrl, agentId, workspaceId, relPath]);
 
     const handleLoad = () => setLoading(false);
 
     return (
         <div className="relative h-full w-full">
+            {hasTsModuleEntry && (
+                <div className="absolute left-3 right-3 top-3 z-20 flex gap-2 rounded-lg border border-amber-300 bg-amber-50/95 px-3 py-2 text-xs text-amber-900 shadow-sm dark:border-amber-700/60 dark:bg-amber-950/95 dark:text-amber-100">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                    <span>{t("fileEditor.htmlPreviewTsModuleWarning")}</span>
+                </div>
+            )}
             {loading && (
                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-white dark:bg-zinc-900">
                     <Loader2 className="h-8 w-8 animate-spin text-zinc-400" />
