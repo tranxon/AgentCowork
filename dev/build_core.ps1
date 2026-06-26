@@ -170,6 +170,18 @@ $embedModelsSrc = Join-Path $WorkspaceRoot "core\acowork-embed\assets\embedding_
 $releaseDir = Join-Path $WorkspaceRoot "target\release"
 $debugDir = Join-Path $WorkspaceRoot "target\debug"
 
+# Ensure target directories exist. On a fresh checkout cargo has only ever been
+# invoked with --release, so target\debug may not exist yet. Without this,
+# `Copy-Item -Path $foo -Destination target\debug` would silently create a
+# *file* literally named "debug" inside target\ (Copy-Item does not auto-create
+# missing parent directories — it treats the destination leaf as a new file),
+# which then blocks every later copy that targets target\debug\xxx.
+foreach ($dir in @($releaseDir, $debugDir)) {
+    if (-not (Test-Path $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+}
+
 if (Test-Path $offlineSrc) {
     Copy-Item -Path $offlineSrc -Destination $releaseDir -Force
     Write-Host "  offline_providers.json -> $releaseDir" -ForegroundColor Green

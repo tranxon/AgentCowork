@@ -211,6 +211,13 @@ echo -e "${YELLOW}[4/5] Copying offline_providers.json to target directories...$
 OFFLINE_SRC="$WORKSPACE_ROOT/assets/offline_providers.json"
 RELEASE_DIR="$WORKSPACE_ROOT/target/release"
 DEBUG_DIR="$WORKSPACE_ROOT/target/debug"
+# Ensure target directories exist. On a fresh checkout cargo has only ever
+# been invoked with --release, so target/debug may not exist yet. Without
+# this, `cp "$OFFLINE_SRC" "$DEBUG_DIR/"` would fail with a confusing
+# "Not a directory" error (and on PowerShell sibling `Copy-Item` would
+# silently create a stray file named `debug` inside target/). mkdir -p is
+# idempotent and harmless when the directory already exists.
+mkdir -p "$RELEASE_DIR" "$DEBUG_DIR"
 if [ -f "$OFFLINE_SRC" ]; then
     cp "$OFFLINE_SRC" "$RELEASE_DIR/"
     echo -e "${GREEN}  Copied to $RELEASE_DIR${NC}"
