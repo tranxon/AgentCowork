@@ -7,10 +7,14 @@
 #   4. Auto-configure Homebrew + pkg-config + cmake
 #
 # Usage:
-#   ./dev/build_macos.sh             # Default Apple Silicon optimized
-#   ./dev/build_macos.sh --cpu       # CPU only (best compatibility)
-#   ./dev/build_macos.sh --skip-embed  Skip embed
+#   ./dev/build_macos.sh               # Default Apple Silicon optimized, release
+#   ./dev/build_macos.sh --debug       # Debug build (auto-enables ACOWORK_GATEWAY_LOG_LEVEL=debug)
+#   ./dev/build_macos.sh --release     # Release build (explicit, default)
+#   ./dev/build_macos.sh --cpu         # CPU only (best compatibility)
+#   ./dev/build_macos.sh --skip-embed  # Skip embed
 #   ./dev/build_macos.sh --help
+#
+# Profile selection: --debug/--release flag > $ACOWORK_BUILD_PROFILE > release
 
 set -e
 
@@ -32,10 +36,13 @@ ARCH="$(uname -m)"
 USE_GPU=true         # Apple Silicon auto-enable CoreML
 SKIP_EMBED=false
 SHOW_HELP=false
+PROFILE="release"
 
 # ── Parse arguments ─────────────────────────────────────────────────────────
 for arg in "$@"; do
     case "$arg" in
+        --debug)      PROFILE="debug" ;;
+        --release)    PROFILE="release" ;;
         --cpu)        USE_GPU=false ;;
         --skip-embed) SKIP_EMBED=true ;;
         -h|--help)
@@ -43,12 +50,18 @@ for arg in "$@"; do
 Usage: ./dev/build_macos.sh [OPTIONS]
 
 Options:
-  --cpu           Use CPU-only ONNX Runtime (no CoreML acceleration)
-  --skip-embed    Skip building the embedding runtime entirely
-  --help, -h      Show this help
+  --debug           Build debug (auto-enables ACOWORK_GATEWAY_LOG_LEVEL=debug)
+  --release         Build release (default)
+  --cpu             Use CPU-only ONNX Runtime (no CoreML acceleration)
+  --skip-embed      Skip building the embedding runtime entirely
+  --help, -h        Show this help
+
+Environment:
+  ACOWORK_BUILD_PROFILE   debug|release  (overridden by --debug/--release)
 
 Examples:
-  ./dev/build_macos.sh               # Apple Silicon + CoreML (recommended)
+  ./dev/build_macos.sh               # Apple Silicon + CoreML, release (recommended)
+  ./dev/build_macos.sh --debug       # Debug build
   ./dev/build_macos.sh --cpu         # CPU only (Intel Mac or compatibility)
   ./dev/build_macos.sh --skip-embed  # Skip embed, build only Gateway + Runtime
 EOF
@@ -58,13 +71,31 @@ EOF
     esac
 done
 
+# Env var fallback for profile (CLI flag wins).
+if [ -n "$ACOWORK_BUILD_PROFILE" ]; then
+    env_profile="$(echo "$ACOWORK_BUILD_PROFILE" | tr '[:upper:]' '[:lower:]' | xargs)"
+    case "$env_profile" in
+        debug|release) PROFILE="$env_profile" ;;
+        *) echo -e "${YELLOW}WARN: ignoring unknown ACOWORK_BUILD_PROFILE='$env_profile' (expected 'debug' or 'release')${NC}" ;;
+    esac
+fi
+
+# Runtime env linkage: debug profile auto-enables gateway verbose logging for
+# any child process spawned from this script.
+if [ "$PROFILE" = "debug" ]; then
+    export ACOWORK_GATEWAY_LOG_LEVEL="debug"
+fi
+
+TARGET_DIR="$WORKSPACE_ROOT/target/$PROFILE"
+
 # ── Header ──────────────────────────────────────────────────────────────────
 echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   AgentCowork.AI — macOS One-Click Build Script ║${NC}"
+echo -e "${CYAN}║   ACowork.AI — macOS One-Click Build Script ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${GRAY}  Arch: $ARCH${NC}"
 echo -e "${GRAY}  CoreML: $($USE_GPU && echo true || echo false)${NC}"
+echo -e "${GRAY}  Profile: $PROFILE${NC}"
 echo ""
 
 # ── Step 0: Check required tools ────────────────────────────────────────────
@@ -153,9 +184,14 @@ echo -e "${GREEN}  ✓ Process cleanup complete${NC}"
 echo ""
 
 # ── Step 2: Build Gateway ───────────────────────────────────────────────────
-echo -e "${YELLOW}[2/6] Building Gateway...${NC}"
+echo -e "${YELLOW}[2/6] Building Gateway ($PROFILE)...${NC}"
 cd "$CORE_DIR"
-if cargo build --release -p acowork-gateway 2>&1 | tail -20; then
+if [ "$PROFILE" = "release" ]; then
+    cargo_args=(build --release -p acowork-gateway)
+else
+    cargo_args=(build -p acowork-gateway)
+fi
+if "${cargo_args[@]}" 2>&1 | tail -20; then
     echo -e "${GREEN}  ✓ Gateway compiled successfully${NC}"
 else
     echo -e "${RED}  ✗ Gateway compile failed${NC}"
@@ -164,8 +200,13 @@ fi
 echo ""
 
 # ── Step 3: Build Runtime ───────────────────────────────────────────────────
-echo -e "${YELLOW}[3/6] Building Runtime...${NC}"
-if cargo build --release -p acowork-runtime 2>&1 | tail -20; then
+echo -e "${YELLOW}[3/6] Building Runtime ($PROFILE)...${NC}"
+if [ "$PROFILE" = "release" ]; then
+    cargo_args=(build --release -p acowork-runtime)
+else
+    cargo_args=(build -p acowork-runtime)
+fi
+if "${cargo_args[@]}" 2>&1 | tail -20; then
     echo -e "${GREEN}  ✓ Runtime compiled successfully${NC}"
 else
     echo -e "${RED}  ✗ Runtime compile failed${NC}"
@@ -178,7 +219,7 @@ if [ "$SKIP_EMBED" = "true" ]; then
     echo -e "${YELLOW}[4/6] Skipping Embed (--skip-embed)${NC}"
     echo ""
 else
-    echo -e "${YELLOW}[4/6] Building Embed (auto-download ONNX Runtime)...${NC}"
+    echo -e "${YELLOW}[4/6] Building Embed ($PROFILE, auto-download ONNX Runtime)...${NC}"
 
     # Determine which feature to use
     EMBED_FEATURES="download-ort"
@@ -189,7 +230,12 @@ else
         echo -e "${GRAY}  Using CPU mode${NC}"
     fi
 
-    if cargo build --release -p acowork-embed --features "$EMBED_FEATURES" 2>&1 | tail -30; then
+    if [ "$PROFILE" = "release" ]; then
+        cargo_args=(build --release -p acowork-embed --features "$EMBED_FEATURES")
+    else
+        cargo_args=(build -p acowork-embed --features "$EMBED_FEATURES")
+    fi
+    if "${cargo_args[@]}" 2>&1 | tail -30; then
         echo -e "${GREEN}  ✓ Embed compiled successfully${NC}"
     else
         echo -e "${RED}  ✗ Embed compile failed${NC}"
@@ -224,18 +270,23 @@ else
 fi
 
 # ── Step 5: Copy resource files ─────────────────────────────────────────────
-echo -e "${YELLOW}[5/6] Copying resource files...${NC}"
-RELEASE_DIR="$WORKSPACE_ROOT/target/release"
+#
+# The gateway (and embed) read these from `{exe_dir}/`. We only stage into the
+# directory matching the active profile — staging to a directory that does not
+# yet exist would either fail (`cp` here, which uses `mkdir -p` below) or, in
+# the Windows `Copy-Item` equivalent, silently create a stray file.
+echo -e "${YELLOW}[5/6] Copying resource files to $TARGET_DIR...${NC}"
+mkdir -p "$TARGET_DIR"
 OFFLINE_SRC="$WORKSPACE_ROOT/assets/offline_providers.json"
 if [ -f "$OFFLINE_SRC" ]; then
-    cp "$OFFLINE_SRC" "$RELEASE_DIR/"
+    cp "$OFFLINE_SRC" "$TARGET_DIR/"
     echo -e "${GREEN}  ✓ offline_providers.json${NC}"
 fi
 
 # Copy embedding_models.json
 EMBEDDING_MODELS_SRC="$CORE_DIR/acowork-embed/assets/embedding_models.json"
 if [ -f "$EMBEDDING_MODELS_SRC" ]; then
-    cp "$EMBEDDING_MODELS_SRC" "$RELEASE_DIR/"
+    cp "$EMBEDDING_MODELS_SRC" "$TARGET_DIR/"
     echo -e "${GREEN}  ✓ embedding_models.json${NC}"
 fi
 echo ""
@@ -244,14 +295,14 @@ echo ""
 echo -e "${YELLOW}[6/6] Done!${NC}"
 echo ""
 echo -e "${CYAN}Build artifacts:${NC}"
-ls -lh "$RELEASE_DIR/acowork-gateway" "$RELEASE_DIR/acowork-runtime" "$RELEASE_DIR/acowork-embed" 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
+ls -lh "$TARGET_DIR/acowork-gateway" "$TARGET_DIR/acowork-runtime" "$TARGET_DIR/acowork-embed" 2>/dev/null | awk '{print "  " $9 " (" $5 ")"}'
 echo ""
 
 echo -e "${CYAN}Next steps:${NC}"
 echo -e "  ${GREEN}Start services:${NC}"
-echo -e "    $RELEASE_DIR/acowork-gateway &"
-echo -e "    $RELEASE_DIR/acowork-runtime &"
-echo -e "    $RELEASE_DIR/acowork-embed &"
+echo -e "    $TARGET_DIR/acowork-gateway &"
+echo -e "    $TARGET_DIR/acowork-runtime &"
+echo -e "    $TARGET_DIR/acowork-embed &"
 echo ""
 echo -e "  ${GREEN}Health check:${NC}"
 echo -e "    curl http://127.0.0.1:19876/health"

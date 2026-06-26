@@ -1,19 +1,57 @@
 #!/usr/bin/env pwsh
-# build_core.ps1 - Build Gateway + Runtime (release mode)
+# build_core.ps1 - Build Gateway + Runtime (debug or release mode)
 # Usage:
-#   .\dev\build_core.ps1          Build only (default)
-#   .\dev\build_core.ps1 -Start   Build + stop old + start Gateway
+#   .\dev\build_core.ps1                  Build release (default)
+#   .\dev\build_core.ps1 -Debug           Build debug
+#   .\dev\build_core.ps1 -Release         Build release (explicit)
+#   .\dev\build_core.ps1 -Start           Build release + stop old + start Gateway
+#   .\dev\build_core.ps1 -Debug -Start    Build debug + stop old + start Gateway
+#
+# Profile selection: -Debug / -Release switch > $env:ACOWORK_BUILD_PROFILE > release
+# In debug profile, $env:ACOWORK_GATEWAY_LOG_LEVEL is auto-set to "debug" so any
+# gateway process spawned from this script's process tree (including -Start
+# and a manual `target\debug\acowork-gateway.exe` invocation from the same
+# terminal) inherits verbose logging.
 
-param([switch] $Start)
+param(
+    [switch] $Start,
+    [switch] $Debug,
+    [switch] $Release
+)
 
 $ErrorActionPreference = "Stop"
 $WorkspaceRoot = Split-Path -Parent $PSScriptRoot
 $CoreDir = Join-Path $WorkspaceRoot "core"
 
+# Resolve profile: CLI switch > $env:ACOWORK_BUILD_PROFILE > default (release)
+$Profile = "release"
+if ($Debug -and $Release) {
+    Write-Host "ERROR: -Debug and -Release are mutually exclusive." -ForegroundColor Red
+    exit 1
+}
+if ($Debug) { $Profile = "debug" }
+elseif ($Release) { $Profile = "release" }
+elseif ($env:ACOWORK_BUILD_PROFILE) {
+    $envProfile = $env:ACOWORK_BUILD_PROFILE.Trim().ToLower()
+    if ($envProfile -eq "debug" -or $envProfile -eq "release") {
+        $Profile = $envProfile
+    } else {
+        Write-Host "WARN: ignoring unknown ACOWORK_BUILD_PROFILE='$envProfile' (expected 'debug' or 'release')" -ForegroundColor Yellow
+    }
+}
+
+# Runtime env linkage: debug profile auto-enables gateway verbose logging for
+# any child process spawned from this script.
+if ($Profile -eq "debug") {
+    $env:ACOWORK_GATEWAY_LOG_LEVEL = "debug"
+}
+
+$targetDir = Join-Path $WorkspaceRoot "target\$Profile"
 $totalSteps = if ($Start) { 5 } else { 3 }
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "AgentCowork Core Build Script" -ForegroundColor Cyan
+Write-Host "ACowork Core Build Script" -ForegroundColor Cyan
+Write-Host "Profile: $Profile" -ForegroundColor Cyan
 if ($Start) { Write-Host "Mode: Build + Restart" -ForegroundColor Cyan }
 else       { Write-Host "Mode: Build Only" -ForegroundColor Cyan }
 Write-Host "========================================" -ForegroundColor Cyan
@@ -83,10 +121,13 @@ if ($Start) {
 
 # Step: Build Gateway
 $step++
-Write-Host "[$step/$totalSteps] Building Gateway (release mode)..." -ForegroundColor Yellow
+Write-Host "[$step/$totalSteps] Building Gateway ($Profile mode)..." -ForegroundColor Yellow
 Set-Location $CoreDir
 try {
-    cargo build --release -p acowork-gateway 2>&1 | ForEach-Object {
+    $cargoArgs = @("build")
+    if ($Profile -eq "release") { $cargoArgs += "--release" }
+    $cargoArgs += @("-p", "acowork-gateway")
+    & cargo @cargoArgs 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -101,9 +142,12 @@ Write-Host ""
 
 # Step: Build Runtime
 $step++
-Write-Host "[$step/$totalSteps] Building Runtime (release mode)..." -ForegroundColor Yellow
+Write-Host "[$step/$totalSteps] Building Runtime ($Profile mode)..." -ForegroundColor Yellow
 try {
-    cargo build --release -p acowork-runtime 2>&1 | ForEach-Object {
+    $cargoArgs = @("build")
+    if ($Profile -eq "release") { $cargoArgs += "--release" }
+    $cargoArgs += @("-p", "acowork-runtime")
+    & cargo @cargoArgs 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -118,7 +162,7 @@ Write-Host ""
 
 # Step: Build Embedding Runtime (ORT auto-detected from .ort/ directory)
 $step++
-Write-Host "[$step/$totalSteps] Building Embedding Runtime (release mode)..." -ForegroundColor Yellow
+Write-Host "[$step/$totalSteps] Building Embedding Runtime ($Profile mode)..." -ForegroundColor Yellow
 
 $ortDir = Join-Path $WorkspaceRoot ".ort"
 $ortEntries = @()
@@ -140,12 +184,19 @@ if ($preferredOrt) {
 }
 if (-not $env:ORT_LIB_LOCATION) {
     Write-Host "  ONNX Runtime not found. Run .\dev\setup_ort.ps1 first." -ForegroundColor Red
-    Write-Host "  Alternative: cargo build --release -p acowork-embed --features download-ort" -ForegroundColor Red
+    if ($Profile -eq "release") {
+        Write-Host "  Alternative: cargo build --release -p acowork-embed --features download-ort" -ForegroundColor Red
+    } else {
+        Write-Host "  Alternative: cargo build -p acowork-embed --features download-ort" -ForegroundColor Red
+    }
     exit 1
 }
 
 try {
-    cargo build --release -p acowork-embed 2>&1 | ForEach-Object {
+    $cargoArgs = @("build")
+    if ($Profile -eq "release") { $cargoArgs += "--release" }
+    $cargoArgs += @("-p", "acowork-embed")
+    & cargo @cargoArgs 2>&1 | ForEach-Object {
         if ($_ -match "error" -or $_ -match "Compiling") {
             Write-Host "  $_" -ForegroundColor Gray
         }
@@ -158,52 +209,45 @@ try {
 
 Write-Host ""
 
-# Step: Copy offline_providers.json + embedding_models.json from assets to target dirs
+# Step: Copy offline_providers.json + embedding_models.json from assets to target dir
 #
 # The gateway (and embed) read embedding_models.json from `{exe_dir}/`. Whoever
 # distributes the binary (this script for dev, the package installer for
 # release, the Tauri bundler for desktop) is responsible for placing it there.
+#
+# We only stage into the directory matching the active profile — the previous
+# "stage to both target\release and target\debug" pattern was the source of
+# the silent stray-file bug when target\debug did not exist.
 $step++
-Write-Host "[$step/$totalSteps] Copying runtime resource files to target directories..." -ForegroundColor Yellow
+Write-Host "[$step/$totalSteps] Copying runtime resource files to target\\$Profile..." -ForegroundColor Yellow
 $offlineSrc = Join-Path $WorkspaceRoot "assets\offline_providers.json"
 $embedModelsSrc = Join-Path $WorkspaceRoot "core\acowork-embed\assets\embedding_models.json"
-$releaseDir = Join-Path $WorkspaceRoot "target\release"
-$debugDir = Join-Path $WorkspaceRoot "target\debug"
 
-# Ensure target directories exist. On a fresh checkout cargo has only ever been
-# invoked with --release, so target\debug may not exist yet. Without this,
-# `Copy-Item -Path $foo -Destination target\debug` would silently create a
-# *file* literally named "debug" inside target\ (Copy-Item does not auto-create
-# missing parent directories — it treats the destination leaf as a new file),
-# which then blocks every later copy that targets target\debug\xxx.
-foreach ($dir in @($releaseDir, $debugDir)) {
-    if (-not (Test-Path $dir)) {
-        New-Item -ItemType Directory -Path $dir -Force | Out-Null
-    }
+# Ensure the single profile target directory exists before any Copy-Item call.
+# Copy-Item does not auto-create missing parent directories — if target\$Profile
+# did not exist (typical after `-Debug` on a release-only checkout), it would
+# silently create a file literally named "$Profile" inside target\ instead.
+if (-not (Test-Path $targetDir)) {
+    New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
 }
 
 if (Test-Path $offlineSrc) {
-    Copy-Item -Path $offlineSrc -Destination $releaseDir -Force
-    Write-Host "  offline_providers.json -> $releaseDir" -ForegroundColor Green
-    Copy-Item -Path $offlineSrc -Destination $debugDir -Force
-    Write-Host "  offline_providers.json -> $debugDir" -ForegroundColor Green
+    Copy-Item -Path $offlineSrc -Destination $targetDir -Force
+    Write-Host "  offline_providers.json -> $targetDir" -ForegroundColor Green
 } else {
     Write-Host "  WARNING: offline_providers.json not found at $offlineSrc" -ForegroundColor Red
 }
 
 if (Test-Path $embedModelsSrc) {
-    Copy-Item -Path $embedModelsSrc -Destination (Join-Path $releaseDir "embedding_models.json") -Force
-    Write-Host "  embedding_models.json -> $releaseDir" -ForegroundColor Green
-    Copy-Item -Path $embedModelsSrc -Destination (Join-Path $debugDir "embedding_models.json") -Force
-    Write-Host "  embedding_models.json -> $debugDir" -ForegroundColor Green
+    Copy-Item -Path $embedModelsSrc -Destination (Join-Path $targetDir "embedding_models.json") -Force
+    Write-Host "  embedding_models.json -> $targetDir" -ForegroundColor Green
 } else {
     Write-Host "  WARNING: embedding_models.json not found at $embedModelsSrc" -ForegroundColor Red
 }
 
 if ($env:ORT_DYLIB_PATH -and (Test-Path $env:ORT_DYLIB_PATH)) {
-    Copy-Item -Path $env:ORT_DYLIB_PATH -Destination (Join-Path $releaseDir "onnxruntime.dll") -Force -ErrorAction SilentlyContinue
-    Copy-Item -Path $env:ORT_DYLIB_PATH -Destination (Join-Path $debugDir "onnxruntime.dll") -Force -ErrorAction SilentlyContinue
-    Write-Host "  onnxruntime.dll -> $releaseDir, $debugDir" -ForegroundColor Green
+    Copy-Item -Path $env:ORT_DYLIB_PATH -Destination (Join-Path $targetDir "onnxruntime.dll") -Force -ErrorAction SilentlyContinue
+    Write-Host "  onnxruntime.dll -> $targetDir" -ForegroundColor Green
 }
 
 Write-Host ""
@@ -211,12 +255,12 @@ Write-Host ""
 if ($Start) {
     # Step: Start Gateway
     $step++
-    Write-Host "[$step/$totalSteps] Starting Gateway in daemon mode (debug logging)..." -ForegroundColor Yellow
+    $logLevel = if ($env:ACOWORK_GATEWAY_LOG_LEVEL) { $env:ACOWORK_GATEWAY_LOG_LEVEL } else { "info" }
+    Write-Host "[$step/$totalSteps] Starting Gateway in daemon mode (log level: $logLevel)..." -ForegroundColor Yellow
     $env:ACOWORK_GATEWAY_DAEMON = "true"
-    $env:ACOWORK_GATEWAY_LOG_LEVEL = "debug"
 
     # Start Gateway in background
-    $gatewayExe = Join-Path $WorkspaceRoot "target\release\acowork-gateway.exe"
+    $gatewayExe = Join-Path $WorkspaceRoot "target\$Profile\acowork-gateway.exe"
     if (Test-Path $gatewayExe) {
         Start-Process -FilePath $gatewayExe -WorkingDirectory $WorkspaceRoot -NoNewWindow
         Write-Host "  Gateway started." -ForegroundColor Green
@@ -234,7 +278,11 @@ if ($Start) {
     Write-Host ""
     Write-Host "========================================" -ForegroundColor Cyan
     Write-Host "Build complete (not started)." -ForegroundColor Cyan
-    Write-Host "To start: .\dev\build_core.ps1 -Start" -ForegroundColor Cyan
+    if ($Profile -eq "debug") {
+        Write-Host "To start: .\dev\build_core.ps1 -Debug -Start" -ForegroundColor Cyan
+    } else {
+        Write-Host "To start: .\dev\build_core.ps1 -Start" -ForegroundColor Cyan
+    }
     Write-Host "========================================" -ForegroundColor Cyan
 }
 
