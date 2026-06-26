@@ -1,4 +1,4 @@
-//! AgentCowork Desktop App — Tauri v2 backend
+//! ACowork Desktop App — Tauri v2 backend
 //!
 //! This is the library entry point for the Tauri application.
 //! It sets up the Tauri builder with all plugins, commands, and tray.

@@ -1,6 +1,6 @@
 //! RAG standard query protocol types
 //!
-//! Defines the request/response JSON schemas for the AgentCowork RAG protocol.
+//! Defines the request/response JSON schemas for the ACowork RAG protocol.
 //! Enterprises adapt their RAG services to comply with this protocol.
 //!
 //! Protocol version: 1.0

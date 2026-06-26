@@ -1,5 +1,5 @@
 // Adapted from zeroclaw/src/tools/mcp_client.rs
-// AgentCowork deviation: uses acowork-mcp's own transport/protocol modules
+// ACowork deviation: uses acowork-mcp's own transport/protocol modules
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::collections::HashMap;

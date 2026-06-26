@@ -1,10 +1,10 @@
-//! Unified error types for AgentCowork.AI
+//! Unified error types for ACowork.AI
 
 use thiserror::Error;
 
 use crate::providers::ProviderError;
 
-/// Main error type for AgentCowork
+/// Main error type for ACowork
 #[derive(Debug, Error)]
 pub enum AcoworkError {
     #[error("IO error: {0}")]

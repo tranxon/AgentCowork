@@ -1,6 +1,6 @@
 //! WASI sandbox configuration builder
 //!
-//! Constructs WASI Preview 2 configurations from AgentCowork permissions,
+//! Constructs WASI Preview 2 configurations from ACowork permissions,
 //! defining the exact filesystem and network boundaries for a WASM tool.
 //!
 //! The sandbox is the security boundary: a WASM tool can ONLY access

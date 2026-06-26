@@ -386,7 +386,7 @@ mod tests {
         archive.start_file("manifest.toml", zip_options).unwrap();
         archive.write_all(b"agent_id = \"com.test\"").unwrap();
 
-        let export_json = r#"[{"label":"Knowledge","data":{"subject":"agent","predicate":"framework","object":"AgentCowork"}}]"#;
+        let export_json = r#"[{"label":"Knowledge","data":{"subject":"agent","predicate":"framework","object":"ACowork"}}]"#;
         add_grafeo_export_to_archive(&mut archive, export_json).unwrap();
 
         archive.finish().unwrap();
@@ -404,7 +404,7 @@ mod tests {
             "Export should contain Knowledge label"
         );
         assert!(
-            content.contains("AgentCowork"),
+            content.contains("ACowork"),
             "Export should contain node data"
         );
 

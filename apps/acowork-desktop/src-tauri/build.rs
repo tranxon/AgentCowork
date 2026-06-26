@@ -1,4 +1,4 @@
-//! Build script for the AgentCowork desktop app.
+//! Build script for the ACowork desktop app.
 //!
 //! Before invoking `tauri_build::build()`, this script copies the core
 //! workspace binaries (gateway, runtime, embed) and the ONNX runtime DLL

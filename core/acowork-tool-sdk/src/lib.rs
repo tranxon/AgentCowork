@@ -1,7 +1,7 @@
-//! acowork-tool-sdk — SDK for building AgentCowork WASM tools
+//! acowork-tool-sdk — SDK for building ACowork WASM tools
 //!
 //! Provides the `#[tool]` declarative macro and `ToolInput`/`ToolOutput`
-//! types for building WASM tools that run in the AgentCowork sandbox.
+//! types for building WASM tools that run in the ACowork sandbox.
 //!
 //! # Quick Start
 //!

@@ -1,6 +1,6 @@
-//! acowork-core — Shared types, protocols, and traits for AgentCowork.AI
+//! acowork-core — Shared types, protocols, and traits for ACowork.AI
 //!
-//! This crate contains all types shared across the AgentCowork workspace:
+//! This crate contains all types shared across the ACowork workspace:
 //! - Manifest structures (`.agent` package format)
 //! - Protocol messages (Gateway Service API)
 //! - Tool and Provider traits

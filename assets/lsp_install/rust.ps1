@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: rust-analyzer
+# ACowork LSP install script: rust-analyzer
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -101,7 +101,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: rust-analyzer ==="
+Write-Host "=== ACowork LSP Setup: rust-analyzer ==="
 Install-Server
 Verify-Server
 Health-Check

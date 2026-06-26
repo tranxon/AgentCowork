@@ -71,7 +71,7 @@
 
 ## 2. 主流编程 Agent 竞品调研
 
-### 2.1 ZeroClaw（AgentCowork 的参考实现）
+### 2.1 ZeroClaw（ACowork 的参考实现）
 
 **三层重试架构** (`ReliableProvider`，`zeroclaw/src/providers/reliable.rs`)：
 
@@ -198,7 +198,7 @@ Level 4: 激进裁剪（仅保留 system + 最近 N 轮）
 Level 5: 新建 session（完全重新开始）
 ```
 
-**已知不足**：Provider 层面 **没有重试逻辑**，流式中断会直接停止。与 AgentCowork 当前行为相同。
+**已知不足**：Provider 层面 **没有重试逻辑**，流式中断会直接停止。与 ACowork 当前行为相同。
 
 ---
 
@@ -211,7 +211,7 @@ Level 5: 新建 session（完全重新开始）
 
 ### 2.6 核心差异对比
 
-| 能力             | ZeroClaw         | OpenCode          | Aider          | Claude Code | Cline      | **AgentCowork (当前)** |
+| 能力             | ZeroClaw         | OpenCode          | Aider          | Claude Code | Cline      | **ACowork (当前)** |
 | ---------------- | ---------------- | ----------------- | -------------- | ----------- | ---------- | ---------------------- |
 | Provider 重试    | ✅ 三层           | ✅ Effect Schedule | ✅ 无限         | ❌ 无        | ⚠️ 仅 429   | ❌ 无                   |
 | 指数退避         | ✅ 2x cap 10s     | ✅ 2x cap 30s      | ✅ 2x 从 0.125s | ❌           | ⚠️ 固定     | ❌ 无                   |
@@ -408,15 +408,15 @@ pub struct ReliableProvider {
 
 ### 3.7 P2 方案：流式静默检测（行业首创）
 
-这是目前所有编程 Agent 都未解决的问题。AgentCowork 可以率先实现：
+这是目前所有编程 Agent 都未解决的问题。ACowork 可以率先实现：
 
 在 SSE 解析循环中加入 per-chunk read timeout（即 P0 方案二），当连续 N 秒无新数据到达时，主动判定为流式静默并触发重试。这比等待全局 HTTP timeout 快得多（45s vs 120s），能显著改善用户体验。
 
 ---
 
-## 4. 附录：AgentCowork 当前代码中的相关防御机制
+## 4. 附录：ACowork 当前代码中的相关防御机制
 
-AgentCowork Runtime 已有部分防御机制，但在此次故障中未能覆盖：
+ACowork Runtime 已有部分防御机制，但在此次故障中未能覆盖：
 
 | 机制                     | 位置                     | 状态         | 说明                                                       |
 | ------------------------ | ------------------------ | ------------ | ---------------------------------------------------------- |

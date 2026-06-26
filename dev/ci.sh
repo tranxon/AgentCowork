@@ -1,12 +1,12 @@
 #!/bin/bash
-# CI script for AgentCowork.AI
+# CI script for ACowork.AI
 # Usage: ./dev/ci.sh [check|clippy|test|integration|all]
 
 set -e
 
 MODE=${1:-all}
 
-echo "=== AgentCowork.AI CI ==="
+echo "=== ACowork.AI CI ==="
 
 run_check() {
     echo "Running cargo check..."

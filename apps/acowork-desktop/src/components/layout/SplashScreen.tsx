@@ -295,7 +295,7 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
                 className={`absolute bottom-6 transition-all duration-700 delay-300 ${fadeIn ? "translate-y-0 opacity-100" : "translate-y-2 opacity-0"
                     }`}
             >
-                <span className="text-[11px] text-zinc-400 dark:text-zinc-600">AgentCowork v{pkg.version}</span>
+                <span className="text-[11px] text-zinc-400 dark:text-zinc-600">ACowork v{pkg.version}</span>
             </div>
 
             {/* Keyframe styles injected once */}

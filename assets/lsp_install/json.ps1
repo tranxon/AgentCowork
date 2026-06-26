@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: vscode-json-language-server
+# ACowork LSP install script: vscode-json-language-server
 # Phases: Install -> Verify -> Health Check
 #
 # vscode-json-languageserver (old npm package) is deprecated and removed.
@@ -161,7 +161,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: vscode-json-language-server ==="
+Write-Host "=== ACowork LSP Setup: vscode-json-language-server ==="
 Install-Server
 Verify-Server
 Health-Check

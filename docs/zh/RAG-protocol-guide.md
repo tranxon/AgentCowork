@@ -7,11 +7,11 @@
 
 ## 1. 概述
 
-AgentCowork 定义了一套标准 HTTP 查询协议，企业 RAG 服务适配此协议后即可作为 Agent 的扩展检索通道。AgentCowork **不实现 RAG 引擎**，不为各家 RAG 实现 adapter，而是要求企业侧确保其服务兼容本协议。
+ACowork 定义了一套标准 HTTP 查询协议，企业 RAG 服务适配此协议后即可作为 Agent 的扩展检索通道。ACowork **不实现 RAG 引擎**，不为各家 RAG 实现 adapter，而是要求企业侧确保其服务兼容本协议。
 
 ### 核心原则
 
-- **纯对接，不托管**：AgentCowork 是 HTTP 客户端，不托管 RAG 数据
+- **纯对接，不托管**：ACowork 是 HTTP 客户端，不托管 RAG 数据
 - **配置驱动 Opt-In**：仅当 Agent manifest 声明 RAG 时才启用
 - **优雅降级**：RAG 不可达时返回空结果，不阻塞 Agent 执行
 - **安全优先**：endpoint 必须为 HTTPS，认证走 Vault 管理
@@ -193,7 +193,7 @@ HTTP 200 + JSON body：
 
 ### 3.4 错误响应
 
-RAG 服务返回非 2xx 状态码时，AgentCowork 视为查询失败，触发优雅降级（返回空结果）。建议 RAG 服务在错误时返回 JSON：
+RAG 服务返回非 2xx 状态码时，ACowork 视为查询失败，触发优雅降级（返回空结果）。建议 RAG 服务在错误时返回 JSON：
 
 ```json
 {
@@ -460,7 +460,7 @@ LLM 主动调用 RAG 工具，用于针对性深入查询：
 
 - `protocol_version: "1.0"` — Phase 4 当前版本
 - `protocol_version: "2.0"` — Phase 6 引入 MemoryStore 兼容协议
-- 版本号变更时，AgentCowork 客户端根据 `protocol_version` 选择不同的解析逻辑
+- 版本号变更时，ACowork 客户端根据 `protocol_version` 选择不同的解析逻辑
 - 现有 1.0 响应格式在 2.0 中保持向后兼容
 
 ### 9.3 extensions 字段
@@ -479,4 +479,4 @@ LLM 主动调用 RAG 工具，用于针对性深入查询：
 }
 ```
 
-AgentCowork 透传 `extensions`，不做解释。企业 RAG 可利用此字段传递自定义参数。
+ACowork 透传 `extensions`，不做解释。企业 RAG 可利用此字段传递自定义参数。

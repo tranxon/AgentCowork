@@ -1,7 +1,7 @@
 //! Memory store tool — store memories via Grafeo backend
 //!
 //! Adapted from zeroclaw/src/tools/memory_store.rs
-//! AgentCowork deviation: uses acowork_core::Tool trait;
+//! ACowork deviation: uses acowork_core::Tool trait;
 //! uses natural language interface (no key-value model);
 //! wires to GrafeoStore for instant extraction pipeline.
 //! SPDX-License-Identifier: MIT OR Apache-2.0

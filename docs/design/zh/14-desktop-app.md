@@ -4,11 +4,11 @@
 
 ---
 
-AgentCowork Desktop App 是基于 Tauri 的桌面客户端，作为用户与 Agent 交互的主界面。Desktop App 与 Gateway 是**独立进程**，通过 Gateway Service API 通信。
+ACowork Desktop App 是基于 Tauri 的桌面客户端，作为用户与 Agent 交互的主界面。Desktop App 与 Gateway 是**独立进程**，通过 Gateway Service API 通信。
 
 ## 1. 定位与职责
 
-Desktop App 是 AgentCowork 平台的**用户界面层**，不承载任何平台核心逻辑。它的职责是：
+Desktop App 是 ACowork 平台的**用户界面层**，不承载任何平台核心逻辑。它的职责是：
 
 | 职责 | 说明 |
 |------|------|
@@ -28,7 +28,7 @@ Desktop App 是 AgentCowork 平台的**用户界面层**，不承载任何平台
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                    AgentCowork Desktop App (Tauri v2)                │
+│                    ACowork Desktop App (Tauri v2)                │
 │                                                                  │
 │  ┌───────────────────────────────────────────────────────────┐  │
 │  │  WebView Frontend (React)                                 │  │
@@ -113,7 +113,7 @@ Desktop App 采用**左中右四栏布局**，根据当前模式（用户模式 
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│  AgentCowork                            [Developer Mode ○]  [— □ ✕] │
+│  ACowork                            [Developer Mode ○]  [— □ ✕] │
 ├────┬──────────────┬────────────────────────┬────────────────────────┤
 │    │              │                        │                        │
 │ 📱 │   Agent      │     Chat Panel         │   Execution            │
@@ -219,7 +219,7 @@ Desktop App 采用**左中右四栏布局**，根据当前模式（用户模式 
 
 ```
 Step 1: 欢迎
-  "欢迎使用 AgentCowork，让我们快速配置你的环境"
+  "欢迎使用 ACowork，让我们快速配置你的环境"
 
 Step 2: Gateway 连接
   ├─ 自动检测本地 Gateway（尝试连接默认地址）
@@ -381,11 +381,11 @@ Step 5: 分发 — 本地安装 / 导出到文件 / 上传仓库
 
 | 状态 | 图标样式 | Tooltip |
 |------|---------|---------|
-| Gateway 已连接 | 正常图标 | `AgentCowork — Connected` |
-| Gateway 未连接 | 灰色图标 | `AgentCowork — Disconnected` |
-| Agent 正在运行 | 蓝色脉冲 | `AgentCowork — 2 Agents Running` |
-| Agent 执行中 | 绿色脉冲 | `AgentCowork — Working` |
-| 错误 | 红色图标 | `AgentCowork — Error` |
+| Gateway 已连接 | 正常图标 | `ACowork — Connected` |
+| Gateway 未连接 | 灰色图标 | `ACowork — Disconnected` |
+| Agent 正在运行 | 蓝色脉冲 | `ACowork — 2 Agents Running` |
+| Agent 执行中 | 绿色脉冲 | `ACowork — Working` |
+| 错误 | 红色图标 | `ACowork — Error` |
 
 ### 6.2 托盘右键菜单
 
@@ -399,7 +399,7 @@ Step 5: 分发 — 本地安装 / 导出到文件 / 上传仓库
 │ Start Gateway    │  (未连接时显示)
 │ Stop Gateway     │  (已连接时显示)
 │──────────────────│
-│ Quit AgentCowork    │
+│ Quit ACowork    │
 └──────────────────┘
 ```
 

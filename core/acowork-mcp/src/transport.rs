@@ -1,7 +1,7 @@
 //! MCP transport abstraction — supports stdio and HTTP transports.
 //!
 //! Adapted from zeroclaw/src/tools/mcp_transport.rs
-//! AgentCowork deviation: simplified for Phase 1 (no SSE transport)
+//! ACowork deviation: simplified for Phase 1 (no SSE transport)
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::collections::HashMap;

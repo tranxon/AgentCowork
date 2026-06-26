@@ -1,10 +1,10 @@
 # Code Style Guide
 
-This style guide provides instructions for OpenCode Assist when reviewing pull requests for the AgentCowork project.
+This style guide provides instructions for OpenCode Assist when reviewing pull requests for the ACowork project.
 
 ## Project Overview
 
-AgentCowork is a Rust-based security-focused project that handles encryption, secrets management, and secure configuration. Code reviews should prioritize security, memory safety, and Rust best practices.
+ACowork is a Rust-based security-focused project that handles encryption, secrets management, and secure configuration. Code reviews should prioritize security, memory safety, and Rust best practices.
 
 ## General Principles
 

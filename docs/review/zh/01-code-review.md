@@ -1,4 +1,4 @@
-# AgentCowork Phase 1 源码审查报告
+# ACowork Phase 1 源码审查报告
 
 > 审查日期：2026-04-20
 > 审查范围：crates/ 下所有 7 个 crate 的 Phase 1 实现源码
@@ -563,7 +563,7 @@ pub struct AgentLoop {
 
 ### 8.4 Zeroclaw 实现对比
 
-| 维度       | ZeroClaw                   | AgentCowork Phase 1              | 差距             |
+| 维度       | ZeroClaw                   | ACowork Phase 1              | 差距             |
 | ---------- | -------------------------- | -------------------------------- | ---------------- |
 | Token 计数 | tiktoken (精确)            | 4字符/token (粗略)               | Phase 2 需改进   |
 | 流式处理   | 完整 streaming + interrupt | chat_stream 已实现但主循环未使用 | Phase 2 需集成   |
@@ -571,7 +571,7 @@ pub struct AgentLoop {
 | 循环检测   | 三模式三级完整             | ✅ 已对齐                         | -                |
 | 工具装饰器 | 三层完整                   | ✅ 已对齐                         | -                |
 | 历史裁剪   | FIFO + 折叠                | ✅ 已对齐                         | -                |
-| IPC 通信   | 无（单进程）               | Gateway/Runtime IPC              | AgentCowork 独有 |
+| IPC 通信   | 无（单进程）               | Gateway/Runtime IPC              | ACowork 独有 |
 
 ---
 

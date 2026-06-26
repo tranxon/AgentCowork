@@ -1,5 +1,5 @@
 #!/usr/bin/env pwsh
-# package_desktop_windows.ps1 - Build AgentCowork Desktop installer for Windows
+# package_desktop_windows.ps1 - Build ACowork Desktop installer for Windows
 
 param(
     [switch] $ReinstallOrt,
@@ -16,7 +16,7 @@ $OrtDll = Join-Path $OrtLibDir "onnxruntime.dll"
 $BinDir = Join-Path $DesktopDir "src-tauri\bin"
 
 Write-Host "========================================" -ForegroundColor Cyan
-Write-Host "AgentCowork Desktop Package (Windows)" -ForegroundColor Cyan
+Write-Host "ACowork Desktop Package (Windows)" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 

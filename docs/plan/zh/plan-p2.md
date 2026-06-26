@@ -1,4 +1,4 @@
-# AgentCowork Phase 2 开发计划
+# ACowork Phase 2 开发计划
 
 > 版本：v1.6 | 更新日期：2026-04-27
 >
@@ -328,7 +328,7 @@ acowork-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 | S2.11.3 跨 Agent 隔离验证 | `tests/`            | Agent A 无法访问 Agent B 的 Grafeo |
 
 **隐私设计结论**：
-- AgentCowork 隔离是架构级硬隔离（独立进程 + 独立 Grafeo）
+- ACowork 隔离是架构级硬隔离（独立进程 + 独立 Grafeo）
 - Runtime 内部不需要访问控制，Agent 查自己的记忆不需要权限检查
 - PrivacyLevel 在打包分享和 Intent 响应过滤时起作用
 
@@ -346,7 +346,7 @@ acowork-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 **质量评估设计**：
 - Phase 2 建立可观测基础设施（RetrievalMetrics + SLA + LongMemEval-S 验证）
 - Phase 3 扩展为完整 Benchmark 对接（LongMemEval 完整集 + BEAM MDS + Accuracy@1M）
-- 采纳 LongMemEval 5 维作为 AgentCowork 记忆系统的评估标准
+- 采纳 LongMemEval 5 维作为 ACowork 记忆系统的评估标准
 - 衰减参数通过 manifest 可配置，Phase 3 用真实数据校准
 
 **LongMemEval 分阶段目标**：
@@ -377,7 +377,7 @@ acowork-memory 保持为瘦 wrapper，仅导出 MemoryStore trait 定义。
 | 任务                 | 文件            | 验收标准                                                                                                                                                                   |
 | -------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | S2.14.1 自动备份     | acowork-grafeo | 每天增量备份（`.grafeo` 单文件级），保留 7 天日备份 + 4 周周备份                                                                                                           |
-| S2.14.2 ~~数据迁移~~ | —               | **不需要（无历史 SQLite 数据）**。AgentCowork 从 Phase 2 起直接使用 Grafeo，不存在 rusqlite → Grafeo 的历史数据迁移需求。LPG 无 Schema 版本迁移概念，索引通过 API 动态创建 |
+| S2.14.2 ~~数据迁移~~ | —               | **不需要（无历史 SQLite 数据）**。ACowork 从 Phase 2 起直接使用 Grafeo，不存在 rusqlite → Grafeo 的历史数据迁移需求。LPG 无 Schema 版本迁移概念，索引通过 API 动态创建 |
 | S2.14.3 故障恢复     | acowork-grafeo | Grafeo WAL 重放自动恢复；必要时从 `.grafeo` 备份文件还原                                                                                                                   |
 
 详见 docs/review/04-p2-s2-design-review.md §6.16、docs/module-design/04-grafeo.md §索引说明

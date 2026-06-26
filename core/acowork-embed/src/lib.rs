@@ -1,4 +1,4 @@
-//! AgentCowork Embedding Runtime — ONNX-based embedding service
+//! ACowork Embedding Runtime — ONNX-based embedding service
 //! with OpenAI-compatible API.
 //!
 //! Library crate exposing the core components for reuse and testing.

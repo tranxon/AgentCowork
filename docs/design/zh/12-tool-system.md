@@ -344,7 +344,7 @@ fn execute(input: ToolInput) -> Result<ToolOutput, ToolError> {
 
 ## 4. RAG Tools（企业知识库接入）
 
-RAG 工具让 Agent 对接企业自建的 RAG 知识库，实现"双通道检索"——本地 Grafeo（个人记忆）和企业 RAG（集体知识）并行查询，结果拼接送入 LLM 上下文。AgentCowork 不托管 RAG 服务，只定义标准查询协议（请求/响应 JSON Schema），企业 RAG 自行适配此协议（详见 00-prd.md §1.13）。
+RAG 工具让 Agent 对接企业自建的 RAG 知识库，实现"双通道检索"——本地 Grafeo（个人记忆）和企业 RAG（集体知识）并行查询，结果拼接送入 LLM 上下文。ACowork 不托管 RAG 服务，只定义标准查询协议（请求/响应 JSON Schema），企业 RAG 自行适配此协议（详见 00-prd.md §1.13）。
 
 **配置驱动 Opt-In**：RAG 不是默认能力，仅当 manifest 声明 `[[tools]] type = "rag"` 时使能。无 RAG 声明的 Agent，Tool Dispatcher 不注册 RAG 工具，MemoryManager.retrieve() 仅查 Grafeo 通道，行为与无 RAG 完全一致。
 
@@ -526,6 +526,6 @@ LLM 输出 tool_calls: [{name, arguments}, ...]
 | RAG 工具类型                              | 独立 type="rag"，配置驱动 Opt-In                             | 企业 RAG 是外部服务接入，不是内置工具也不是 WASM 工具，需要独立的声明和执行模型；仅 manifest 声明时注册，无 RAG 的 Agent 零侵入                                                                                         |
 | RAG 凭据安全                              | Vault 引用，运行时获取                                       | 与内置工具 API Key 管理一致，不明文出现在 manifest 或进程环境变量                                                                                                                                                       |
 | RAG 触发模型                              | 混合双触发（自动 + 显式）                                    | 自动触发（步骤② Retrieve）解决"LLM 不知道该不该查"；显式触发（步骤⑤ tool_call）解决"需要更精确查询"；均由 manifest 配置驱动 opt-in（ADR-012，详见 plan-p4.md）                                                          |
-| RAG 协议适配                              | AgentCowork 定义标准协议，企业 RAG 自适配                    | 不为各家 RAG 实现 adapter，企业侧确保其 RAG 服务兼容标准查询接口；遵循 PRD "纯对接，不托管"原则                                                                                                                         |
+| RAG 协议适配                              | ACowork 定义标准协议，企业 RAG 自适配                    | 不为各家 RAG 实现 adapter，企业侧确保其 RAG 服务兼容标准查询接口；遵循 PRD "纯对接，不托管"原则                                                                                                                         |
 | identity_store 专用工具                   | 新增第 14~15 个内置工具（identity_query + identity_observe） | 身份数据有专属语义（字段级 confidence、变更通知、结构化查询），memory_store 通用 Fact 节点无法自然承载；专用工具有扩展点（字段校验、敏感加密、跨设备同步优先级）；内部实现基于 MemoryManager store 接口，不绕过记忆架构 |
 | identity_store 仅系统 Agent 可用          | 权限 `identity:write`                                        | 系统 Agent 是身份数据唯一写入方；其他 Agent 通过 intent_send 汇报，由系统 Agent LLM 判断后写入                                                                                                                          |

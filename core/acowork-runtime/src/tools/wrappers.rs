@@ -1,7 +1,7 @@
 //! Tool security wrappers — decorator pattern for tool security
 //!
 //! Adapted from ZeroClaw's RateLimitedTool + PathGuardedTool pattern.
-//! AgentCowork deviation: uses manifest-driven permission checking
+//! ACowork deviation: uses manifest-driven permission checking
 //! instead of ZeroClaw's config-driven security policy.
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 

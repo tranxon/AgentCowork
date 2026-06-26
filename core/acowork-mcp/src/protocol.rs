@@ -1,5 +1,5 @@
 // Adapted from zeroclaw/src/tools/mcp_protocol.rs
-// AgentCowork deviation: uses acowork_core::error::Result instead of anyhow
+// ACowork deviation: uses acowork_core::error::Result instead of anyhow
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use serde::{Deserialize, Serialize};

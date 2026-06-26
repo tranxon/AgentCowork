@@ -1,7 +1,7 @@
 #!/usr/bin/env pwsh
 <#
 .SYNOPSIS
-    AgentCowork Agent Package Builder and Signer (PowerShell)
+    ACowork Agent Package Builder and Signer (PowerShell)
 .DESCRIPTION
     Builds and signs .agent packages for one or all example agents.
     Equivalent to dev/build-agent.sh for Windows.
@@ -244,7 +244,7 @@ function Build-Agent {
 
 # ── Main ────────────────────────────────────────────────────────────
 
-Write-Info "AgentCowork Agent Package Builder (PowerShell)"
+Write-Info "ACowork Agent Package Builder (PowerShell)"
 Write-Info ""
 
 $successCount = 0

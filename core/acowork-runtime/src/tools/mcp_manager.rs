@@ -2,7 +2,7 @@
 //!
 //! Manages MCP server connections and provides [`McpToolWrapper`] instances
 //! that implement the built-in [`Tool`](acowork_core::tools::traits::Tool) trait,
-//! enabling MCP tools to be dispatched transparently alongside native AgentCowork tools.
+//! enabling MCP tools to be dispatched transparently alongside native ACowork tools.
 
 use std::sync::Arc;
 

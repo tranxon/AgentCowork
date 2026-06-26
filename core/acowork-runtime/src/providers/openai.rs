@@ -4,7 +4,7 @@
 //! Together AI, Groq, DeepSeek, etc.) via configurable base_url.
 //!
 //! Adapted from zeroclaw/src/providers/openai.rs
-//! AgentCowork deviation: uses acowork-core Provider trait instead of ZeroClaw's;
+//! ACowork deviation: uses acowork-core Provider trait instead of ZeroClaw's;
 //! streaming uses futures_core::Stream instead of custom async stream.
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 

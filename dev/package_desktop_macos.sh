@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package_desktop_macos.sh - Build AgentCowork Desktop package for macOS
+# package_desktop_macos.sh - Build ACowork Desktop package for macOS
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ if [ "$(uname -s)" != "Darwin" ]; then
 fi
 
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}AgentCowork Desktop Package (macOS)${NC}"
+echo -e "${CYAN}ACowork Desktop Package (macOS)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 

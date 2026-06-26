@@ -569,7 +569,7 @@ impl super::loop_::AgentLoop {
     /// than 30 days old, indicating a long-standing collaboration. If so,
     /// creates or updates an `AutobiographicalNode { category: Relationship }`.
     ///
-    /// Since AgentCowork doesn't have explicit user identity, we use a
+    /// Since ACowork doesn't have explicit user identity, we use a
     /// generic key "collaboration_span" to track the overall partnership
     /// duration. In the future, when user identity is available, this
     /// can be extended to per-user relationship tracking.

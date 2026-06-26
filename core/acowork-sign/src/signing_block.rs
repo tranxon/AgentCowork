@@ -48,10 +48,10 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Magic bytes for AgentCowork Signing Block (V1, legacy ZIP entry format)
+/// Magic bytes for ACowork Signing Block (V1, legacy ZIP entry format)
 pub const SIGNING_BLOCK_MAGIC: &[u8; 8] = b"ROLLBLLS";
 
-/// Magic bytes for AgentCowork Signing Block (V2, APK v2 style binary format)
+/// Magic bytes for ACowork Signing Block (V2, APK v2 style binary format)
 /// 16 bytes: "RBSign Block 42" + null terminator
 pub const SIGNING_BLOCK_MAGIC_V2: [u8; 16] = *b"RBSign Block 42\0";
 

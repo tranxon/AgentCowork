@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: pylsp (Python)
+# ACowork LSP install script: pylsp (Python)
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: pylsp (Python) ==="
+Write-Host "=== ACowork LSP Setup: pylsp (Python) ==="
 Install-Server
 Verify-Server
 Health-Check

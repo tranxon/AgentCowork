@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: rust-analyzer
+# ACowork LSP install script: rust-analyzer
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -97,7 +97,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: rust-analyzer ==="
+echo "=== ACowork LSP Setup: rust-analyzer ==="
 install
 verify
 health_check

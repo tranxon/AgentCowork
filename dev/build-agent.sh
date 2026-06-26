@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# AgentCowork Agent Package Builder and Signer
+# ACowork Agent Package Builder and Signer
 # Usage: ./build-agent.sh <agent-dir> [output-dir]
 #
 # This script:
@@ -57,7 +57,7 @@ if [ -z "$AGENT_ID" ]; then
 fi
 
 echo -e "${GREEN}========================================${NC}"
-echo -e "${GREEN}AgentCowork Agent Package Builder${NC}"
+echo -e "${GREEN}ACowork Agent Package Builder${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo -e "Agent ID:      ${YELLOW}${AGENT_ID}${NC}"
 echo -e "Agent Version: ${YELLOW}${AGENT_VERSION}${NC}"

@@ -51,7 +51,7 @@ crates/acowork-runtime/
     │   │   ├── image_info.rs      # 图片元数据读取
     │   │   ├── image_gen.rs       # 文生图（fal.ai）
     │   │   ├── llm_task.rs        # LLM 子调用（无工具，纯文本/JSON）
-    │   │   └── identity_query.rs  # 向系统 Agent 查询身份（AgentCowork 独有）
+    │   │   └── identity_query.rs  # 向系统 Agent 查询身份（ACowork 独有）
     │   ├── memory/                # === Memory 工具（Grafeo 后端） ===
     │   │   ├── mod.rs
     │   │   ├── memory_store.rs    # 存储记忆
@@ -78,7 +78,7 @@ crates/acowork-runtime/
     │   │   ├── discord_search.rs  # Discord 消息搜索
     │   │   ├── pushover.rs        # Pushover 推送通知
     │   │   └── composio.rs        # Composio 1000+ 应用集成
-    │   ├── agent/                 # === Agent 协作工具（AgentCowork 增强） ===
+    │   ├── agent/                 # === Agent 协作工具（ACowork 增强） ===
     │   │   ├── mod.rs
     │   │   ├── delegate.rs        # 子任务委派（单次 Agent 调用）
     │   │   ├── swarm.rs           # Agent 群协同（顺序/并行/路由）
@@ -225,7 +225,7 @@ pub enum InboundMessage {
 
 ### `tools/` — 工具系统
 
-AgentCowork-AI **工具系统设计原则**：
+ACowork-AI **工具系统设计原则**：
 
 1. **Runtime 提供完整工具池**（~77 个核心工具），但不是每个 Agent 都能用所有工具
 2. **Manifest 声明驱动激活**：`.agent` 包的 `tools` 和 `permissions` 字段决定该 Agent 可用哪些工具
@@ -248,7 +248,7 @@ fn build_tool_registry(manifest: &AgentManifest, all_tools: Vec<Arc<dyn Tool>>) 
 
 **关键设计要点**：
 
-| 维度 | AgentCowork 设计 |
+| 维度 | ACowork 设计 |
 |------|-------------|
 | 工具注册 | 分两步：`all_tools()` 构建池 + `activate()` 按 manifest 过滤 |
 | 激活机制 | manifest `tools[]` + `permissions[]` 声明驱动 |
@@ -259,9 +259,9 @@ fn build_tool_registry(manifest: &AgentManifest, all_tools: Vec<Arc<dyn Tool>>) 
 
 **工具分类参考（完整设计空间，实际激活取决于 manifest 声明）**：
 
-> ⚠️ 以下表格描述的是 AgentCowork 工具系统的**完整设计空间**。AgentCowork **Phase 1 仅实现 13 个内置工具**（memory×2, network×2, web×2, shell, file×4, intent×1, search×1）和 WASM 工具。其余类别（Notion/Jira 集成、browser、dev tools、MCP、SOP 等）为 Phase 2+ 按需实现。
+> ⚠️ 以下表格描述的是 ACowork 工具系统的**完整设计空间**。ACowork **Phase 1 仅实现 13 个内置工具**（memory×2, network×2, web×2, shell, file×4, intent×1, search×1）和 WASM 工具。其余类别（Notion/Jira 集成、browser、dev tools、MCP、SOP 等）为 Phase 2+ 按需实现。
 
-| 分类 | AgentCowork 目录 | 工具数 | Phase 1 实现 |
+| 分类 | ACowork 目录 | 工具数 | Phase 1 实现 |
 |------|-------------|--------|------------|
 | 核心 Builtin | `builtin/` | 17 | ✅ 13 个（weather/git/pdf/screenshot/image 系移到 WASM 或 Agent 内置） |
 | Memory | `memory/` | 5 | ✅ 已实现（Grafeo 后端） |

@@ -1,6 +1,6 @@
 # AGENTS.md — docs/
 
-Architecture design documents for AgentCowork.AI platform (v3.x).
+Architecture design documents for ACowork.AI platform (v3.x).
 
 ## OVERVIEW
 

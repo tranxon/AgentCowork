@@ -357,7 +357,7 @@ pub fn prepare_publish(
             let settings_path = config_dir.join("settings.toml");
             if settings_path.exists() {
                 // Replace with minimal defaults
-                let default_settings = "# AgentCowork Agent Configuration\n# See documentation for available options\n";
+                let default_settings = "# ACowork Agent Configuration\n# See documentation for available options\n";
                 std::fs::write(&settings_path, default_settings).ok();
                 checks.push(CheckItem {
                     name: "cleanup.config_reset".to_string(),

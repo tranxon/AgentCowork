@@ -11,7 +11,7 @@
 //! - Strip `additionalProperties: false` for providers that don't support it
 //!
 //! Adapted from zeroclaw/src/schema.rs
-//! AgentCowork deviation: split into a standalone function per crate instead of
+//! ACowork deviation: split into a standalone function per crate instead of
 //! ZeroClaw's monolithic 572KB schema.rs
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 

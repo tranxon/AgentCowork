@@ -1,6 +1,6 @@
 //! Permission → WASI capability mapping
 //!
-//! Translates AgentCowork permission declarations from the manifest
+//! Translates ACowork permission declarations from the manifest
 //! into WASI Preview 2 capabilities. WASI is the sole security
 //! boundary for filesystem and network access in WASM tools.
 //!
@@ -13,7 +13,7 @@
 
 use acowork_core::Permission;
 
-/// A WASI directory permission derived from a AgentCowork permission.
+/// A WASI directory permission derived from a ACowork permission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WasiDirPermission {
     /// The directory path to grant access to
@@ -22,7 +22,7 @@ pub struct WasiDirPermission {
     pub writable: bool,
 }
 
-/// A WASI network permission derived from a AgentCowork permission.
+/// A WASI network permission derived from a ACowork permission.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WasiNetPermission {
     /// The URL pattern to grant access to
@@ -38,7 +38,7 @@ pub struct WasiCapabilities {
     pub networks: Vec<WasiNetPermission>,
 }
 
-/// Map a single AgentCowork Permission to WASI capabilities.
+/// Map a single ACowork Permission to WASI capabilities.
 ///
 /// Returns None for permissions that don't need WASI mapping
 /// (e.g., memory, identity, shell, wasm, intent).
@@ -87,7 +87,7 @@ pub fn map_permission_to_wasi(perm: &Permission) -> Option<WasiCapabilities> {
     }
 }
 
-/// Map a list of AgentCowork Permissions into aggregated WASI capabilities.
+/// Map a list of ACowork Permissions into aggregated WASI capabilities.
 pub fn map_permissions_to_wasi(permissions: &[Permission]) -> WasiCapabilities {
     let mut caps = WasiCapabilities::default();
 

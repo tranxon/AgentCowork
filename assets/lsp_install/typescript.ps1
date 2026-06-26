@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: typescript-language-server
+# ACowork LSP install script: typescript-language-server
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -128,7 +128,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: typescript-language-server ==="
+Write-Host "=== ACowork LSP Setup: typescript-language-server ==="
 Install-Server
 Verify-Server
 Health-Check

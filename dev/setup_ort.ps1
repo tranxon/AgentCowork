@@ -21,7 +21,7 @@ $ErrorActionPreference = "Stop"
 $WorkspaceRoot = Split-Path -Parent $PSScriptRoot
 
 Write-Host "============================================" -ForegroundColor Cyan
-Write-Host "  ONNX Runtime Setup for AgentCowork.AI (Win)" -ForegroundColor Cyan
+Write-Host "  ONNX Runtime Setup for ACowork.AI (Win)" -ForegroundColor Cyan
 Write-Host "============================================" -ForegroundColor Cyan
 Write-Host ""
 

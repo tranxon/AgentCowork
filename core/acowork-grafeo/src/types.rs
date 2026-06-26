@@ -1,4 +1,4 @@
-//! LPG node types for the AgentCowork memory system.
+//! LPG node types for the ACowork memory system.
 //!
 //! Defines the five memory node structures (Episode, KnowledgeNode, ProceduralNode,
 //! AutobiographicalNode) together with their enums, label/edge constants,
@@ -45,7 +45,7 @@ impl Default for GrafeoConfig {
 // Node labels
 // ---------------------------------------------------------------------------
 
-/// LPG node labels used in the AgentCowork memory system.
+/// LPG node labels used in the ACowork memory system.
 pub mod labels {
     /// Episodic memory label (experiential layer).
     pub const EPISODIC: &str = "Episodic";
@@ -78,7 +78,7 @@ pub mod labels {
 // Edge types
 // ---------------------------------------------------------------------------
 
-/// LPG edge types used in the AgentCowork memory system.
+/// LPG edge types used in the ACowork memory system.
 pub mod edge_types {
     /// Session owns a memory node.
     pub const HAS_MEMORY: &str = "HAS_MEMORY";

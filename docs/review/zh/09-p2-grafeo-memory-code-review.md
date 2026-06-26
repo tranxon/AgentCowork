@@ -269,7 +269,7 @@ impl MemoryStore for GrafeoMemoryAdapter {
 
 ### 5.3 acowork-grafeo 对 grafeo-engine 的依赖范围过大
 
-`Cargo.toml` 同时依赖 `grafeo-engine` 和 `grafeo-core` 和 `grafeo-common`。如果 Grafeo 团队升级了 `grafeo-core` 的内部 API，AgentCowork 可能意外破坏。
+`Cargo.toml` 同时依赖 `grafeo-engine` 和 `grafeo-core` 和 `grafeo-common`。如果 Grafeo 团队升级了 `grafeo-core` 的内部 API，ACowork 可能意外破坏。
 
 **建议**：只依赖 `grafeo-engine`（公共 API），避免直接使用 `grafeo_core::graph::*`。如果必须用，添加版本锁定注释。
 

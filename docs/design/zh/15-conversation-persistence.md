@@ -2,7 +2,7 @@
 
 > 版本：v3.13 | 更新日期：2026-05-28
 
-> 本文档定义 AgentCowork Agent 的对话持久化架构，采用"原始文件 + 提炼记忆"双层设计。原始对话以 JSONL 格式按 session 存储，用于界面渲染和历史回放；Grafeo Episode 存储从对话提炼的情景记忆摘要，服务于检索和关联扩散。主要变更（v3.13）：**上下文压缩策略简化**（§1.8）：放弃程序化折叠策略，压缩简化为三阶段（70% 告警 → 80% LLM 摘要 → 95% emergency_trim），移除 BudgetGuard per-session 配额机制——见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。主要变更（v3.12）：**Token 预算分配策略**（§1.8）：per-session 隔离 + 全局上限；**JSONL 安全性保证**（§1.9）：轮转事务性、并发读写保护、Episode offset 原子更新；IPC 消息格式见通信协议文档（§06-communication.md §1.5）。主要变更（v3.11）：Session Actor 多会话并发模型（§1.7）、selectedSession 前端模型（§1.7）、配置作用域矩阵（§1.8）。主要变更（v3.10）：Grafeo private.grafeo、Session 选择器、打包数据隔离、异步扫描、Episode consolidated 状态、巩固产出三类节点。
+> 本文档定义 ACowork Agent 的对话持久化架构，采用"原始文件 + 提炼记忆"双层设计。原始对话以 JSONL 格式按 session 存储，用于界面渲染和历史回放；Grafeo Episode 存储从对话提炼的情景记忆摘要，服务于检索和关联扩散。主要变更（v3.13）：**上下文压缩策略简化**（§1.8）：放弃程序化折叠策略，压缩简化为三阶段（70% 告警 → 80% LLM 摘要 → 95% emergency_trim），移除 BudgetGuard per-session 配额机制——见 [ADR-010](../adr/ADR-010-context-compression-simplification.md)。主要变更（v3.12）：**Token 预算分配策略**（§1.8）：per-session 隔离 + 全局上限；**JSONL 安全性保证**（§1.9）：轮转事务性、并发读写保护、Episode offset 原子更新；IPC 消息格式见通信协议文档（§06-communication.md §1.5）。主要变更（v3.11）：Session Actor 多会话并发模型（§1.7）、selectedSession 前端模型（§1.7）、配置作用域矩阵（§1.8）。主要变更（v3.10）：Grafeo private.grafeo、Session 选择器、打包数据隔离、异步扫描、Episode consolidated 状态、巩固产出三类节点。
 
 **交叉引用**：
 - Session Actor 架构：本文档 §1.7
@@ -20,7 +20,7 @@
 
 ### 0.1 问题背景
 
-当前 AgentCowork Agent 的对话存在以下问题：
+当前 ACowork Agent 的对话存在以下问题：
 
 1. **切换 Agent 后聊天记录丢失**：对话历史仅存在于 Runtime 进程内存（`Vec<Message>`），进程退出即消失
 2. **记忆链条断裂**：MemoryManager.record() 将 user_message 和 assistant_response 合并为一个 Episode，content 存储原始对话全文，导致 Grafeo 体积膨胀、检索噪声大
@@ -1276,7 +1276,7 @@ Episode {
 │  核心问题：“知道了什么”                                    │
 │  特征：去时间化，相对持久                                  │
 │  生命周期：长期至永久                                      │
-│  示例：“AgentCowork 对话持久化采用 JSONL + Episode 双层架构” │
+│  示例：“ACowork 对话持久化采用 JSONL + Episode 双层架构” │
 ├──────────────────────────────────────────────────────────┤
 │  ProceduralNode（沉淀层 - 流程）                          │
 │  ──────────────                                          │
@@ -1311,7 +1311,7 @@ Episode（会话级记忆）
   │ 巩固管道（即时提取 / 离线回放）
   │
   ├─ 语义提取 → KnowledgeNode（事实）
-  │   "AgentCowork 对话持久化采用 JSONL 格式"
+  │   "ACowork 对话持久化采用 JSONL 格式"
   │
   ├─ 偏好提取 → KnowledgeNode（偏好）
   │   "用户偏好简洁的回复风格"
@@ -1390,7 +1390,7 @@ Episode（会话级记忆）
 
 ### 5.1 设计约束
 
-AgentCowork 的核心设计理念是 Agent 可以打包为 `.agent` 文件进行分享。这带来两个关键问题：
+ACowork 的核心设计理念是 Agent 可以打包为 `.agent` 文件进行分享。这带来两个关键问题：
 
 1. **隐私问题**：JSONL 对话文件包含用户的完整聊天记录，默认排除打包，但用户可自行选择包含
 2. **体积问题**：长期使用的 Agent 对话文件和记忆数据库可能非常大，默认排除打包，用户可按需勾选
@@ -1462,7 +1462,7 @@ AutobiographicalNode 是 Agent 对自身的认知记录，例如：
 
 **隐私类型（Public/Private）主要用于 KnowledgeNode：**
 
-- Public：Agent 通用知识（如“AgentCowork 使用 JSONL 格式存储对话”）— 与特定用户无关
+- Public：Agent 通用知识（如“ACowork 使用 JSONL 格式存储对话”）— 与特定用户无关
 - Private：与特定用户/项目相关的知识（如“用户的项目使用 React 框架”）— 不可分享
 
 **PackageManager 打包 Grafeo 数据时的处理：**

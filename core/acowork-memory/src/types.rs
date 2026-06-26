@@ -1,4 +1,4 @@
-//! Memory types for the AgentCowork memory system.
+//! Memory types for the ACowork memory system.
 //!
 //! These types define the core data structures for the three-layer memory model:
 //! - Episodic layer (Episode)
@@ -226,7 +226,7 @@ pub struct RetrievalMetrics {
 // Node Labels
 // ============================================================================
 
-/// LPG node labels used in the AgentCowork memory system.
+/// LPG node labels used in the ACowork memory system.
 pub mod labels {
     /// Episodic memory label (experiential layer).
     pub const EPISODIC: &str = "Episodic";
@@ -241,7 +241,7 @@ pub mod labels {
     pub const ALL: &[&str] = &[EPISODIC, KNOWLEDGE, PROCEDURAL, AUTOBIOGRAPHICAL];
 }
 
-/// LPG edge types used in the AgentCowork memory system.
+/// LPG edge types used in the ACowork memory system.
 pub mod edge_types {
     /// Knowledge node references another knowledge node.
     pub const REFERENCES: &str = "REFERENCES";

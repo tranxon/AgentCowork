@@ -14,7 +14,7 @@ use std::sync::Arc;
 static FILE_APPENDER: std::sync::OnceLock<Arc<acowork_core::logging::SizeRollingFileAppender>> =
     std::sync::OnceLock::new();
 
-/// Print AgentCowork logo with cyan (宝蓝) ANSI color on startup.
+/// Print ACowork logo with cyan (宝蓝) ANSI color on startup.
 fn print_logo() {
     let color = "\x1b[36m";
     let reset = "\x1b[0m";
@@ -43,7 +43,7 @@ fn print_logo() {
 /// Gateway CLI
 #[derive(Parser)]
 #[command(name = "acowork-gateway")]
-#[command(about = "AgentCowork Gateway - Agent lifecycle manager and IPC coordinator")]
+#[command(about = "ACowork Gateway - Agent lifecycle manager and IPC coordinator")]
 #[command(version)]
 pub struct Cli {
     /// Run as daemon (background service)
@@ -145,7 +145,7 @@ pub enum Commands {
 impl Cli {
     /// Run the CLI
     pub fn run(self) -> Result<(), GatewayError> {
-        // Print AgentCowork logo with green color
+        // Print ACowork logo with green color
         print_logo();
 
         // Apply --home flag to ACOWORK_HOME so config path resolution
@@ -224,7 +224,7 @@ impl Cli {
                     rt.block_on(async_main(gateway, log_reload_handle))?;
                 } else {
                     // No subcommand and no daemon flag — show help
-                    println!("AgentCowork Gateway — use subcommands or --daemon to start service");
+                    println!("ACowork Gateway — use subcommands or --daemon to start service");
                     println!("Run with --help for usage information");
                 }
             }

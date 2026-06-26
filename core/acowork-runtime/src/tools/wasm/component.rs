@@ -1,6 +1,6 @@
 //! Component model loader for WASM tool components
 //!
-//! Loads WASM components that follow the AgentCowork tool interface,
+//! Loads WASM components that follow the ACowork tool interface,
 //! supporting both V1 (raw pointer) and V3 (typed component) protocols.
 //!
 //! The component model provides:

@@ -960,7 +960,7 @@ enum AutobioGroup {
 /// `"Category: key: value"` or `"Category: value"`, so we parse the
 /// prefix before the first colon to determine the subcategory.
 fn autobio_subcategory(content: &str) -> AutobioGroup {
-    // Parse the category prefix (e.g., "Identity: name: AgentCowork" → "Identity").
+    // Parse the category prefix (e.g., "Identity: name: ACowork" → "Identity").
     let category = content.split(':').next().unwrap_or("").trim();
     match category {
         "Identity" | "Capability" | "Limitation" => AutobioGroup::Core,

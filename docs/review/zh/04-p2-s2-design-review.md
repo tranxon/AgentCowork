@@ -428,7 +428,7 @@ Runtime 收到 LLM 回复后：
 
 ## 5. 结论
 
-AgentCowork Grafeo 的设计框架科学、分层明确，但在**实现细节、工程约束、质量评估**方面存在显著缺失。特别是：
+ACowork Grafeo 的设计框架科学、分层明确，但在**实现细节、工程约束、质量评估**方面存在显著缺失。特别是：
 
 1. **检索和注入策略**需要从"设计"升级到"经过验证的实现"
 2. **冲突处理和隐私控制**是生产级系统的必需功能
@@ -845,7 +845,7 @@ memory_store({
 
 **1. 借鉴的评估维度**
 
-| 框架                        | 核心维度                                                                    | 对应 AgentCowork 设计                                      |
+| 框架                        | 核心维度                                                                    | 对应 ACowork 设计                                      |
 | --------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------- |
 | **LongMemEval** (ICLR 2025) | IE(信息提取) / MR(跨会话推理) / TR(时序推理) / KU(知识更新) / Abs(拒绝回答) | IE→memory_store提取质量、KU→冲突处理、Abs→不知道就说不知道 |
 | **LoCoMo-Plus**             | CCS(约束一致性评分)——隐式偏好推断准确率                                     | Preference / ProceduralNode 提取质量                       |
@@ -856,7 +856,7 @@ memory_store({
 **Phase 2：建标准 + 可观测基础设施**
 
 ```
-a) 采纳 LongMemEval 5 维作为 AgentCowork 记忆系统的评估标准
+a) 采纳 LongMemEval 5 维作为 ACowork 记忆系统的评估标准
    集成测试按 5 维编写用例，确保每个维度有基础覆盖
 
 b) 运行时可观测指标（日志输出，Phase 3 接入 Desktop App）
@@ -876,7 +876,7 @@ c) 性能 SLA 定义 + 集成测试断言
 
 ```
 a) 复用 BEAM 多长度评测数据（100K/500K/1M tokens）
-   - 跑 AgentCowork 检索管线，绘制 Accuracy@Length 曲线
+   - 跑 ACowork 检索管线，绘制 Accuracy@Length 曲线
    - 与 BEAM 论文基线对比，目标超过纯 context-stuffing 方案
 
 b) 集成 LongMemEval 评估脚本
@@ -1050,7 +1050,7 @@ Phase 3 用真实数据 + BEAM 衰减曲线验证，有说服力。
 **结论：当前设计已经足够，Runtime 内部不需要增加访问控制**
 
 ```
-AgentCowork 的隔离模型是进程级 + 存储级硬隔离，不是 prompt 级软约束：
+ACowork 的隔离模型是进程级 + 存储级硬隔离，不是 prompt 级软约束：
 
   1. 每个 Agent 运行在独立进程中
   2. 每个 Agent 有独立的 Grafeo 数据目录
@@ -1124,7 +1124,7 @@ d) 打包分享隔离
   （回到 LLM 优先原则：规则检测泛化性差）
 ```
 
-**设计理由**：AgentCowork 的隔离是架构级硬隔离（独立进程 + 独立 Grafeo），不是 prompt 级软约束。唯一需要补充的是 Gateway 层的 Intent 响应过滤和隔离验证测试。Runtime 内部不需要访问控制——Agent 查自己的记忆不需要权限检查。
+**设计理由**：ACowork 的隔离是架构级硬隔离（独立进程 + 独立 Grafeo），不是 prompt 级软约束。唯一需要补充的是 Gateway 层的 Intent 响应过滤和隔离验证测试。Runtime 内部不需要访问控制——Agent 查自己的记忆不需要权限检查。
 
 ### 6.14 存储格式：HNSW 参数 + Embedding 补生成 + 持久化语义（2026-04-21）
 

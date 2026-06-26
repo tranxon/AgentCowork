@@ -6,7 +6,7 @@
 //! Key design decisions:
 //! - RAG is opt-in: only active when manifest declares `[[tools]] type = "rag"`
 //! - Dual-channel: Grafeo (local) + RAG (enterprise) are independent channels
-//! - Standard query protocol: AgentCowork defines the protocol, enterprises adapt
+//! - Standard query protocol: ACowork defines the protocol, enterprises adapt
 //! - Timeout/degradation: RAG unavailability never blocks Agent execution
 
 pub mod client;

@@ -1,7 +1,7 @@
 // MCP preset registry — curated list of practical MCP servers
 //
 // Selection principle: only include servers that fill capability gaps
-// NOT covered by AgentCowork built-in tools (file IO, shell, web_fetch,
+// NOT covered by ACowork built-in tools (file IO, shell, web_fetch,
 // http_request, memory/grafeo, doc_reader basic).
 //
 // These presets are frontend-only definitions that help users quickly
@@ -80,7 +80,7 @@ export const MCP_PRESETS: McpPresetDef[] = [
     id: "docling",
     name: "Docling",
     description:
-      "Advanced document understanding: OCR for image-based PDFs, layout analysis, table extraction, and legacy Office format support (.doc/.ppt/.xls). Fills AgentCowork doc_reader gaps.",
+      "Advanced document understanding: OCR for image-based PDFs, layout analysis, table extraction, and legacy Office format support (.doc/.ppt/.xls). Fills ACowork doc_reader gaps.",
     category: "document",
     transport: "stdio",
     command: "uvx",

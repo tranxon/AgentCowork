@@ -1,7 +1,7 @@
 //! Retry + fallback chain for LLM providers
 //!
 //! Adapted from zeroclaw/src/providers/reliable.rs
-//! AgentCowork deviation: uses acowork-core Provider trait instead of ZeroClaw's.
+//! ACowork deviation: uses acowork-core Provider trait instead of ZeroClaw's.
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::sync::{Arc, Mutex};

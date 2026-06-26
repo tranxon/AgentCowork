@@ -1,6 +1,6 @@
 # AGENTS.md — docs/module-design/
 
-Detailed Rust crate specifications for AgentCowork.AI implementation.
+Detailed Rust crate specifications for ACowork.AI implementation.
 
 ## OVERVIEW
 

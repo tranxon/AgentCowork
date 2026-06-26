@@ -61,7 +61,7 @@
 
 #### 问题 4：~~06-communication.md 的 Capability Registry 实现细节缺失~~ ✅ 已修复
 
-**解决方案**：AgentCowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。Capability Registry 简化为单 HashMap，`"{agent_id}:{action}"` 作为 Key，无需 priority 机制。详见 06-communication.md §2.2。
+**解决方案**：ACowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。Capability Registry 简化为单 HashMap，`"{agent_id}:{action}"` 作为 Key，无需 priority 机制。详见 06-communication.md §2.2。
 
 **设计要点**：
 - 单 HashMap：`capabilities: HashMap<String, CapabilityDef>`

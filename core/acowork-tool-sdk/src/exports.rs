@@ -1,7 +1,7 @@
 //! Memory allocation and export function helpers for WASM tools
 //!
 //! Provides the `tool_entry!` macro that generates the `#[no_mangle]`
-//! WASM export functions needed by the AgentCowork Runtime.
+//! WASM export functions needed by the ACowork Runtime.
 
 use std::cell::RefCell;
 
@@ -30,7 +30,7 @@ pub fn output_len() -> u32 {
 /// Macro that generates the WASM entry point for a tool.
 ///
 /// This creates the `execute` and `output_len` export functions
-/// that the AgentCowork Runtime calls.
+/// that the ACowork Runtime calls.
 ///
 /// # Example
 ///

@@ -39,7 +39,7 @@ pub async fn create_agent(
 ) -> Result<String, String> {
     let version = version.unwrap_or_else(|| "0.1.0".to_string());
     let description = description.unwrap_or_else(|| format!("{} agent", name));
-    let author = author.unwrap_or_else(|| "AgentCowork User".to_string());
+    let author = author.unwrap_or_else(|| "ACowork User".to_string());
 
     // Create a temp directory for the skeleton (use monotonic timestamp to avoid
     // collisions when concurrent Tauri commands run in the same process).

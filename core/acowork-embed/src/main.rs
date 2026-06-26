@@ -1,4 +1,4 @@
-//! AgentCowork Embedding Runtime — ONNX-based embedding service
+//! ACowork Embedding Runtime — ONNX-based embedding service
 //! with OpenAI-compatible API.
 //!
 //! Entry point: parse CLI arguments, initialize logging, load model,
@@ -23,7 +23,7 @@ async fn main() {
     // Initialize logging
     init_logging(&cli.log_level);
 
-    tracing::info!("AgentCowork Embedding Runtime starting");
+    tracing::info!("ACowork Embedding Runtime starting");
     tracing::info!(addr = %cli.listen_addr(), "Listen address");
 
     // Create shutdown signal
@@ -98,7 +98,7 @@ async fn main() {
         .await
         .expect("HTTP server error");
 
-    tracing::info!("AgentCowork Embedding Runtime stopped");
+    tracing::info!("ACowork Embedding Runtime stopped");
 }
 
 async fn bootstrap_default_model(state: Arc<AppState>, model_id: String) {

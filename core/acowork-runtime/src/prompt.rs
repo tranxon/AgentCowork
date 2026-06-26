@@ -1,4 +1,4 @@
-//! Centralized prompt constants for the AgentCowork Agent Runtime.
+//! Centralized prompt constants for the ACowork Agent Runtime.
 //!
 //! All hardcoded prompt strings that appear in production code should be
 //! defined here as named constants to ensure consistency and ease of maintenance.

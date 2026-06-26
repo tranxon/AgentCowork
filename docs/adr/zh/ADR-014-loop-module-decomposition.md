@@ -9,7 +9,7 @@
 
 ## 背景
 
-`loop_.rs` 是 AgentCowork Runtime 中最大的单文件，3908 行（生产代码 2635 行 + 测试 1273 行）。它包含了 AgentLoop 的全部业务逻辑，但 8 个正交关注点混合在一起，没有物理边界隔离。
+`loop_.rs` 是 ACowork Runtime 中最大的单文件，3908 行（生产代码 2635 行 + 测试 1273 行）。它包含了 AgentLoop 的全部业务逻辑，但 8 个正交关注点混合在一起，没有物理边界隔离。
 
 ### 问题 1：God Method — `execute_single_iteration`（742 行）
 

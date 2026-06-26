@@ -1,4 +1,4 @@
-# AgentCowork Desktop Session 管理与本地缓存诊断报告
+# ACowork Desktop Session 管理与本地缓存诊断报告
 
 ## 一、Store 架构全景
 

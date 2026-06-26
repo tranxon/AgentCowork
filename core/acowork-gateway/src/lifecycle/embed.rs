@@ -396,7 +396,7 @@ pub async fn test_embed_model(port: u16) -> Result<EmbedTestResult, GatewayError
         .map_err(|e| GatewayError::Lifecycle(format!("Failed to build HTTP client: {}", e)))?;
 
     let body = serde_json::json!({
-        "input": "AgentCowork embedding test sentence."
+        "input": "ACowork embedding test sentence."
     });
 
     let start = std::time::Instant::now();

@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: jdtls (Java)
+# ACowork LSP install script: jdtls (Java)
 # Phases: Install -> Verify -> Health Check
 #
 # jdtls is the Eclipse JDT Language Server, a Java application (not a native
@@ -49,7 +49,7 @@ function Setup-VsCodeJdtls {
     $wrapperPath = Join-Path $targetDir "jdtls.cmd"
     $wrapperContent = @"
 @echo off
-REM AgentCowork jdtls wrapper - launches Eclipse JDT LS (no pause)
+REM ACowork jdtls wrapper - launches Eclipse JDT LS (no pause)
 python "$VsCodeBinDir\jdtls" %*
 "@
     Set-Content -Path $wrapperPath -Value $wrapperContent -Encoding ASCII
@@ -374,7 +374,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: jdtls (Java) ==="
+Write-Host "=== ACowork LSP Setup: jdtls (Java) ==="
 Install-Server
 Verify-Server
 Health-Check

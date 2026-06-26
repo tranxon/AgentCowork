@@ -1,14 +1,14 @@
 # System Agent — com.acowork.system
-# The "system app" of AgentCowork, analogous to Android's Settings/Contacts.
+# The "system app" of ACowork, analogous to Android's Settings/Contacts.
 # Always started with Gateway, cannot be uninstalled.
 
 agent_id = "com.acowork.system"
 version = "1.0.0"
-name = "AgentCowork"
-display_name = "AgentCowork"
+name = "ACowork"
+display_name = "ACowork"
 role = "System Agent"
-description = "AgentCowork system agent: manages user identity, preferences, and system-level services"
-author = "AgentCowork Team"
+description = "ACowork system agent: manages user identity, preferences, and system-level services"
+author = "ACowork Team"
 runtime_version = "0.1.0"
 system = true
 dev = false

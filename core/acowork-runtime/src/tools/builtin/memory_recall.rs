@@ -1,7 +1,7 @@
 //! Memory recall tool — retrieve memories from Grafeo backend
 //!
 //! Adapted from zeroclaw/src/tools/memory_recall.rs
-//! AgentCowork deviation: uses acowork_core::Tool trait; replaces Memory trait
+//! ACowork deviation: uses acowork_core::Tool trait; replaces Memory trait
 //! with GrafeoStore backend; adds agent_id isolation; supports search_mode
 //! parameter for future embedding/hybrid search.
 //! SPDX-License-Identifier: MIT OR Apache-2.0

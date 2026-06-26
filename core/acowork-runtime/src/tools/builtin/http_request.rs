@@ -1,7 +1,7 @@
 //! HTTP request tool — perform HTTP requests (GET/POST/PUT/DELETE)
 //!
 //! Adapted from zeroclaw/src/tools/http_request.rs
-//! AgentCowork deviation: uses acowork_core::Tool trait; no SecurityPolicy dependency;
+//! ACowork deviation: uses acowork_core::Tool trait; no SecurityPolicy dependency;
 //! adds PUT/DELETE methods for flexibility; method parameter controls request type
 //! with permission-level granularity via Permission enum.
 //! SPDX-License-Identifier: MIT OR Apache-2.0

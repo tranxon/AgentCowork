@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: marksman (Markdown)
+# ACowork LSP install script: marksman (Markdown)
 # Phases: Install -> Verify -> Health Check
 # marksman is a standalone binary (not npm). Defaults to stdio mode.
 
@@ -146,7 +146,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: marksman (Markdown) ==="
+Write-Host "=== ACowork LSP Setup: marksman (Markdown) ==="
 Install-Server
 Verify-Server
 Health-Check

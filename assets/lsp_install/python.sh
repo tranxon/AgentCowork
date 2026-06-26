@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: pylsp (Python)
+# ACowork LSP install script: pylsp (Python)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -113,7 +113,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: pylsp (Python) ==="
+echo "=== ACowork LSP Setup: pylsp (Python) ==="
 install
 verify
 health_check

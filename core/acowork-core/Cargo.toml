@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-description = "Shared types, protocols, and traits for AgentCowork.AI"
+description = "Shared types, protocols, and traits for ACowork.AI"
 
 [dependencies]
 serde.workspace = true

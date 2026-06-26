@@ -86,7 +86,7 @@ impl Cli {
     pub fn run(self) -> Result<()> {
         // Print version info
         let version = env!("CARGO_PKG_VERSION");
-        println!("AgentCowork Runtime v{version}");
+        println!("ACowork Runtime v{version}");
 
         // Initialize tracing/logging and obtain reload handle
         let reload_handle = self.init_tracing();
@@ -451,7 +451,7 @@ async fn run_chat_loop(
     context_builder: &mut crate::agent::context::ContextBuilder,
 ) -> Result<()> {
     use std::io::{self, BufRead, Write};
-    println!("AgentCowork Agent Runtime — type messages and press Enter (Ctrl+C to exit)");
+    println!("ACowork Agent Runtime — type messages and press Enter (Ctrl+C to exit)");
     println!();
     let stdin = io::stdin();
     let mut stdout = io::stdout();

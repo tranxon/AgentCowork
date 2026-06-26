@@ -1,7 +1,7 @@
 # 记忆系统竞品对标分析（11维度）
 
 **审查日期**：2026-04-22
-**审查范围**：AgentCowork v3.6 记忆设计 vs mem0/LightMem/HippoRAG/zeroclaw
+**审查范围**：ACowork v3.6 记忆设计 vs mem0/LightMem/HippoRAG/zeroclaw
 **依据文档**：docs/reference/memory_system_comparison_11_dimensions.md
 **审查文档**：docs/05-memory.md v3.6、docs/module-design/04-grafeo.md、docs/plan/plan-p2.md v1.4
 
@@ -9,11 +9,11 @@
 
 ## 执行摘要
 
-基于对 AgentCowork 记忆设计、Grafeo 模块设计、Phase 2 计划与竞品对比文档（11维度分析）的深入研究，本报告从 **11 个工程维度** 逐一对标 AgentCowork 与 mem0/LightMem/HippoRAG/zeroclaw 的设计差异，评估 AgentCowork 的领先性与差距。
+基于对 ACowork 记忆设计、Grafeo 模块设计、Phase 2 计划与竞品对比文档（11维度分析）的深入研究，本报告从 **11 个工程维度** 逐一对标 ACowork 与 mem0/LightMem/HippoRAG/zeroclaw 的设计差异，评估 ACowork 的领先性与差距。
 
 **关键发现**：
-- **AgentCowork 的独特优势**（3 个维度明显领先）：关联扩散检索（基于 Grafeo 原生图遍历 + PageRank）、检索与注入拆分设计（Token 精细管理）、生命周期架构解耦
-- **AgentCowork 的关键差距**（5 个维度落后）：质量评估体系、冲突处理成熟度、生命周期间流动智能化、分层容量管理、程序记忆与 Skill 系统联动
+- **ACowork 的独特优势**（3 个维度明显领先）：关联扩散检索（基于 Grafeo 原生图遍历 + PageRank）、检索与注入拆分设计（Token 精细管理）、生命周期架构解耦
+- **ACowork 的关键差距**（5 个维度落后）：质量评估体系、冲突处理成熟度、生命周期间流动智能化、分层容量管理、程序记忆与 Skill 系统联动
 - **需立即补充的设计**（3 个高优先级）：标准化基准测试、冲突分类 LLM 精排、ProceduralNode 聚合策略
 
 ---
@@ -30,7 +30,7 @@
 | HippoRAG | PersonalizedPageRank 图遍历 + dense passage | 图遍历为主            | **核心能力**                 |
 | zeroclaw | 三阶段管线：LRU → FTS → 向量                | 向量 0.7 + 关键词 0.3 | Knowledge Graph 五种关系遍历 |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §6（关联扩散检索）、`docs/module-design/04-grafeo.md` §检索能力
 
 **关键设计**：
@@ -43,9 +43,9 @@
 **判断**：**领先** ✅
 
 **理由**：
-- HippoRAG 的 PPR 是 1-3 跳推理，AgentCowork 的图遍历 + PageRank + topology_boost + 社区检测形成了"图+算法"的多重组合
-- zeroclaw 的三阶段管线（缓存→FTS→向量）是工程级优化，AgentCowork 的检索降级策略（§6.1 Level 0-3）更完善
-- HippoRAG 的图遍历专门针对多跳 QA，AgentCowork 的检索与注入拆分使其能灵活适配不同上下文需求
+- HippoRAG 的 PPR 是 1-3 跳推理，ACowork 的图遍历 + PageRank + topology_boost + 社区检测形成了"图+算法"的多重组合
+- zeroclaw 的三阶段管线（缓存→FTS→向量）是工程级优化，ACowork 的检索降级策略（§6.1 Level 0-3）更完善
+- HippoRAG 的图遍历专门针对多跳 QA，ACowork 的检索与注入拆分使其能灵活适配不同上下文需求
 
 **存在的差距**：
 - Level 0 混合检索的 RRF 权重配置写死，未参考 zeroclaw 的动态权重调整（需补充参数化）
@@ -63,7 +63,7 @@
 | HippoRAG | RAG passage 拼接                              | QuerySolution 对象          | retrieve() 独立调用             | 文档特定     |
 | zeroclaw | `[Memory context]...[/Memory context]` 独立块 | `key: content` 列表 + score | 每轮对话前自动，time decay 过滤 | **最结构化** |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §1（瞬态层 Token 管理）、§6.1（检索降级）
 
 **关键设计**：
@@ -77,12 +77,12 @@
 **判断**：**持平** ⚖️
 
 **理由**：
-- zeroclaw 的 `[Memory context]` 独立块是最干净的架构，AgentCowork 的多块级联（System/Retrieved/Conversation/Scratchpad）更复杂但信息密度更高
-- AgentCowork 的三阶段渐进裁剪（折叠→FIFO→摘要）比 mem0/LightMem 的"返回原始 + 交给调用方"更细致
-- AgentCowork 的内容折叠策略（文件→path+hash、代码→artifact_refs）体现了对"什么该住在记忆、什么该住在文件系统"的深层认知
+- zeroclaw 的 `[Memory context]` 独立块是最干净的架构，ACowork 的多块级联（System/Retrieved/Conversation/Scratchpad）更复杂但信息密度更高
+- ACowork 的三阶段渐进裁剪（折叠→FIFO→摘要）比 mem0/LightMem 的"返回原始 + 交给调用方"更细致
+- ACowork 的内容折叠策略（文件→path+hash、代码→artifact_refs）体现了对"什么该住在记忆、什么该住在文件系统"的深层认知
 
 **存在的差距**：
-- **缺少时间衰减过滤**：zeroclaw 在注入前做 time decay，低分结果自动过滤。AgentCowork 在裁剪阶段未考虑节点的 decay_score，可能注入"僵尸节点"
+- **缺少时间衰减过滤**：zeroclaw 在注入前做 time decay，低分结果自动过滤。ACowork 在裁剪阶段未考虑节点的 decay_score，可能注入"僵尸节点"
 - **Memory Hint 指令复用性不足**：§1 中 `memory_hint.type` 区分 s/f/r/i 四类，但下轮检索参数调整（RRF 权重、BM25 加强）的逻辑未文档化
 
 ---
@@ -97,7 +97,7 @@
 | HippoRAG | 无冲突处理（只读）                   | 不适用                              | 不适用       | 不适用                    |
 | zeroclaw | 向量 0.85 + Jaccard 双模式           | `superseded_by` 标记软删除          | 仅 Core 类   | 无向量嵌入时 Jaccard 降级 |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §6.4（冲突处理）、`docs/review/04-p2-s2-design-review.md` §6.9
 
 **关键设计**：
@@ -112,9 +112,9 @@
 **判断**：**落后** ❌
 
 **理由**：
-- mem0 的 LLM 冲突判断在即时阶段就做，AgentCowork 延迟到离线巩固（效率低）
-- zeroclaw 的 `superseded_by` 字段和双模式检测（向量 + Jaccard）比 AgentCowork 的单向量检测更鲁棒
-- LightMem 的离线 `offline_update` 机制（睡眠巩固中批量处理冲突）与 AgentCowork 类似，但 LightMem 在冲突后续追踪中有更多细节（merge 策略）
+- mem0 的 LLM 冲突判断在即时阶段就做，ACowork 延迟到离线巩固（效率低）
+- zeroclaw 的 `superseded_by` 字段和双模式检测（向量 + Jaccard）比 ACowork 的单向量检测更鲁棒
+- LightMem 的离线 `offline_update` 机制（睡眠巩固中批量处理冲突）与 ACowork 类似，但 LightMem 在冲突后续追踪中有更多细节（merge 策略）
 
 **存在的差距**：
 1. **冲突检测阈值固定**：0.85 是手调的，未根据 KnowledgeNode 类型（Fact/Preference）动态调整
@@ -138,7 +138,7 @@
 | HippoRAG | OpenIE 三元组抽取、NER、QA 推理               | 模板化                             | 批量 OpenIE 减调用  | 结果缓存           |
 | zeroclaw | 仅 consolidation 提取 history_entry           | 硬编码 CONSOLIDATION_SYSTEM_PROMPT | 截断 4000 字符      | markdown 包装容错  |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §0.1（LLM 优先原则）、§1（Memory Hint 指令）、§2（Tool Result 摘要）、§4.1-4.2（巩固管道）
 
 **关键设计**：
@@ -155,9 +155,9 @@
 **判断**：**持平** ⚖️
 
 **理由**：
-- mem0 的 LLM 频繁调用（每次对话都可能抽取 + 冲突判断 + 生成）导致高成本，AgentCowork 的"即时 + 离线"两分法更经济
-- zeroclaw 最保守（仅 consolidation），AgentCowork 的 memory_hint 指引让即时提取更精准
-- LightMem 的 LLMLingua-2 预压缩是 token 优化的独特方案，AgentCowork 没有对标
+- mem0 的 LLM 频繁调用（每次对话都可能抽取 + 冲突判断 + 生成）导致高成本，ACowork 的"即时 + 离线"两分法更经济
+- zeroclaw 最保守（仅 consolidation），ACowork 的 memory_hint 指引让即时提取更精准
+- LightMem 的 LLMLingua-2 预压缩是 token 优化的独特方案，ACowork 没有对标
 
 **存在的差距**：
 1. **离线巩固 Prompt 设计不够精细**（§4.2 示例较粗糙）：
@@ -178,7 +178,7 @@
 | HippoRAG | 检索召回率、QA 准确率                | MuSiQue、HotpotQA   | Recall@K、EM、F1    | 论文：多跳推理显著优于标准 RAG          |
 | zeroclaw | **无内置评估**                       | **无**              | **无**              | 社区使用反馈                            |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/plan/plan-p2.md` §2.5.6（S2.12 质量评估框架）
 
 **关键设计**：
@@ -191,7 +191,7 @@
 **理由**：
 - 当前 Phase 2 计划仅定义了 SLA（性能指标）和基础可观测性
 - 缺少语义质量评估框架（类似 mem0 的 LLM Judge、LightMem 的 F1 指标）
-- zeroclaw 也缺评估体系，但 AgentCowork 作为平台级系统应该更重视
+- zeroclaw 也缺评估体系，但 ACowork 作为平台级系统应该更重视
 
 **存在的差距**：
 1. **缺少在线评估框架**：应在每次检索后自动评估"返回结果是否对用户有帮助"
@@ -215,7 +215,7 @@
 | HippoRAG | Python      | 批量处理              | 中（igraph/embedding/LLM backend）          | 全局配置                              | SDK + CLI          |
 | zeroclaw | Rust        | tokio 异步            | 轻（rusqlite/parking_lot/tokio/serde）      | `SearchMode` 枚举 + `RetrievalConfig` | 单二进制 + CLI     |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/module-design/04-grafeo.md`、`docs/05-memory.md` §10（生命周期架构）
 
 **关键设计**：
@@ -234,8 +234,8 @@
 **判断**：**持平** ⚖️
 
 **理由**：
-- zeroclaw 的轻量级约束（Rust 编译期类型安全 + SQLite 单文件）vs AgentCowork 的灵活性（Grafeo LPG 支持多种查询模式 + 原生图算法）是不同的设计权衡
-- AgentCowork 的配置通过 trait 参数化使其优于 Python 系统的"全局配置 vs SDK 配置"混乱
+- zeroclaw 的轻量级约束（Rust 编译期类型安全 + SQLite 单文件）vs ACowork 的灵活性（Grafeo LPG 支持多种查询模式 + 原生图算法）是不同的设计权衡
+- ACowork 的配置通过 trait 参数化使其优于 Python 系统的"全局配置 vs SDK 配置"混乱
 - Grafeo 的 CDC + PageRank + Louvain 等内置能力替代了 zeroclaw 需要自研的索引管理逻辑
 
 **存在的差距**：
@@ -259,7 +259,7 @@
 | HippoRAG | 无多租户设计                     | 无                                            | 无                           | 无                  | 无                              |
 | zeroclaw | `namespace` 隔离 + 装饰器强制    | `PolicyEnforcer` 策略引擎（只读/配额/保留期） | `export(filter)` GDPR Art.20 | 单条+批量+namespace | Vault 集成（P1 审查指出未接入） |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §3.1-3.3（PrivacyLevel）、§7（跨 Agent 知识共享）、`docs/plan/plan-p2.md` §2.5.11（S2.11 隐私访问控制）
 
 **关键设计**：
@@ -276,9 +276,9 @@
 **判断**：**持平** ⚖️
 
 **理由**：
-- zeroclaw 的 `NamespacedMemory` 装饰器和 `PolicyEnforcer` 提供了运行时的细粒度访问控制，AgentCowork 的"硬隔离 + 打包时过滤"是架构级设计
-- 两者的权衡不同：zeroclaw 允许共享存储（多 namespace），AgentCowork 完全隔离。前者更复杂但支持共享，后者更简单但需 Intent 查询
-- mem0 的 `user_id/agent_id/run_id` 三维度与 AgentCowork 的 Zone-Based 都是元数据维度的隔离，都不够强
+- zeroclaw 的 `NamespacedMemory` 装饰器和 `PolicyEnforcer` 提供了运行时的细粒度访问控制，ACowork 的"硬隔离 + 打包时过滤"是架构级设计
+- 两者的权衡不同：zeroclaw 允许共享存储（多 namespace），ACowork 完全隔离。前者更复杂但支持共享，后者更简单但需 Intent 查询
+- mem0 的 `user_id/agent_id/run_id` 三维度与 ACowork 的 Zone-Based 都是元数据维度的隔离，都不够强
 
 **存在的差距**：
 1. **缺少运行时访问控制**：当前所有隐私控制都在"打包分享"这个非运行时阶段
@@ -286,7 +286,7 @@
    - 当前文档未明确这一点
 2. **缺少数据导出/GDPR 支持**：
    - zeroclaw 有 `export()` 接口支持 GDPR Art.20（数据可移植性）
-   - AgentCowork 未定义导出格式和流程
+   - ACowork 未定义导出格式和流程
 3. **打包分享时的 Personal/Sensitive 剥离缺少审计**：
    - 应记录什么时候被分享给谁、剥离了哪些数据
    - 当前无审计日志
@@ -303,7 +303,7 @@
 | HippoRAG | JSON 持久化                 | 无独立索引                | igraph 原生             | JSON 文件   | 三层：chunk/entity/fact       |
 | zeroclaw | SQLite BLOB 余弦相似度      | SQLite FTS5               | 5 NodeType + 5 Relation | SQLite 单库 | {id/key/content/category/...} |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/module-design/04-grafeo.md` §LPG 数据模型、§索引说明、`docs/05-memory.md` §2-3（经历层/沉淀层）
 
 **关键设计**：
@@ -320,8 +320,8 @@
 
 **理由**：
 - Grafeo 的 LPG 模型（Label + Property + Edge）比 SQLite 表结构（zeroclaw）或分散式存储（mem0 向量+元数据分离）更原生支持图遍历
-- Grafeo 的 CDC (Change Data Capture) 提供了完整的审计追踪，AgentCowork 利用它做"经验回溯"和"冲突调解"
-- zeroclaw 的"全部存 SQLite BLOB"换取零外部依赖，AgentCowork 的 LPG 换取查询能力，权衡合理
+- Grafeo 的 CDC (Change Data Capture) 提供了完整的审计追踪，ACowork 利用它做"经验回溯"和"冲突调解"
+- zeroclaw 的"全部存 SQLite BLOB"换取零外部依赖，ACowork 的 LPG 换取查询能力，权衡合理
 
 **存在的差距**：
 1. **缺少数据模型版本化机制**：
@@ -346,7 +346,7 @@
 | HippoRAG | `index()` 批量构建                 | 无（只追加）                             | 无                                                | 无                                     | 无                   |
 | zeroclaw | `consolidate_turn()` 每轮自动      | LLM 提取 + 冲突检测 + superseded_by 标记 | Time decay（半衰期 7 天）+ 显式 delete + 保留策略 | snapshot + 分类保留期                  | 按分类可配置保留天数 |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §4（巩固管道）、§5（遗忘机制）、§9（分阶段实现路线）
 
 **关键设计**：
@@ -372,8 +372,8 @@
 
 **理由**：
 - zeroclaw 的"每轮自动 consolidate + time decay"最简单直接
-- AgentCowork 的"即时 + 离线"两分法覆盖了更多场景（显式保存 + 深度提取）
-- LightMem 的"offline_update 睡眠巩固"与 AgentCowork 的离线巩固本质相同，都是批量处理
+- ACowork 的"即时 + 离线"两分法覆盖了更多场景（显式保存 + 深度提取）
+- LightMem 的"offline_update 睡眠巩固"与 ACowork 的离线巩固本质相同，都是批量处理
 
 **存在的差距**：
 1. **即时 + 离线的协调机制不清楚**（§4.1 vs §4.2）：
@@ -400,7 +400,7 @@
 | HippoRAG | JSON 文件 + igraph 序列化        | 无                                     | 文件写入（无事务）              | 无                        | 无                         |
 | zeroclaw | SQLite（brain.db）               | MarkdownMemory/QdrantMemory/NoneMemory | SQLite WAL + NORMAL 同步 + mmap | `safe_reindex` 原子性迁移 | 单进程（未来 Gateway IPC） |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/module-design/04-grafeo.md` §索引说明、`docs/05-memory.md` §5.2（Purge 流程）
 
 **关键设计**：
@@ -416,8 +416,8 @@
 **判断**：**持平** ⚖️
 
 **理由**：
-- zeroclaw 的 `safe_reindex` 原子性迁移是成熟的工程实践，AgentCowork 依赖 Grafeo 的 WAL 机制
-- AgentCowork 的 GQL 导出/导入灵活性好，但未具体实现
+- zeroclaw 的 `safe_reindex` 原子性迁移是成熟的工程实践，ACowork 依赖 Grafeo 的 WAL 机制
+- ACowork 的 GQL 导出/导入灵活性好，但未具体实现
 - 两者都没有完整的"多版本共存"机制（如 A 机器跑 v1 Schema，B 机器升到 v2，如何同步）
 
 **存在的差距**：
@@ -426,7 +426,7 @@
    - 当前代码审查报告 (01-code-review.md) 说数据迁移是 Phase 2 任务，但 plan-p2.md 中未见明确任务
 2. **备份与恢复的 RTO/RPO 指标缺失**：
    - zeroclaw 的 `safe_reindex` 设计是对 RPO = 0 的追求
-   - AgentCowork 的 Grafeo WAL 可做到 RPO = 0，但文档未量化
+   - ACowork 的 Grafeo WAL 可做到 RPO = 0，但文档未量化
 3. **跨进程通信的数据一致性**（Phase 3 云端）：
    - 多设备同时修改记忆时的冲突解决机制未定义
    - 当前文档说"单向同步（云端→Agent）"但未明确多设备场景如何处理
@@ -443,7 +443,7 @@
 | HippoRAG | 隐式三层：chunk → entity → fact                              | chunk → OpenIE → 图索引       | 固定路径                  | 无                    |
 | zeroclaw | 显式三分类：Core/Daily/Conversation + Custom                 | `consolidate_turn()` 自动流转 | 跨命名空间检索 + 统一注入 | 对话→Core（LLM 提取） |
 
-#### AgentCowork 当前设计覆盖
+#### ACowork 当前设计覆盖
 **文档位置**：`docs/05-memory.md` §0（分层原则）、§1-3（瞬态层/经历层/沉淀层）
 
 **关键设计**：
@@ -466,9 +466,9 @@
 **判断**：**领先** ✅
 
 **理由**：
-- AgentCowork 的"四层"模型（瞬态/经历/沉淀/dormant）比 zeroclaw 的"三分类"（Core/Daily/Conversation）更细致
-- LightMem 的"六种 Layer 实现"是可插拔的，AgentCowork 的 MemoryStore trait 也支持可替换，但 AgentCowork 的层级设计更贴近认知科学
-- HippoRAG 的"chunk→entity→fact"是知识组织，AgentCowork 的"瞬态→经历→沉淀"是记忆保留，不可直接对比
+- ACowork 的"四层"模型（瞬态/经历/沉淀/dormant）比 zeroclaw 的"三分类"（Core/Daily/Conversation）更细致
+- LightMem 的"六种 Layer 实现"是可插拔的，ACowork 的 MemoryStore trait 也支持可替换，但 ACowork 的层级设计更贴近认知科学
+- HippoRAG 的"chunk→entity→fact"是知识组织，ACowork 的"瞬态→经历→沉淀"是记忆保留，不可直接对比
 
 **存在的差距**：
 1. **层级间的"升级"决策逻辑不透明**：
@@ -477,22 +477,22 @@
 2. **瞬态→经历的折叠策略与沉淀层的关联不清**（§1 的三阶段裁剪 vs §6 的跨层扩散）：
    - 被裁剪的消息对转为 ArtifactRef 存入经历层，但 ArtifactRef 在沉淀层检索时如何利用？
    - 应明确"被动裁剪转换"与"主动提取"的协调机制
-3. **Daily/Conversation 层级（对标 zeroclaw）在 AgentCowork 中缺失**：
-   - 当前 AgentCowork 的经历层统一为 Episodic Label，无子分类
+3. **Daily/Conversation 层级（对标 zeroclaw）在 ACowork 中缺失**：
+   - 当前 ACowork 的经历层统一为 Episodic Label，无子分类
    - 应考虑区分"日志型 episode"和"对话型 episode"，便于不同的保留策略
 
 ---
 
 ## B. 综合评估
 
-### B.1 AgentCowork 的独特优势
+### B.1 ACowork 的独特优势
 
 #### 1. 关联扩散检索（图算法 + 重要性评估）
 - **维度**：维度 1（记忆检索机制）、维度 8（存储格式）
-- **表现**：AgentCowork 的 GQL 原生图遍历 + PageRank + topology_boost + 社区检测形成了"多层次的关联发现"
+- **表现**：ACowork 的 GQL 原生图遍历 + PageRank + topology_boost + 社区检测形成了"多层次的关联发现"
 - **对标差异**：
-  - HippoRAG 的 PPR 专为多跳 QA 优化，AgentCowork 的图遍历用途更广泛（可用于任何类型的记忆扩散）
-  - zeroclaw 的 KG 遍历是关系类型的显式路由，AgentCowork 的边权重系统更灵活
+  - HippoRAG 的 PPR 专为多跳 QA 优化，ACowork 的图遍历用途更广泛（可用于任何类型的记忆扩散）
+  - zeroclaw 的 KG 遍历是关系类型的显式路由，ACowork 的边权重系统更灵活
 - **价值**：从"查询" → "推理" 的升级，让记忆检索不止是检索，还能发现"隐性关联"
 
 #### 2. 检索与注入的拆分设计
@@ -501,7 +501,7 @@
   - Retrieve 阶段关注"查什么"（hybrid_search + graph_expand）
   - Inject 阶段关注"怎么放"（Token 预算、优先级、内容折叠）
   - 两个独立的裁剪流水线（历史 + 检索）
-- **对标差异**：mem0/LightMem 返回原始结果交调用方处理，zeroclaw 的注入是一体的，AgentCowork 的拆分设计最灵活
+- **对标差异**：mem0/LightMem 返回原始结果交调用方处理，zeroclaw 的注入是一体的，ACowork 的拆分设计最灵活
 - **价值**：支持不同的检索和注入策略独立演化，未来可灵活实现"RAG 结果与本地记忆的混合排序"
 
 #### 3. 生命周期架构解耦
@@ -510,12 +510,12 @@
 - **对标差异**：
   - mem0/LightMem/HippoRAG 都是 SDK 模式，直接调用存储 API
   - zeroclaw 也是硬依赖特定后端
-  - AgentCowork 的 trait 设计允许未来无缝替换存储引擎
+  - ACowork 的 trait 设计允许未来无缝替换存储引擎
 - **价值**：架构可维护性和可扩展性最高，未来可支持多种存储后端（内存/本地/云端）
 
 ---
 
-### B.2 AgentCowork 的关键差距
+### B.2 ACowork 的关键差距
 
 #### 1. 质量评估体系缺失
 - **严重度**：🔴 高
@@ -562,7 +562,7 @@
 - **严重度**：🟡 低
 - **维度**：维度 1（记忆层级分类）
 - **表现**：History 节点摘要压缩阈值硬编码 10 条，注入上限 200 token，无灵活配置
-- **竞品对标**：zeroclaw 的所有参数都通过 manifest 配置，AgentCowork 的设计有改进空间
+- **竞品对标**：zeroclaw 的所有参数都通过 manifest 配置，ACowork 的设计有改进空间
 - **影响**：长期运行的 Agent 的自我认知可能被无限膨胀，历史事件丢失
 - **补充方案**（§C.1.3 详述）
 
@@ -638,7 +638,7 @@ impl RetrievalEvaluator for LLMJudgeEvaluator {
 ```markdown
 # LongMemEval 5 维集成
 
-AgentCowork 记忆系统评估基准采纳 LongMemEval 的 5 个维度：
+ACowork 记忆系统评估基准采纳 LongMemEval 的 5 个维度：
 
 1. **IE (Information Extraction)**：从对话中提取关键信息的完整性
    - 评估指标：F1（与人工标注对比）

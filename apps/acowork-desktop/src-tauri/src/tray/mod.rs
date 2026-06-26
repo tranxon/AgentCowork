@@ -23,7 +23,7 @@ pub fn setup(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     let _tray = TrayIconBuilder::new()
         .icon(icon)
         .menu(&menu)
-        .tooltip("AgentCowork")
+        .tooltip("ACowork")
         .on_menu_event(events::on_menu_event)
         .on_tray_icon_event(events::on_tray_icon_event)
         .build(app)?;

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: vscode-html-language-server
+# ACowork LSP install script: vscode-html-language-server
 # Phases: Install -> Verify -> Health Check
 #
 # vscode-html-languageserver npm package was DEPRECATED.
@@ -157,7 +157,7 @@ health_check() {
 }
 
 # ── Main ────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: vscode-html-language-server ==="
+echo "=== ACowork LSP Setup: vscode-html-language-server ==="
 install
 verify
 health_check

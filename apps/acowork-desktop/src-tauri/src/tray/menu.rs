@@ -22,6 +22,6 @@ pub fn build_show_chat(
 pub fn build_quit(
     app: &App,
 ) -> Result<impl tauri::menu::IsMenuItem<tauri::Wry> + Clone, Box<dyn std::error::Error>> {
-    let item = MenuItemBuilder::with_id("quit", "Quit AgentCowork").build(app)?;
+    let item = MenuItemBuilder::with_id("quit", "Quit ACowork").build(app)?;
     Ok(item)
 }

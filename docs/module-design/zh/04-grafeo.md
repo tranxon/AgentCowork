@@ -276,7 +276,7 @@ impl MemoryStore for GrafeoStore {
 
 ## Grafeo LPG 数据模型
 
-AgentCowork 的记忆类型直接映射为 Grafeo 的 **Label**，利用 Label 隔离实现类型区分，无需额外的 `node_type` 枚举字段。
+ACowork 的记忆类型直接映射为 Grafeo 的 **Label**，利用 Label 隔离实现类型区分，无需额外的 `node_type` 枚举字段。
 
 ### 8.1 节点类型（NodeType）— 认知功能分层
 
@@ -442,11 +442,11 @@ let expanded = session.execute_with_params(&gql, [("id", seed_id.into())])?;
 
 ## 图算法增强
 
-grafeo-engine 内置图算法过程（`algos` feature），AgentCowork 记忆系统可直接调用以提升记忆质量。
+grafeo-engine 内置图算法过程（`algos` feature），ACowork 记忆系统可直接调用以提升记忆质量。
 
 ### PageRank 集成
 
-AgentCowork 原有的 `importance_score` 是手调的 `f32`。Grafeo 的 PageRank 算法可以自动评估记忆节点的重要性——被更多边引用的节点 PageRank 更高，作为 `importance_score` 的补充或替代。
+ACowork 原有的 `importance_score` 是手调的 `f32`。Grafeo 的 PageRank 算法可以自动评估记忆节点的重要性——被更多边引用的节点 PageRank 更高，作为 `importance_score` 的补充或替代。
 
 ```rust
 /// Compute PageRank scores for all memory nodes

@@ -91,7 +91,7 @@ impl SectionContent {
     /// Create a SectionContent with a model-aware token estimate.
     ///
     /// Uses [`crate::token::count_text`] — the single unified entry point
-    /// for all token counting in AgentCowork. For GPT models this uses tiktoken
+    /// for all token counting in ACowork. For GPT models this uses tiktoken
     /// (< 1% error); for Claude/Qwen it uses sampling ratios (< 5% error);
     /// for unknown models it falls back to word/CJK heuristic (< 15% error).
     pub fn new(content: String, model: &str) -> Self {

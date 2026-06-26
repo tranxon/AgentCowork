@@ -1,5 +1,5 @@
 // Adapted from zeroclaw/src/tools/mcp_tool.rs
-// AgentCowork deviation: implements acowork_core::tools::Tool trait instead
+// ACowork deviation: implements acowork_core::tools::Tool trait instead
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
 use std::sync::Arc;
@@ -62,7 +62,7 @@ fn classify_mcp_error(msg: &str) -> &'static str {
     "transient"
 }
 
-/// A AgentCowork [`Tool`](acowork_core::tools::Tool) backed by an MCP server tool.
+/// A ACowork [`Tool`](acowork_core::tools::Tool) backed by an MCP server tool.
 ///
 /// The `prefixed_name` (e.g. `mcp_filesystem__read_file`) is what the agent sees.
 /// The `mcp_` prefix is a stable marker that distinguishes MCP tools from built-in
@@ -107,7 +107,7 @@ impl acowork_core::tools::Tool for McpToolWrapper {
         _work_dir: Option<&str>,
     ) -> acowork_core::error::Result<acowork_core::tools::ToolResult> {
         // Strip the `approved` field before forwarding to the MCP server.
-        // AgentCowork's security model may inject `approved: bool` into tool calls
+        // ACowork's security model may inject `approved: bool` into tool calls
         // for approval flows. MCP servers are unaware of this field.
         let args = match params {
             serde_json::Value::Object(mut map) => {

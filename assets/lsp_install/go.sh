@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: gopls (Go)
+# ACowork LSP install script: gopls (Go)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -114,7 +114,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: gopls (Go) ==="
+echo "=== ACowork LSP Setup: gopls (Go) ==="
 install
 verify
 health_check

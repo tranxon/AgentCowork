@@ -95,7 +95,7 @@ case "$ARCH" in
 esac
 
 echo -e "${CYAN}╔══════════════════════════════════════════════╗${NC}"
-echo -e "${CYAN}║   ONNX Runtime Setup for AgentCowork.AI        ║${NC}"
+echo -e "${CYAN}║   ONNX Runtime Setup for ACowork.AI        ║${NC}"
 echo -e "${CYAN}╚══════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "  OS:   ${BOLD}$OS${NC}"

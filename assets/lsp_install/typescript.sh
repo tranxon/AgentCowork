@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: typescript-language-server
+# ACowork LSP install script: typescript-language-server
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -112,7 +112,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: typescript-language-server ==="
+echo "=== ACowork LSP Setup: typescript-language-server ==="
 install
 verify
 health_check

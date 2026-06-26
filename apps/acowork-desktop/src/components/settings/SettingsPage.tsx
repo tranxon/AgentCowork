@@ -723,7 +723,7 @@ function GeneralTab() {
       <div className="rounded-md border border-zinc-200 bg-white p-4 dark:border-zinc-700 dark:bg-zinc-800">
         <h2 className="mb-3 text-xs font-medium">{t("settings.about")}</h2>
         <div className="text-xs text-zinc-500 dark:text-zinc-400">
-          <p>AgentCowork Desktop v0.1.0</p>
+          <p>ACowork Desktop v0.1.0</p>
           <p className="mt-1">Built with Tauri v2 + React 19</p>
         </div>
       </div>

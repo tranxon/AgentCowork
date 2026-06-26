@@ -1,8 +1,8 @@
-# AGENTS.md — AgentCowork.AI
+# AGENTS.md — ACowork.AI
 
 ## Overview
 
-AgentCowork.AI is a decentralized, high-security, scalable AI Agent runtime platform. Each Agent is a declarative `.agent` package (config + prompts + skills, no binary), loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
+ACowork.AI is a decentralized, high-security, scalable AI Agent runtime platform. Each Agent is a declarative `.agent` package (config + prompts + skills, no binary), loaded by a universal Agent Runtime binary and managed by a lightweight Gateway.
 
 ## Build & Test
 

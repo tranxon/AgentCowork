@@ -13,7 +13,7 @@
 
 ## 0. 通信架构总览
 
-AgentCowork 平台有三条独立的通信通道，各司其职：
+ACowork 平台有三条独立的通信通道，各司其职：
 
 ```
 ┌────────────────┐         ┌────────────────┐         ┌────────────────┐
@@ -296,7 +296,7 @@ struct IntentMessage {
     r#type: String,                    // "intent"
 
     /// 目标 Agent ID（必填，显式指定）
-    /// AgentCowork 不支持隐式 Intent，target 必须是已安装 Agent 的 agent_id
+    /// ACowork 不支持隐式 Intent，target 必须是已安装 Agent 的 agent_id
     target: String,
 
     /// 请求的动作名称（必填）
@@ -483,7 +483,7 @@ struct IntentError {
 
 #### 设计原则
 
-AgentCowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。因此 Capability Registry 只需回答一个问题：**这个 Agent 声明了这个 Action 吗？** 无需 priority 机制，无路由 ambiguity。
+ACowork 不支持隐式 Intent，所有 Intent 调用必须显式指定 `target`（Agent ID）。因此 Capability Registry 只需回答一个问题：**这个 Agent 声明了这个 Action 吗？** 无需 priority 机制，无路由 ambiguity。
 
 #### 数据结构
 

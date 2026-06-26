@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: gopls (Go)
+# ACowork LSP install script: gopls (Go)
 # Phases: Install -> Verify -> Health Check
 
 # ── Helpers ──────────────────────────────────────────────────────────
@@ -114,7 +114,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: gopls (Go) ==="
+Write-Host "=== ACowork LSP Setup: gopls (Go) ==="
 Install-Server
 Verify-Server
 Health-Check

@@ -47,7 +47,7 @@ pub struct SessionChunkEvent {
 
 /// Streaming chunk event emitted during LLM response generation.
 ///
-/// Adapted from ZeroClaw's DraftEvent, simplified for AgentCowork's IPC architecture.
+/// Adapted from ZeroClaw's DraftEvent, simplified for ACowork's IPC architecture.
 /// Each delta is forwarded to the Gateway via `StreamChunk` gRPC message,
 /// which maps to a BridgeEventType for the Desktop App WebSocket.
 /// SPDX-License-Identifier: MIT OR Apache-2.0

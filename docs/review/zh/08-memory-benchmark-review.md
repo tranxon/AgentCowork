@@ -1,7 +1,7 @@
 # 记忆系统 Benchmark 目标审查
 
 **审查日期**：2026-04-22
-**审查范围**：AgentCowork v3.6 设计 vs LongMemEval/BEAM/LoCoMo-Plus 评估框架
+**审查范围**：ACowork v3.6 设计 vs LongMemEval/BEAM/LoCoMo-Plus 评估框架
 **依据文档**：docs/reference/research_memory_evaluation_frameworks.md
 **审查文档**：docs/05-memory.md v3.6、docs/module-design/04-grafeo.md、docs/plan/plan-p2.md v1.4
 
@@ -65,7 +65,7 @@
   - Phase 2仅通过Tool Call的显式提取
 
 - **长度偏差**：LoCoMo-Plus发现的问题——模型在长对话中倾向输出更长文本隐藏记忆错误
-  - AgentCowork Token计数（S5.4）缓解但无长度标准化生成约束
+  - ACowork Token计数（S5.4）缓解但无长度标准化生成约束
 
 **预期表现分析**：
 - **CCS估计 60-65%**（尽管ProceduralNode设计完善，但evaluation方法缺失）
@@ -104,7 +104,7 @@
       100K  500K  1M   5M   10M (tokens)
 
 BEAM衰减斜率 (MDS) 估计：
-AgentCowork = -0.15 ~ -0.18 (moderate degradation)
+ACowork = -0.15 ~ -0.18 (moderate degradation)
 BEAM Baseline = -0.20 ~ -0.25
 LightMem = -0.08 (最优)
 ```
@@ -334,7 +334,7 @@ LLM提取时返回模式：
 ### D.1 AgentCowork在各Benchmark上的预期评分
 
 ```
-                   AgentCowork  mem0(Est) LightMem(Est) HippoRAG(Est)
+                   ACowork  mem0(Est) LightMem(Est) HippoRAG(Est)
 LongMemEval
 ├─ IE           75%       80%       75%           72%
 ├─ MR           62%       70%       68%           65%
@@ -362,7 +362,7 @@ BEAM (10个维度加权)
 **排名预测**：
 1. **LightMem** (68%) — 轻量级设计优化充分
 2. **mem0** (69%) — 生态成熟，运维完善
-3. **AgentCowork** (62%) — 架构完整但Phase 2能力差距
+3. **ACowork** (62%) — 架构完整但Phase 2能力差距
 4. **HippoRAG** (66%) — 论文设计优秀但社区成熟度低
 
 ---
@@ -567,7 +567,7 @@ BEAM: 64% → 70% (+6%)
 | `05-memory.md`                             | 新增§6.5 Abstention机制，§6.8 冲突检测精化   | P0     |
 | `04-grafeo.md`                             | 新增S2.13.6 MMR搜索，S2.8.5 社区检测完整实现 | P1     |
 | `plan-p2.md`                               | S2任务优先级调整，新增S2.X Abstention任务    | P0     |
-| `research_memory_evaluation_frameworks.md` | 新增"AgentCowork Benchmark Mapping"章节      | P1     |
+| `research_memory_evaluation_frameworks.md` | 新增"ACowork Benchmark Mapping"章节      | P1     |
 
 ---
 

@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: vscode-css-language-server
+# ACowork LSP install script: vscode-css-language-server
 # Phases: Install -> Verify -> Health Check
 #
 # vscode-css-languageserver (old npm package) is deprecated and removed.
@@ -166,7 +166,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: vscode-css-language-server ==="
+Write-Host "=== ACowork LSP Setup: vscode-css-language-server ==="
 Install-Server
 Verify-Server
 Health-Check

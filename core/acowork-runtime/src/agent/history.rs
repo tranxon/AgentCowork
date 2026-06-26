@@ -1,7 +1,7 @@
 //! Conversation history management (FIFO trimming + Sanitization + Emergency trim)
 //!
 //! Adapted from zeroclaw/src/agent/history.rs
-//! AgentCowork deviation: uses acowork-core ChatMessage types; token estimation
+//! ACowork deviation: uses acowork-core ChatMessage types; token estimation
 //! uses char-based approximation instead of tiktoken.
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 //!

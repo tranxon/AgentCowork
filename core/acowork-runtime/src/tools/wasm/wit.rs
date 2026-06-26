@@ -1,6 +1,6 @@
 //! WIT component model interface definitions
 //!
-//! Defines the typed interface contract between the AgentCowork Runtime
+//! Defines the typed interface contract between the ACowork Runtime
 //! (host) and WASM tool components. This replaces the raw pointer-based
 //! `execute(ptr, len)` protocol with type-safe function calls.
 //!

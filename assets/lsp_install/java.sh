@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: jdtls (Java)
+# ACowork LSP install script: jdtls (Java)
 # Phases: Install → Verify → Health Check
 #
 # jdtls is the Eclipse JDT Language Server, a Java application (not a native
@@ -302,7 +302,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: jdtls (Java) ==="
+echo "=== ACowork LSP Setup: jdtls (Java) ==="
 install
 verify
 health_check

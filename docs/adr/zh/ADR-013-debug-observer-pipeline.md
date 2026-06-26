@@ -9,7 +9,7 @@
 
 ## 背景
 
-AgentCowork Runtime 的 Debug（DevMode）功能在实现过程中逐步渗透到了非 debug 模块中，导致 debug 代码和生产代码边界模糊。具体问题如下：
+ACowork Runtime 的 Debug（DevMode）功能在实现过程中逐步渗透到了非 debug 模块中，导致 debug 代码和生产代码边界模糊。具体问题如下：
 
 ### 问题 1：主循环侵入严重
 
@@ -479,7 +479,7 @@ self.core.debug_observer.apply_rewind_and_patches(
 ```
 
 **否决原因**：
-- 生产构建无法包含 debug 功能，但 AgentCowork 的 DevMode 是运行时开关（Gateway 推送 `EnableDebugMode`），不是编译时选择
+- 生产构建无法包含 debug 功能，但 ACowork 的 DevMode 是运行时开关（Gateway 推送 `EnableDebugMode`），不是编译时选择
 - Feature flag 不支持"运行时注入"场景
 - `cfg` 条件编译会让两种模式的代码永远无法同时测试
 

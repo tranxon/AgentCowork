@@ -298,7 +298,7 @@ mod tests {
             .store_episode(&make_episode("sess-1", "Hello"))
             .unwrap();
         store
-            .store_knowledge(&make_public_knowledge("agent", "framework", "AgentCowork"))
+            .store_knowledge(&make_public_knowledge("agent", "framework", "ACowork"))
             .unwrap();
         store
             .store_knowledge(&make_private_knowledge("user", "name", "Alice"))

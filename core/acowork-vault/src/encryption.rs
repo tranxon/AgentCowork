@@ -1,7 +1,7 @@
 //! ChaCha20-Poly1305 AEAD encryption layer
 //!
 //! Adapted from zeroclaw/src/security/secrets.rs
-//! AgentCowork deviation: uses password-derived master key (Argon2id) instead of
+//! ACowork deviation: uses password-derived master key (Argon2id) instead of
 //! a random key stored in a file. File format: nonce (12B) + ciphertext + tag (16B).
 //! SPDX-License-Identifier: MIT OR Apache-2.0
 

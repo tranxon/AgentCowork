@@ -1,4 +1,4 @@
-# AgentCowork LSP install script: clangd (C/C++)
+# ACowork LSP install script: clangd (C/C++)
 # Phases: Install -> Verify -> Health Check
 
 $ErrorActionPreference = "Stop"
@@ -139,7 +139,7 @@ function Health-Check {
 }
 
 # -- Main --------------------------------------------------------------
-Write-Host "=== AgentCowork LSP Setup: clangd (C/C++) ==="
+Write-Host "=== ACowork LSP Setup: clangd (C/C++) ==="
 Install-Server
 Verify-Server
 Health-Check

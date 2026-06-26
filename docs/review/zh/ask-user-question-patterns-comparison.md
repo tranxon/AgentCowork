@@ -1,6 +1,6 @@
 # Agent "Ask User Question" 实现模式对比
 
-> **调研范围**: Claude Code, LangGraph, Spring AI, CrewAI, OpenAI Agents SDK, OpenCode, ZeroClaw, AgentCowork
+> **调研范围**: Claude Code, LangGraph, Spring AI, CrewAI, OpenAI Agents SDK, OpenCode, ZeroClaw, ACowork
 > **日期**: 2026-05-21
 
 ## 1. 核心问题
@@ -90,7 +90,7 @@ Node 中: decision = interrupt({"question": "Approve?"})
 
 ### 2.3 执行前钩子（Pre-Execution Hook）
 
-**代表**: ZeroClaw (`ApprovalManager`), AgentCowork (`ApprovalGate`)
+**代表**: ZeroClaw (`ApprovalManager`), ACowork (`ApprovalGate`)
 
 **原理**: 在 Tool 执行前插入审批检查，符合条件则暂停等待用户确认。本质上是一种**安全守卫（Guard）**模式。
 
@@ -108,7 +108,7 @@ run_tool_call_loop():
       execute_tool()
 ```
 
-**AgentCowork 实现**:
+**ACowork 实现**:
 ```
 shell_tool.execute():
   let risk = assess_risk(command)
@@ -124,7 +124,7 @@ shell_tool.execute():
 - 主要用于**安全审批**场景，而非 LLM 主动提问
 - ZeroClaw 支持 CLI 阻塞 + 非 CLI 异步两种模式
 - ZeroClaw 支持 `Always` 会话级自动批准 + 审计日志
-- AgentCowork 的 `ApprovalGate` 是 trait，可插拔实现（CLI / GUI / auto）
+- ACowork 的 `ApprovalGate` 是 trait，可插拔实现（CLI / GUI / auto）
 
 **优点**:
 - 安全场景的完美方案——强制性，LLM 无法绕过
@@ -199,11 +199,11 @@ OpenCode 进程                  CLI 助手进程
 
 ### 2.6 状态机（State Machine）
 
-**代表**: AgentCowork (`SessionStatus::WaitingApproval`), OpenAI Agents SDK (`stop_on_first_tool`)
+**代表**: ACowork (`SessionStatus::WaitingApproval`), OpenAI Agents SDK (`stop_on_first_tool`)
 
 **原理**: Runtime 层面维护 session 状态机。当需要用户输入时，session 状态切换到等待态，外部 UI 检测到状态变化后展示交互界面，用户确认后发送恢复信号触发状态回切。
 
-**AgentCowork 实现**:
+**ACowork 实现**:
 ```
 AgentLoop 执行中:
   requires_approval() → true
@@ -247,7 +247,7 @@ agent = Agent(
 
 | 维度                 |   Tool-as-Mechanism    | Graph Interrupt  |   Pre-Exec Hook    |  Task Flag  |    File IPC    |   State Machine   |
 | -------------------- | :--------------------: | :--------------: | :----------------: | :---------: | :------------: | :---------------: |
-| **代表实现**         | Claude Code, Spring AI |    LangGraph     |      ZeroClaw      |   CrewAI    |    OpenCode    |    AgentCowork    |
+| **代表实现**         | Claude Code, Spring AI |    LangGraph     |      ZeroClaw      |   CrewAI    |    OpenCode    |    ACowork    |
 | **LLM 感知**         |   透明（就是 Tool）    |      不感知      | 不感知（自动触发） |   不感知    |  感知（Tool）  |      不感知       |
 | **暂停粒度**         |      Tool 调用层       |  图节点内任意点  |    Tool 执行前     | Task 输出前 |  Tool 调用层   |    Session 级     |
 | **恢复方式**         |    Tool result 返回    | Command(resume=) |     继续/拒绝      | 控制台输入  |    文件响应    |   IPC 恢复信号    |
@@ -292,9 +292,9 @@ LLM 在推理过程中主动需要用户决策或澄清。
 
 ---
 
-## 5. 对 AgentCowork 的建议
+## 5. 对 ACowork 的建议
 
-AgentCowork 当前已经具备 **两种模式** 的雏形：
+ACowork 当前已经具备 **两种模式** 的雏形：
 
 ### 已有: `ApprovalGate` (Pre-Execution Hook)
 ```
@@ -349,7 +349,7 @@ LLM 调用 ask_user_question(question, options?)
 1. **Tool-as-Mechanism 是行业共识**：所有主流框架（Claude Code、Spring AI、OpenAI SDK）都将其实现为一个普通 Tool，这是最自然、最通用的模式
 2. **Graph Interrupt 是 LangGraph 的差异化优势**：提供更精细的控制和持久化，但绑定框架
 3. **Pre-Execution Hook 是安全场景的标配**：零信任安全模型下必不可少
-4. **State Machine 是 IPC 架构的底层基础设施**：AgentCowork 的分布式架构决定了状态驱动是最合理的
+4. **State Machine 是 IPC 架构的底层基础设施**：ACowork 的分布式架构决定了状态驱动是最合理的
 5. **File IPC 是最轻量的方案**：适合快速原型和跨语言场景
 
-最终推荐 AgentCowork: **Tool-as-Mechanism + State Machine 双模式**——用 Tool 触发 LLM 主动提问，用 ApprovalGate 处理框架强制安全审批，两者共享同一套 `SessionStatus::WaitingApproval` 状态机和 IPC 链路。
+最终推荐 ACowork: **Tool-as-Mechanism + State Machine 双模式**——用 Tool 触发 LLM 主动提问，用 ApprovalGate 处理框架强制安全审批，两者共享同一套 `SessionStatus::WaitingApproval` 状态机和 IPC 链路。

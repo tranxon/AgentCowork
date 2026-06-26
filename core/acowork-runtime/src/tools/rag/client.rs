@@ -1,4 +1,4 @@
-//! RagClient — HTTP client for the AgentCowork RAG standard query protocol
+//! RagClient — HTTP client for the ACowork RAG standard query protocol
 //!
 //! RagClient is a pure HTTP client. It does NOT implement any RAG engine logic.
 //! It sends standard query requests to enterprise RAG endpoints and parses

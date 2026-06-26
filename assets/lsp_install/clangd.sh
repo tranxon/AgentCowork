@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: clangd (C/C++)
+# ACowork LSP install script: clangd (C/C++)
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -139,7 +139,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: clangd (C/C++) ==="
+echo "=== ACowork LSP Setup: clangd (C/C++) ==="
 install
 verify
 health_check

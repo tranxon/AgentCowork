@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# AgentCowork LSP install script: yaml-language-server
+# ACowork LSP install script: yaml-language-server
 # Phases: Install → Verify → Health Check
 
 set -euo pipefail
@@ -112,7 +112,7 @@ health_check() {
 }
 
 # ── Main ──────────────────────────────────────────────────────────────
-echo "=== AgentCowork LSP Setup: yaml-language-server ==="
+echo "=== ACowork LSP Setup: yaml-language-server ==="
 install
 verify
 health_check

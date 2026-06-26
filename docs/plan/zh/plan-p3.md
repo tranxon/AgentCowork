@@ -23,7 +23,7 @@ Phase 3 的核心价值：从"能运行"升级到"安全运行"——
 
 原计划 S2（进程级沙箱隔离：bubblewrap + AppContainer）已**延后至 Phase 7**。理由：
 
-1. **威胁模型不匹配**：当前 AgentCowork 是个人桌面 Agent 平台，用户跑的是自己选择/编写的 Agent。威胁主体是"Agent 被 Prompt Injection 利用"，不是"不可信第三方恶意 Agent"。权限框架 + Shell 分级 + Approval Gate 已构成完整的第一层防御。
+1. **威胁模型不匹配**：当前 ACowork 是个人桌面 Agent 平台，用户跑的是自己选择/编写的 Agent。威胁主体是"Agent 被 Prompt Injection 利用"，不是"不可信第三方恶意 Agent"。权限框架 + Shell 分级 + Approval Gate 已构成完整的第一层防御。
 2. **ROI 太低**：S2 占原 Phase 3 的 1/3 工期（5 周），解决的子进程越权问题在当前场景下极少发生。
 3. **外部依赖负担**：bubblewrap 需要安装/分发策略、CI 需要 user namespace、AppContainer 需要管理员权限——这些在当前阶段不值得承担。
 4. **替代方案可行**：对子进程越权问题，Shell 工具默认不提供（manifest 显式声明才启用）+ ShellRisk 分级 + Approval Gate 已构成足够防线。
@@ -230,7 +230,7 @@ S4（离线巩固）────────────────────
 
 **理由**：
 
-1. **威胁模型不匹配**：当前 AgentCowork 是个人桌面 Agent 平台，威胁主体是"Agent 被 Prompt Injection 利用"。权限框架 + Shell 分级 + Approval Gate 已构成完整的第一层防御。进程级沙箱是纵深防御的第二层，优先级低于第一层。
+1. **威胁模型不匹配**：当前 ACowork 是个人桌面 Agent 平台，威胁主体是"Agent 被 Prompt Injection 利用"。权限框架 + Shell 分级 + Approval Gate 已构成完整的第一层防御。进程级沙箱是纵深防御的第二层，优先级低于第一层。
 2. **ROI 太低**：S2 占原 Phase 3 的 1/3 工期（5 周 + 64 测试），解决的子进程越权问题在当前场景下极少发生。
 3. **外部依赖负担**：bubblewrap 需要安装/分发策略、CI 需要 user namespace、AppContainer 需要管理员权限。这些在当前阶段不值得承担。
 4. **替代方案可行**：Shell 工具默认不提供（manifest 显式声明才启用）+ ShellRisk 分级 + Approval Gate 已构成足够防线。WASM 工具已有 Wasmtime 沙箱隔离。

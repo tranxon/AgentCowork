@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# package_desktop_linux.sh - Build AgentCowork Desktop package for Linux
+# package_desktop_linux.sh - Build ACowork Desktop package for Linux
 
 set -euo pipefail
 
@@ -19,7 +19,7 @@ if [ "$(uname -s)" != "Linux" ]; then
 fi
 
 echo -e "${CYAN}========================================${NC}"
-echo -e "${CYAN}AgentCowork Desktop Package (Linux)${NC}"
+echo -e "${CYAN}ACowork Desktop Package (Linux)${NC}"
 echo -e "${CYAN}========================================${NC}"
 echo ""
 

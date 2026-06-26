@@ -2,7 +2,7 @@
 
 use clap::Parser;
 
-/// AgentCowork Embedding Runtime — ONNX-based embedding service
+/// ACowork Embedding Runtime — ONNX-based embedding service
 /// with OpenAI-compatible API.
 #[derive(Debug, Parser)]
 #[command(name = "acowork-embed", version, about)]

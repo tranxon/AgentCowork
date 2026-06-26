@@ -6,7 +6,7 @@
 //!
 //! # Unified API
 //!
-//! **All** token counting in AgentCowork MUST go through [`count_text`].
+//! **All** token counting in ACowork MUST go through [`count_text`].
 //! Do NOT use `content.len() / 4` or any other ad-hoc heuristic —
 //! they cause the debug panel and status panel to show contradictory numbers.
 pub mod counter;
@@ -15,7 +15,7 @@ pub mod ratio_store;
 pub use counter::{TokenCounter, estimate_image_tokens};
 pub use ratio_store::ModelRatioStore;
 
-/// The single unified entry point for token counting in AgentCowork.
+/// The single unified entry point for token counting in ACowork.
 ///
 /// Uses model-aware ratio-based counting:
 /// - `tokens = ceil(chars / ratio)` where ratio is calibrated from API feedback

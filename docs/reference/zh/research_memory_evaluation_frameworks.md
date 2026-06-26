@@ -2,14 +2,14 @@
 
 **调研日期**：2026-04-21
 **调研范围**：LongMemEval、LoCoMo-Plus、BEAM
-**用途**：AgentCowork.AI 记忆系统质量评估体系参考
+**用途**：ACowork.AI 记忆系统质量评估体系参考
 
 ---
 
 ## 研究报告：AI Agent 记忆系统评估框架分析
 
 ### 调查目标
-分析三个主要 AI Agent 记忆系统评估框架（LongMemEval、LoCoMo-Plus、BEAM），评估其对 AgentCowork.AI 三层五类记忆架构（瞬态层/经历层/沉淀层，Grafeo 图数据库存储）的适用性，并提出分阶段实现建议。
+分析三个主要 AI Agent 记忆系统评估框架（LongMemEval、LoCoMo-Plus、BEAM），评估其对 ACowork.AI 三层五类记忆架构（瞬态层/经历层/沉淀层，Grafeo 图数据库存储）的适用性，并提出分阶段实现建议。
 
 ---
 
@@ -416,11 +416,11 @@ Token Efficiency Score (TES)
 
 ---
 
-## 第三部分：与 AgentCowork 三层记忆架构的映射关系
+## 第三部分：与 ACowork 三层记忆架构的映射关系
 
 ### 3.1 架构层级映射
 
-**AgentCowork 三层记忆架构：**
+**ACowork 三层记忆架构：**
 ```
 瞬态层（Transient）- 工作记忆
   ├─ LLM 上下文窗口
@@ -443,7 +443,7 @@ Token Efficiency Score (TES)
 
 **三个框架对应层级：**
 
-| AgentCowork 层 | LongMemEval 对应                  | LoCoMo-Plus 对应           | BEAM 对应               |
+| ACowork 层 | LongMemEval 对应                  | LoCoMo-Plus 对应           | BEAM 对应               |
 | -------------- | --------------------------------- | -------------------------- | ----------------------- |
 | 瞬态层         | System Prompt + Context Injection | Working Memory             | Working Memory (LIGHT)  |
 | 经历层         | Chat History (Sessions)           | Dialog Turns (35 sessions) | Episodic Memory (LIGHT) |
@@ -453,31 +453,31 @@ Token Efficiency Score (TES)
 
 ```
 1. Information Extraction (LongMemEval IE)
-   → AgentCowork 经历层 episode 的精确检索
+   → ACowork 经历层 episode 的精确检索
    → 对应：hybrid_search 的字符串精确匹配
    
 2. Multi-Session Reasoning (LongMemEval MR)
-   → AgentCowork 沉淀层的 KnowledgeNode 关联
+   → ACowork 沉淀层的 KnowledgeNode 关联
    → 对应：graph_expand 跨节点推理
    
 3. Temporal Reasoning (LongMemEval TR)
-   → AgentCowork episodic 的时间戳过滤
+   → ACowork episodic 的时间戳过滤
    → 对应：MemoryQuery 中的 time_range 参数
    
 4. Knowledge Updates (LongMemEval KU)
-   → AgentCowork 沉淀层的冲突解决机制
+   → ACowork 沉淀层的冲突解决机制
    → 对应：decay_score 和 confidence 更新
 
 5. Abstention (LongMemEval Abs)
-   → AgentCowork 检索失败时的 fallback
+   → ACowork 检索失败时的 fallback
    → 对应：min_score 阈值和"无匹配"返回
 
 6. Cognitive Memory (LoCoMo-Plus)
-   → AgentCowork ProceduralNode + AutobiographicalNode
+   → ACowork ProceduralNode + AutobiographicalNode
    → 对应：隐式约束的 System Prompt 注入
 
 7. Memory Robustness (BEAM MDS)
-   → AgentCowork decay_score 和 Dormant 状态
+   → ACowork decay_score 和 Dormant 状态
    → 对应：长期不访问的记忆衰减曲线
 ```
 
@@ -485,40 +485,40 @@ Token Efficiency Score (TES)
 
 ### 3.2 直接适用维度（无需改造）
 
-这些维度可直接从框架评估指标复用到 AgentCowork：
+这些维度可直接从框架评估指标复用到 ACowork：
 
 **1. Information Extraction Accuracy（信息提取准确率）**
 - ✅ 直接适用
 - 方式：评估 hybrid_search 的精确召回
-- AgentCowork 测试：向 episode 中精确问题，验证返回正确转折
+- ACowork 测试：向 episode 中精确问题，验证返回正确转折
 - 指标：Turn-Level Recall（转折级别准确率）
 - 计算：`被正确检索的包含答案的转折 / 所有包含答案的转折`
 
 **2. Multi-Session Reasoning（多会话推理）**
 - ✅ 直接适用
 - 方式：评估 graph_expand 的多跳推理
-- AgentCowork 测试：需要组合多个 episode 和 KnowledgeNode 的问题
+- ACowork 测试：需要组合多个 episode 和 KnowledgeNode 的问题
 - 指标：Multi-Session Accuracy
 - 计算：需要正确关联 >=2 个认知层的问题比例
 
 **3. Temporal Reasoning（时间推理）**
-- ✅ 直接适用（AgentCowork 已支持 timestamp）
+- ✅ 直接适用（ACowork 已支持 timestamp）
 - 方式：评估含时间戳的 episode 过滤
-- AgentCowork 测试：事件顺序问题、时间间隔计算
+- ACowork 测试：事件顺序问题、时间间隔计算
 - 指标：Temporal Accuracy
 - 计算：`正确理解时间关系的问题 / 时间类问题总数`
 
 **4. Knowledge Update Handling（知识更新处理）**
 - ✅ 直接适用
 - 方式：评估冲突节点的解决
-- AgentCowork 测试：同一事实多个版本，模型应返回最新
+- ACowork 测试：同一事实多个版本，模型应返回最新
 - 指标：Recency-Aware Accuracy
 - 计算：`识别最新信息的问题 / 有知识更新的问题总数`
 
 **5. Constraint Consistency Score（LoCoMo-Plus）**
 - ⚠️ 部分适用
 - 方式：评估 ProceduralNode 的隐式约束遵守
-- AgentCowork 改造：
+- ACowork 改造：
   - 提取 ProceduralNode 中的 trigger_condition 作为约束
   - 验证模型回应是否遵守这些约束
 - 例子：
@@ -534,7 +534,7 @@ Token Efficiency Score (TES)
 
 **1. Abstention（知道何时不知道）**
 - ⚠️ 需要补充
-- AgentCowork 当前状态：无专门机制区分"找不到"vs"错误回答"
+- ACowork 当前状态：无专门机制区分"找不到"vs"错误回答"
 - 改造方案：
   ```
   在 MemoryQuery 中新增 confidence_threshold 参数
@@ -545,7 +545,7 @@ Token Efficiency Score (TES)
 
 **2. Long-Context Robustness（超长上下文鲁棒性）**
 - ⚠️ 需要新增测试
-- AgentCowork 当前状态：未系统测试在极长对话（1M+ tokens）下的表现
+- ACowork 当前状态：未系统测试在极长对话（1M+ tokens）下的表现
 - 改造方案：
   ```
   Phase 3 实现前置测试：
@@ -557,7 +557,7 @@ Token Efficiency Score (TES)
 
 **3. Artifact-Aware Retrieval（工件感知检索）**
 - ❌ 三个框架都未覆盖
-- AgentCowork 特有：episode 中含 artifact_refs，需要评估模型是否正确利用
+- ACowork 特有：episode 中含 artifact_refs，需要评估模型是否正确利用
 - 新增指标：
   ```
   Artifact Recall Accuracy
@@ -572,7 +572,7 @@ Token Efficiency Score (TES)
 
 **4. Episodic-Semantic Bridge（经历-沉淀跨层检索）**
 - ⚠️ LoCoMo-Plus 部分涉及
-- AgentCowork 特有需求：评估 source_episode 反向查询的有效性
+- ACowork 特有需求：评估 source_episode 反向查询的有效性
 - 新增指标：
   ```
   Cross-Layer Retrieval Effectiveness
@@ -595,7 +595,7 @@ Token Efficiency Score (TES)
 | **LoCoMo-Plus** | ⚠️ 70%      | ✅      | ❌    | -           | evaluation_framework.py                     |
 | **BEAM**        | ✅ 100%     | ✅      | ❌    | Julia(可选) | benchmark_generation.py, light_framework.py |
 
-### 4.2 对 AgentCowork 的启示
+### 4.2 对 ACowork 的启示
 
 **关键发现：**
 1. **所有三个框架都是 Python 实现**，无 Rust 版本
@@ -603,7 +603,7 @@ Token Efficiency Score (TES)
 3. **BEAM 代码最完整**，含完整生成和评估管道
 4. **LoCoMo-Plus 最新**，但部分代码未开源
 
-**AgentCowork 的 Rust 优势：**
+**ACowork 的 Rust 优势：**
 - Grafeo（Rust 图数据库）可深度集成评估框架
 - 可实现零成本抽象的性能评估工具
 - 与 runtime/gateway 的紧密集成
@@ -624,12 +624,12 @@ Phase 2 - 评估基础设施
 
 ---
 
-## 第五部分：三个框架对 AgentCowork 的详细适用性分析
+## 第五部分：三个框架对 ACowork 的详细适用性分析
 
 ### 5.1 LongMemEval 适用性评估
 
 **优势：**
-- ✅ 五个维度完全覆盖 AgentCowork 三层记忆的基础功能
+- ✅ 五个维度完全覆盖 ACowork 三层记忆的基础功能
 - ✅ 500 个精心标注的问题，质量最高
 - ✅ 属性受控的数据生成管道，易于扩展
 - ✅ 完整开源，可直接复用代码
@@ -638,7 +638,7 @@ Phase 2 - 评估基础设施
 **劣势：**
 - ❌ 对话长度有限（最长 500 sessions），不适合超长测试
 - ❌ 未涵盖隐式推理（LoCoMo-Plus 的认知记忆）
-- ❌ 未测试工件感知检索（AgentCowork artifact_refs）
+- ❌ 未测试工件感知检索（ACowork artifact_refs）
 - ❌ 无衰减曲线分析（长期遗忘评估不足）
 
 **适用场景：**
@@ -666,15 +666,15 @@ Phase 2 - 评估基础设施
 
 **优势：**
 - ✅ 认知记忆评估最符合 ProceduralNode + 隐式推理需求
-- ✅ 约束一致性评分方法新颖，适合 AgentCowork 的隐式学习
-- ✅ 识别了长度偏差问题，AgentCowork 应警惕
+- ✅ 约束一致性评分方法新颖，适合 ACowork 的隐式学习
+- ✅ 识别了长度偏差问题，ACowork 应警惕
 - ✅ LLM-as-Judge 框架灵活，可自定义评估标准
 
 **劣势：**
 - ❌ 核心代码部分未开源，复现困难
 - ❌ 继承自原 LoCoMo 的 9K tokens 限制，不适合超长测试
 - ❌ 数据集和评估脚本有待补充完善
-- ❌ Cue-Trigger 不匹配的设计偏离 AgentCowork 常规对话场景
+- ❌ Cue-Trigger 不匹配的设计偏离 ACowork 常规对话场景
 
 **适用场景：**
 ```
@@ -699,16 +699,16 @@ Phase 2 - 评估基础设施
 
 **优势：**
 - ✅ 最大对话长度（10M tokens），完全满足超长测试需求
-- ✅ 10 个细粒度能力维度，覆盖 AgentCowork 的大部分检索场景
+- ✅ 10 个细粒度能力维度，覆盖 ACowork 的大部分检索场景
 - ✅ 性能衰减曲线分析方法完整，适合评估 decay_score 有效性
-- ✅ LIGHT 框架与 AgentCowork 三层架构天然对齐
+- ✅ LIGHT 框架与 ACowork 三层架构天然对齐
 - ✅ 代码和数据完整开源，可直接复用
 
 **劣势：**
 - ❌ 数据集规模仅 100 个对话（较小），但问题数 2000 个（足够）
 - ❌ 对话合成方法复杂，自定义难度高
 - ❌ 未专门测试工件检索（artifact-aware）
-- ❌ LIGHT 框架的 Scratchpad 部分与 AgentCowork ProceduralNode 设计有差异
+- ❌ LIGHT 框架的 Scratchpad 部分与 ACowork ProceduralNode 设计有差异
 
 **适用场景：**
 ```
@@ -734,7 +734,7 @@ Phase 2 - 评估基础设施
 
 ## 第六部分：综合建议与分阶段实现路线
 
-### 6.1 AgentCowork 应该借鉴的评估维度
+### 6.1 ACowork 应该借鉴的评估维度
 
 **从 LongMemEval 借鉴（Phase 1-2）：**
 1. **Information Extraction（IE）**：基础检索准确率
@@ -787,13 +787,13 @@ Phase 2 - 评估基础设施
 | --------------- | ------ | ------------------------------------------- | ---------------- |
 | **LongMemEval** | ⭐⭐⭐⭐⭐  | 质量最高，维度最全，开源完整                | 直接使用或改编   |
 | **LoCoMo**      | ⭐⭐⭐    | 数据质量好，但长度有限；约束相关部分有价值  | 部分复用约束设计 |
-| **BEAM**        | ⭐⭐⭐⭐   | 超长对话测试必需；与 AgentCowork 架构对齐好 | 直接使用或扩展   |
+| **BEAM**        | ⭐⭐⭐⭐   | 超长对话测试必需；与 ACowork 架构对齐好 | 直接使用或扩展   |
 
 **具体复用方案：**
 ```
 Phase 1 评估数据集
 ├─ 基础数据：LongMemEval-S（~115K tokens）
-├─ 扩展：创建 AgentCowork 特有的工件检索测试集
+├─ 扩展：创建 ACowork 特有的工件检索测试集
 └─ 规模：500-1000 个问题
 
 Phase 2 评估数据集
@@ -898,7 +898,7 @@ Phase 2 验收标准（综合准确率）：
    - 目标：基准 0.05+（每 20 tokens 获得 1% 准确率提升）
 
 5. Episodic-Semantic Bridge Quality（新增）
-   - 工作量：高（AgentCowork 特有）
+   - 工作量：高（ACowork 特有）
    - 实现：source_episode 反向查询的有效性
    - 目标：基准 70%+（跨层检索的完成度）
 
@@ -925,7 +925,7 @@ Phase 3 验收标准：
 # Python 评估框架框架（Phase 2 开始实现）
 
 class AgentCoworkEvaluator:
-    """AgentCowork 三层记忆的通用评估器"""
+    """ACowork 三层记忆的通用评估器"""
     
     def turn_level_recall(self, predicted_turns, gold_turns):
         """转折级召回率（LongMemEval）"""
@@ -972,7 +972,7 @@ class AgentCoworkEvaluator:
 
 def generate_acowork_benchmark(phase, num_questions=500):
     """
-    生成 AgentCowork 特定的评估基准
+    生成 ACowork 特定的评估基准
     
     phase: 1 | 2 | 3（对应 Phase 1 | Phase 2 | Phase 3）
     """
@@ -1019,11 +1019,11 @@ def generate_acowork_benchmark(phase, num_questions=500):
 | 直接复用数据集       | **LongMemEval** | 质量最高，500 个问题足够 |
 | 采用的衰减评估方法   | **BEAM MDS**    | 更接近实际应用需求       |
 
-### 8.2 AgentCowork 的评估框架架构
+### 8.2 ACowork 的评估框架架构
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│ AgentCowork Evaluation Framework (Phase 2+)            │
+│ ACowork Evaluation Framework (Phase 2+)            │
 ├─────────────────────────────────────────────────────┤
 │                                                      │
 │ ┌─ Phase 1 评估（LongMemEval 框架）─────────┐      │
@@ -1038,7 +1038,7 @@ def generate_acowork_benchmark(phase, num_questions=500):
 │ │ ├─ CCS: Constraint Consistency Score        │    │
 │ │ ├─ ProceduralNode 隐式学习                  │    │
 │ │ ├─ AutobiographicalNode 推断准确率          │    │
-│ │ └─ 工件检索准确率（AgentCowork 特有）          │    │
+│ │ └─ 工件检索准确率（ACowork 特有）          │    │
 │ └──────────────────────────────────────────────┘    │
 │                                                      │
 │ ┌─ Phase 3 扩展（BEAM 框架）─────────────────┐     │
@@ -1106,13 +1106,13 @@ Week 11-12: 性能基准建立和优化
 
 3. **数据泄露（Data Contamination）**
    - 问题：LLM 可能在预训练中见过评估数据
-   - 解决：创建 AgentCowork 特定的新数据集，不依赖公开基准
+   - 解决：创建 ACowork 特定的新数据集，不依赖公开基准
 
 4. **评估成本（Evaluation Cost）**
    - LongMemEval：每个问题需要 1 次 LLM 调用（GPT-4o），成本高
    - 解决：建立本地 LLM 评估器或混合评估策略
 
-### 9.2 AgentCowork 特有的评估需求
+### 9.2 ACowork 特有的评估需求
 
 1. **Grafeo 查询性能评估**
    - 指标：查询延迟、内存占用、索引效率
@@ -1136,9 +1136,9 @@ Week 11-12: 性能基准建立和优化
 
 ### 综合建议
 
-**三个框架的核心价值与 AgentCowork 映射**
+**三个框架的核心价值与 ACowork 映射**
 
-| 框架                        | 核心价值                                                                              | 与 AgentCowork 的映射                                                 |
+| 框架                        | 核心价值                                                                              | 与 ACowork 的映射                                                 |
 | --------------------------- | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
 | **LongMemEval** (ICLR 2025) | 5 维能力评估：信息提取(IE)、跨会话推理(MR)、时序推理(TR)、知识更新(KU)、拒绝回答(Abs) | KU 直接对应冲突处理，Abs 对应"不知道就说不知道"                       |
 | **LoCoMo-Plus**             | 约束一致性评分(CCS)——评估隐式偏好推断准确率                                           | 直接对应 Preference 和 ProceduralNode 的提取质量                      |
@@ -1151,7 +1151,7 @@ Week 11-12: 性能基准建立和优化
 ```
 Phase 2 评估体系：
 
-1. 借鉴 LongMemEval 5 维能力定义，作为 AgentCowork 记忆系统的评估标准
+1. 借鉴 LongMemEval 5 维能力定义，作为 ACowork 记忆系统的评估标准
    - IE（信息提取）→ memory_store 是否正确捕获用户陈述
    - MR（跨会话推理）→ 跨 episode 的检索关联能力
    - TR（时序推理）→ 时间相关记忆的正确排序
@@ -1175,7 +1175,7 @@ Phase 2 评估体系：
 Phase 3 扩展：
 
 1. 复用 BEAM 的多长度评测数据，验证记忆随对话长度的衰减曲线
-   - 用 BEAM 的 100K/500K/1M 数据跑 AgentCowork 的检索管线
+   - 用 BEAM 的 100K/500K/1M 数据跑 ACowork 的检索管线
    - 绘制 Accuracy@Length 曲线
    - 与 BEAM 论文中的基线对比
 
