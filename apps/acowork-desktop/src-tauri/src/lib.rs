@@ -235,6 +235,32 @@ pub fn run() {
                 let _ = main_window.set_effects(effects);
             }
 
+            // ── Windows acrylic blur ──────────────────────────────────────
+            // Apply DWM Acrylic so the desktop shows through the transparent
+            // window with a native blur.  Without this the WebView2 has
+            // nothing for CSS `backdrop-filter` to blur on Windows — the
+            // browser's stacking context ends at the transparent body and
+            // there is no rendered content behind the root element to blur.
+            //
+            // Acrylic requires Windows 10+; on older Windows Tauri logs the
+            // error and the window falls back to a plain transparent surface.
+            // `radius` is ignored for Acrylic (system-controlled) but kept
+            // for parity with the pre-c8f031a frontend `setEffects` call.
+            #[cfg(target_os = "windows")]
+            {
+                use tauri::utils::config::WindowEffectsConfig;
+                use tauri::window::EffectState;
+
+                let main_window = app.get_webview_window("main").expect("no main window");
+                let effects = WindowEffectsConfig {
+                    effects: vec![tauri::window::Effect::Acrylic],
+                    state: Some(EffectState::Active),
+                    radius: Some(12),
+                    color: None,
+                };
+                let _ = main_window.set_effects(effects);
+            }
+
             // ── Disable native decorations on non-macOS ─────────────────
             // On Windows/Linux, titleBarStyle:"Overlay" is ignored but
             // decorations:true from tauri.conf.json still renders a native

@@ -114,8 +114,42 @@ fn main() {
         }
     }
 
-    // 6. Re-run if the profile changes (so switching between debug/release re-copies).
-    println!("cargo:rerun-if-env-changed=PROFILE");
+    // 6. Re-run the build script when ANY file that build.rs copies changes.
+    //
+    // The `beforeBuildCommand` / `beforeDevCommand` in tauri.conf.json
+    // compiles workspace binaries into `target/{profile}/` before `cargo
+    // build` runs. Without these directives, Cargo caches the build script
+    // when only copied files change (not the Tauri app source), and `bin/`
+    // retains stale copies → the installer bundles old binaries.
+    //
+    // Binaries (updated by core:build commands).
+    for &name in BINARIES {
+        let path = target_dir.join(format!("{name}{exe_ext}"));
+        println!("cargo:rerun-if-changed={}", path.display());
+    }
+    // ONNX runtime (platform-specific).
+    if cfg!(windows) {
+        println!("cargo:rerun-if-changed={}", target_dir.join("onnxruntime.dll").display());
+    } else if cfg!(target_os = "macos") {
+        println!("cargo:rerun-if-changed={}", target_dir.join("libonnxruntime.dylib").display());
+    } else {
+        println!("cargo:rerun-if-changed={}", target_dir.join("libonnxruntime.so").display());
+    }
+    // LSP config file.
+    let lsp_config_path = workspace_root.join("assets").join("lsp_servers.json");
+    println!("cargo:rerun-if-changed={}", lsp_config_path.display());
+    // LSP install scripts (each file individually).
+    let lsp_install_src = workspace_root.join("assets").join("lsp_install");
+    if lsp_install_src.exists() {
+        if let Ok(entries) = std::fs::read_dir(&lsp_install_src) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    println!("cargo:rerun-if-changed={}", path.display());
+                }
+            }
+        }
+    }
 
     // 7. Invoke Tauri build (processes tauri.conf.json).
     tauri_build::build()
