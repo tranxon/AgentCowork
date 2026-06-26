@@ -143,8 +143,8 @@ export const FileTreeNode = memo(function FileTreeNode({
       confirmed = await ask(`Delete ${label}?\n\nThis action cannot be undone.`, {
         title: "Confirm Delete",
         kind: "warning",
-        okLabel: "Delete",
-        cancelLabel: "Cancel",
+        okLabel: t("fileTree.deleteConfirmOk"),
+        cancelLabel: t("fileTree.deleteConfirmCancel"),
       });
     } catch {
       // Fallback for non-Tauri environments (e.g. browser dev)

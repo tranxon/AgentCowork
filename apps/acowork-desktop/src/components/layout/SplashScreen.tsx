@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { useSettingsStore } from "../../stores/settingsStore";
 import { getGatewayUrl } from "../../lib/config";
+import { useTranslation } from "../../i18n/useTranslation";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 import pkg from "../../../package.json";
 import brandMark from "../../../../../assets/brand-mark.svg";
@@ -76,6 +77,7 @@ function LoadingDots({ className = "" }: { className?: string }) {
 }
 
 export function SplashScreen({ onReady }: SplashScreenProps) {
+    const { t } = useTranslation();
     const checkHealth = useGatewayStore((s) => s.checkHealth);
     const startLocalGateway = useGatewayStore((s) => s.startLocalGateway);
     const gatewayMode = useSettingsStore((s) => s.gatewayMode);
@@ -117,7 +119,7 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
         if (!mountedRef.current) return;
         const elapsed = Date.now() - startTimeRef.current;
         const remaining = Math.max(0, MIN_SPLASH_MS - elapsed);
-        setStatusText("Ready");
+        setStatusText(t("splashScreen.ready"));
         setTimeout(() => {
             if (mountedRef.current) onReady();
         }, remaining);
@@ -238,7 +240,7 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
                 {/* Title — Acowork brand mark (shared SVG with README) */}
                 <div className="flex flex-col items-center gap-5">
                     <h1 className="leading-none">
-                        <img src={brandMark} alt="Acowork" width="360" />
+                        <img src={brandMark} alt={t("splashScreen.altLogo")} width="360" />
                     </h1>
                     <p className="text-sm font-medium uppercase tracking-[0.25em] text-zinc-400 dark:text-zinc-500">
                         Collaborate with your AI colleagues
@@ -263,7 +265,7 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
                                 disabled={retrying}
                                 className="mt-2 rounded-md bg-zinc-200 px-5 py-2 text-sm font-medium text-zinc-700 transition-colors hover:bg-zinc-300 disabled:opacity-40 dark:bg-zinc-700 dark:text-zinc-200 dark:hover:bg-zinc-600"
                             >
-                                {retrying ? "Retrying..." : "Retry Connection"}
+                                {retrying ? t("splashScreen.retrying") : t("splashScreen.retryConnection")}
                             </button>
                         </>
                     ) : (

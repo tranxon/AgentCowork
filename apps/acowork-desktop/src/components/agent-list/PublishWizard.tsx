@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { cn } from "../../lib/utils";
+import { useTranslation } from "../../i18n/useTranslation";
 import type {
   PreparePublishResponse,
   BuildPublishResponse,
@@ -34,14 +35,6 @@ interface PublishWizardProps {
 
 type WizardStep = "check" | "clean" | "build" | "sign" | "distribute";
 
-const STEPS: { key: WizardStep; label: string; icon: React.ElementType }[] = [
-  { key: "check", label: "Check", icon: CheckCircle },
-  { key: "clean", label: "Clean", icon: Brush },
-  { key: "build", label: "Package", icon: Package },
-  { key: "sign", label: "Sign", icon: Key },
-  { key: "distribute", label: "Distribute", icon: FileDown },
-];
-
 /**
  * Source of the avatar that will be baked into the published package.
  * Persisted to manifest.toml at build time.
@@ -64,6 +57,14 @@ export function PublishWizard({
   agentName,
   onClose,
 }: PublishWizardProps) {
+  const { t } = useTranslation();
+  const STEPS: { key: WizardStep; label: string; icon: React.ElementType }[] = [
+    { key: "check", label: t("publishWizard.stepCheck"), icon: CheckCircle },
+    { key: "clean", label: t("publishWizard.stepClean"), icon: Brush },
+    { key: "build", label: t("publishWizard.stepPackage"), icon: Package },
+    { key: "sign", label: t("publishWizard.stepSign"), icon: Key },
+    { key: "distribute", label: t("publishWizard.stepDistribute"), icon: FileDown },
+  ];
   const [step, setStep] = useState<WizardStep>("check");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -441,7 +442,7 @@ export function PublishWizard({
                 )}
               >
                 <p>
-                  Status: {signResult.signed ? "Signed ✓" : "Unsigned"}
+                  Status: {signResult.signed ? t("publishWizard.statusSigned") : t("publishWizard.statusUnsigned")}
                 </p>
                 <p>
                   <span className="font-mono">{signResult.output_path}</span>
@@ -504,7 +505,7 @@ export function PublishWizard({
             disabled={busy}
             className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
-            {step === "distribute" ? "Close" : "Cancel"}
+            {step === "distribute" ? t("publishWizard.buttonClose") : t("common.cancel")}
           </button>
 
           {currentAction && (
@@ -557,6 +558,7 @@ function AvatarPickerSubForm({
   onChange: (next: AvatarSelection) => void;
   disabled: boolean;
 }) {
+  const { t } = useTranslation();
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pickerError, setPickerError] = useState<string | null>(null);
 
@@ -701,7 +703,7 @@ function AvatarPickerSubForm({
               onClick={handleClearPackaged}
               disabled={disabled}
               className="rounded-md px-2 py-1 text-[10px] text-zinc-500 hover:bg-zinc-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-zinc-700"
-              aria-label="Remove packaged avatar"
+              aria-label={t("publishWizard.ariaLabelRemoveAvatar")}
             >
               <XIcon className="h-3.5 w-3.5" />
             </button>

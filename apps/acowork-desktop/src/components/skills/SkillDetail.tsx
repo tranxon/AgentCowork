@@ -1,5 +1,6 @@
 import type { SkillDetailResponse } from "../../lib/types";
 import { Loader2, ArrowLeft } from "lucide-react";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface SkillDetailProps {
   detail: SkillDetailResponse | null;
@@ -8,6 +9,7 @@ interface SkillDetailProps {
 }
 
 export function SkillDetail({ detail, loading, onBack }: SkillDetailProps) {
+  const { t } = useTranslation();
   if (loading) {
     return (
       <div className="flex h-full flex-col overflow-hidden">
@@ -16,7 +18,7 @@ export function SkillDetail({ detail, loading, onBack }: SkillDetailProps) {
             <button
               onClick={onBack}
               className="inline-flex items-center gap-1.5 rounded p-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              aria-label="Back to list"
+              aria-label={t("common.backToList")}
             >
               <ArrowLeft className="h-4 w-4" />
               Back to List
@@ -38,7 +40,7 @@ export function SkillDetail({ detail, loading, onBack }: SkillDetailProps) {
             <button
               onClick={onBack}
               className="inline-flex items-center gap-1.5 rounded p-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-              aria-label="Back to list"
+              aria-label={t("common.backToList")}
             >
               <ArrowLeft className="h-4 w-4" />
               Back to List
@@ -64,7 +66,7 @@ export function SkillDetail({ detail, loading, onBack }: SkillDetailProps) {
           <button
             onClick={onBack}
             className="inline-flex items-center gap-1.5 rounded p-1 text-xs text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-            aria-label="Back to list"
+            aria-label={t("common.backToList")}
           >
             <ArrowLeft className="h-4 w-4" />
             Back to List

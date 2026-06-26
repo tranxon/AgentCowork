@@ -169,7 +169,7 @@ export function ModelsPage() {
     <div className="flex flex-1 flex-col bg-white dark:bg-zinc-900">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-        <h1 className="text-xl font-semibold">Models</h1>
+        <h1 className="text-xl font-semibold">{t("modelsPage.title")}</h1>
         <button
           onClick={() => setShowAddDialog(true)}
           className="inline-flex items-center gap-1.5 rounded btn-solid px-3 py-1.5 text-xs font-medium"
@@ -266,7 +266,7 @@ export function ModelsPage() {
             <h3 className="mb-4 text-sm font-semibold">Add API Key</h3>
             <div className="space-y-3">
               <div>
-                <label className="mb-1 block text-xs text-zinc-500">Provider</label>
+                <label className="mb-1 block text-xs text-zinc-500">{t("modelsPage.labelProvider")}</label>
                 <select
                   value={newProvider}
                   onChange={(e) => handleAddProviderChange(e.target.value)}

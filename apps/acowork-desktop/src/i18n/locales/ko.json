@@ -9,7 +9,8 @@
         "projects": "Projects",
         "docs": "Docs",
         "harness": "Harness",
-        "settings": "Settings"
+        "settings": "Settings",
+        "ariaLabelMainNavigation": "기본 탐색"
     },
     "common": {
         "me": "나",
@@ -17,7 +18,12 @@
         "delete": "삭제",
         "confirm": "확인",
         "retry": "재시도",
-        "refresh": "새로고침"
+        "refresh": "새로고침",
+        "ariaLabelDismiss": "닫기",
+        "loading": "로딩 중...",
+        "remove": "제거",
+        "back": "뒤로",
+        "backToList": "목록으로 돌아가기"
     },
     "time": {
         "justNow": "방금",
@@ -53,7 +59,23 @@
         "inputParams": "매개변수 입력...（Enter로 전송, Shift+Enter로 줄바꿈）",
         "inputParamsConnecting": "매개변수 입력...（Agent에 연결 중...）",
         "selectReasoningEffort": "思考深度",
-        "llmNotConfigured": "LLM 공급자가 설정되지 않았습니다. Harness → Providers에서 API 키를 추가하세요."
+        "llmNotConfigured": "LLM 공급자가 설정되지 않았습니다. Harness → Providers에서 API 키를 추가하세요.",
+        "thinking": "생각 중...",
+        "working": "처리 중...",
+        "compacting": "컨텍스트 압축 중...",
+        "inputMessage": "메시지 입력...（Enter로 전송, Shift+Enter로 줄바꿈）",
+        "inputMessageConnecting": "메시지 입력...（Agent에 연결 중...）",
+        "inputGatewayDisconnected": "Gateway 미연결",
+        "ariaLabelChatMessages": "채팅 메시지",
+        "ariaLabelScrollToBottom": "맨 아래로 스크롤",
+        "ariaLabelClearActiveSkill": "활성 스킬 지우기",
+        "modelFallback": "모델",
+        "reasoningAuto": "자동",
+        "reasoningOff": "끄기",
+        "reasoningLow": "낮음",
+        "reasoningMedium": "중간",
+        "reasoningHigh": "높음",
+        "addModel": "모델 추가"
     },
     "sessionTabBar": {
         "llmReasoning": "LLM 추론 중",
@@ -63,7 +85,12 @@
         "closeTab": "Close tab",
         "newConversation": "New conversation",
         "sessionHistory": "Session history",
-        "deleteSession": "Delete session"
+        "deleteSession": "Delete session",
+        "sidebarShowing": "{{start}}–{{end}} / 총 {{total}}개 표시",
+        "sidebarNoSessions": "세션 없음",
+        "sidebarSearchPlaceholder": "세션 검색...",
+        "sidebarNoSessionsYet": "아직 세션이 없습니다",
+        "untitled": "제목 없음"
     },
     "contextUsage": {
         "ariaLabel": "컨텍스트 사용량",
@@ -74,13 +101,55 @@
     "agentList": {
         "searchPlaceholder": "Agent 검색...",
         "stopConfirm": "{{agent}}을(를) 중지하시겠습니까？현재 대화 상태는 보존됩니다。",
-        "uninstallConfirm": "{{agent}}을(를) 제거하시겠습니까？이 작업은 취소할 수 없습니다。"
+        "uninstallConfirm": "{{agent}}을(를) 제거하시겠습니까？이 작업은 취소할 수 없습니다。",
+        "confirmStop": "중지",
+        "confirmUninstall": "제거",
+        "ariaLabelAgentList": "Agent 목록",
+        "ariaLabelAddAgent": "Agent 추가",
+        "contextStart": "시작",
+        "contextStartInDebug": "디버그 시작",
+        "contextStop": "중지",
+        "contextRestartInDebug": "디버그 재시작",
+        "contextDetails": "세부 정보",
+        "contextClone": "복제",
+        "contextPublish": "게시",
+        "contextUninstall": "제거",
+        "createAgent": "Agent 생성",
+        "installAgent": "Agent 설치",
+        "filterAgentPackage": "Agent 패키지",
+        "agentStarted": "Agent가 시작되었습니다",
+        "agentStartedDebug": "Agent가 디버그 모드로 시작되었습니다",
+        "agentInstalled": "Agent가 설치되었습니다",
+        "agentStopped": "Agent가 중지되었습니다",
+        "agentUninstalled": "Agent가 제거되었습니다",
+        "agentCloned": "Agent가 복제되었습니다: {{agentId}}",
+        "agentCreated": "Agent가 생성되었습니다: {{agentId}}",
+        "systemAgentCannotUninstall": "시스템 Agent는 제거할 수 없습니다",
+        "titleStopAgent": "Agent 중지",
+        "titleUninstallAgent": "Agent 제거",
+        "noAgentsInstalled": "설치된 Agent가 없습니다",
+        "noMatchingAgents": "일치하는 Agent가 없습니다",
+        "errorFailedToInstallAgent": "Agent 설치 실패: {{error}}",
+        "errorFailedToStartAgent": "Agent 시작 실패: {{error}}",
+        "errorFailedToStartDebugAgent": "디버그 Agent 시작 실패: {{error}}",
+        "errorFailedToRestartInDebug": "디버그 재시작 실패: {{error}}",
+        "errorFailedToStopAgent": "Agent 중지 실패: {{error}}",
+        "errorFailedToUninstallAgent": "Agent 제거 실패: {{error}}"
     },
     "cloneDialog": {
         "skeleton": "스켈레톤",
         "skeletonDesc": "매니페스트, 프롬프트, 설정, 도구, 리소스만 복사。개발 모드에서 스켈레톤부터 커스터마이징을 시작하세요。",
         "full": "전체",
-        "fullDesc": "스킬, 데이터, 대화, 메모리를 포함한 모든 것을 복사。디버깅 및 상세 커스터마이징에 적합합니다。"
+        "fullDesc": "스킬, 데이터, 대화, 메모리를 포함한 모든 것을 복사。디버깅 및 상세 커스터마이징에 적합합니다。",
+        "title": "Agent 복제",
+        "cloningFrom": "복제 대상:",
+        "newAgentIdLabel": "새 Agent ID",
+        "newAgentIdPlaceholder": "com.example.myagent",
+        "cloneModeLabel": "복제 모드",
+        "errorEmptyId": "새 Agent ID를 입력하세요",
+        "errorSameAsSource": "새 Agent ID는 원본과 달라야 합니다",
+        "cloning": "복제 중...",
+        "clone": "복제"
     },
     "settings": {
         "tabProfile": "내 프로필",
@@ -390,7 +459,20 @@
         "stopped": "중지됨",
         "agent": "Agent",
         "version": "버전",
-        "noAgentSelected": "Agent가 선택되지 않음"
+        "noAgentSelected": "Agent가 선택되지 않음",
+        "buttonStep": "단계 (F10)",
+        "buttonStop": "중지",
+        "buttonRestart": "다시 시작",
+        "buttonReExecute": "패치로 다시 실행",
+        "labelModel": "모델",
+        "labelProvider": "공급자",
+        "labelCharactersPerToken": "글자/토큰",
+        "labelThinkingLevel": "사고 깊이",
+        "labelTemperature": "온도",
+        "statePaused": "일시정지됨",
+        "stateStepping": "단계 진행 중",
+        "stateIdle": "유휴",
+        "stateStopped": "중지됨"
     },
     "workspace": {
         "delete": "삭제",
@@ -421,7 +503,16 @@
             "copy": "복사",
             "paste": "붙여넣기",
             "delete": "삭제"
-        }
+        },
+        "ariaLabelClearSearch": "검색 지우기",
+        "removeWorkspaceTitle": "작업 영역 제거",
+        "buttonRemove": "제거",
+        "defaultWorkspaceName": "작업 영역",
+        "buttonBrowse": "찾아보기",
+        "loading": "로딩 중...",
+        "defaultWorkingDirectory": "기본 작업 디렉터리",
+        "noMatchingWorkspaces": "일치하는 작업 영역이 없습니다",
+        "noWorkspacesConfigured": "구성된 작업 영역이 없습니다"
     },
     "fileEditor": {
         "emptyState": "워크스페이스 트리에서 파일을 더블클릭하여 열기",
@@ -513,10 +604,22 @@
         "totalNodes": "총 노드 수",
         "active": "활성",
         "dormant": "휴면",
-        "health": "건강도"
+        "health": "건강도",
+        "typeKnowledge": "지식",
+        "typeEpisodic": "에피소드",
+        "typeProcedural": "절차",
+        "typeAutobiographical": "자서전"
     },
     "skillsPanel": {
-        "selectSkill": "기술 선택"
+        "selectSkill": "기술 선택",
+        "title": "스킬",
+        "skillsLabel_one": "{{count}}개 스킬",
+        "skillsLabel_other": "{{count}}개 스킬",
+        "loading": "로딩 중...",
+        "importing": "가져오는 중...",
+        "buttonImport": "가져오기",
+        "searchPlaceholder": "스킬 검색...",
+        "buttonImportSkills": "스킬 가져오기"
     },
     "statusBar": {
         "agent": "agent",
@@ -526,6 +629,119 @@
     "debugPanel": {
         "editSection": "Edit section",
         "copyContent": "Copy content",
-        "rewindToIteration": "Rewind to iteration {{iteration}}"
+        "rewindToIteration": "Rewind to iteration {{iteration}}",
+        "title": "디버그",
+        "buttonStep": "단계 (F10)",
+        "buttonStop": "중지",
+        "buttonRestart": "다시 시작",
+        "buttonReExecute": "패치로 다시 실행",
+        "labelIteration": "반복",
+        "labelPhase": "단계",
+        "labelTokens": "토큰",
+        "labelState": "상태",
+        "environment": "환경"
+    },
+    "exploreBlock": {
+        "exploring": "탐색 중...",
+        "explored": "탐색됨",
+        "step_one": "{{count}} 단계",
+        "step_other": "{{count}} 단계"
+    },
+    "thinkBlock": {
+        "thinking": "생각 중",
+        "thought": "심층 사고"
+    },
+    "askQuestionCard": {
+        "other": "기타",
+        "placeholder": "답변을 입력하세요...",
+        "submit": "제출",
+        "submitted": "제출됨"
+    },
+    "debugPausedBanner": {
+        "resume": "계속",
+        "step": "단계",
+        "statePaused": "일시정지됨",
+        "stateStepping": "단계 진행 중"
+    },
+    "compactionCard": {
+        "title": "컨텍스트 요약",
+        "empty": "（빈 요약）",
+        "model": "모델: {{model}}",
+        "keepLastRounds": "최근 {{count}} 라운드 유지",
+        "tokens": "tokens: {{before}} → {{after}}"
+    },
+    "codeBlock": {
+        "ariaLabelCopy": "코드 복사"
+    },
+    "createWizard": {
+        "stepBasic": "기본",
+        "stepLLM": "LLM",
+        "stepTemplate": "템플릿",
+        "stepPreview": "미리보기",
+        "templateBlank": "빈",
+        "templateAssistant": "어시스턴트",
+        "buttonCreateAgent": "Agent 만들기",
+        "buttonNext": "다음",
+        "buttonBack": "뒤로",
+        "placeholderAgentName": "내 Agent",
+        "placeholderYourName": "당신의 이름",
+        "placeholderDescribe": "이 Agent의 기능 설명...",
+        "templateLocal": "로컬 LLM"
+    },
+    "publishWizard": {
+        "stepCheck": "검사",
+        "stepClean": "정리",
+        "stepPackage": "패키지",
+        "stepSign": "서명",
+        "stepDistribute": "배포",
+        "statusSigned": "서명됨 ✓",
+        "statusUnsigned": "서명 안 됨",
+        "buttonClose": "닫기",
+        "ariaLabelRemoveAvatar": "패키지된 아바타 제거"
+    },
+    "splashScreen": {
+        "ready": "준비됨",
+        "retrying": "재시도 중...",
+        "retryConnection": "연결 재시도",
+        "altLogo": "Acowork"
+    },
+    "appLayout": {
+        "ariaLabelResizeSidebar": "사이드바 크기 조정",
+        "ariaLabelResizeFileEditor": "파일 편집기 크기 조정"
+    },
+    "fileTree": {
+        "deleteConfirmOk": "삭제",
+        "deleteConfirmCancel": "취소"
+    },
+    "memoryNodeDetail": {
+        "ariaLabelBackToList": "목록으로 돌아가기",
+        "content": "내용",
+        "labelStatus": "상태",
+        "labelConfidence": "신뢰도",
+        "labelAccessCount": "접근 횟수",
+        "labelCreated": "생성 시간",
+        "labelLastAccessed": "마지막 접근",
+        "statusStable": "안정",
+        "statusDecaying": "쇠퇴 중",
+        "statusCritical": "중요"
+    },
+    "modelsPage": {
+        "title": "모델",
+        "labelProvider": "공급자"
+    },
+    "agentDetailDialog": {
+        "ariaLabelClose": "닫기",
+        "labelName": "이름",
+        "labelAgentId": "Agent ID",
+        "labelVersion": "버전",
+        "labelAuthor": "작성자",
+        "labelDescription": "설명",
+        "labelStatus": "상태",
+        "labelPid": "PID",
+        "labelStartedAt": "시작 시간",
+        "labelInstallPath": "설치 경로",
+        "labelCurrentModel": "현재 모델",
+        "statusRunning": "실행 중",
+        "statusStopped": "중지됨"
     }
 }

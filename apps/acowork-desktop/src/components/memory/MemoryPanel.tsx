@@ -114,10 +114,10 @@ export function MemoryPanel() {
             }}
           >
             <option value="All">{t("memoryPanel.allTypes")}</option>
-            <option value="Knowledge">Knowledge</option>
-            <option value="Episodic">Episodic</option>
-            <option value="Procedural">Procedural</option>
-            <option value="Autobiographical">Autobiographical</option>
+            <option value="Knowledge">{t("memoryPanel.typeKnowledge")}</option>
+            <option value="Episodic">{t("memoryPanel.typeEpisodic")}</option>
+            <option value="Procedural">{t("memoryPanel.typeProcedural")}</option>
+            <option value="Autobiographical">{t("memoryPanel.typeAutobiographical")}</option>
           </select>
           <select
             value={filters.timeRange}

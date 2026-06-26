@@ -11,6 +11,7 @@ import {
   Globe,
 } from "lucide-react";
 import { StyledInput, StyledTextarea } from "../common/StyledInput";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface CreateWizardProps {
   open: boolean;
@@ -20,11 +21,12 @@ interface CreateWizardProps {
 
 type WizardStep = "basic" | "llm" | "template" | "preview";
 
-const STEPS: { key: WizardStep; label: string; icon: React.ElementType }[] = [
-  { key: "basic", label: "Basic", icon: Bot },
-  { key: "llm", label: "LLM", icon: Sparkles },
-  { key: "template", label: "Template", icon: Layout },
-  { key: "preview", label: "Preview", icon: Check },
+type StepIcon = { key: WizardStep; icon: React.ElementType };
+const STEP_ICONS: StepIcon[] = [
+  { key: "basic", icon: Bot },
+  { key: "llm", icon: Sparkles },
+  { key: "template", icon: Layout },
+  { key: "preview", icon: Check },
 ];
 
 interface AgentFormData {
@@ -43,32 +45,20 @@ const DEFAULT_FORM: AgentFormData = {
   author: "",
 };
 
-const TEMPLATES = [
-  {
-    id: "blank",
-    name: "Blank",
-    desc: "Start from scratch with a minimal agent.",
-    icon: FileText,
-  },
-  {
-    id: "assistant",
-    name: "Assistant",
-    desc: "General-purpose assistant with tool calling.",
-    icon: Bot,
-    provider: "openai",
-    model: "gpt-4o",
-  },
-  {
-    id: "local",
-    name: "Local LLM",
-    desc: "Use Ollama or other local models.",
-    icon: Globe,
-    provider: "ollama",
-    model: "qwen2.5:7b",
-  },
+type TemplateIcon = { id: string; icon: React.ElementType; desc: string; provider?: string; model?: string; i18nKey?: string };
+const TEMPLATE_ICONS: TemplateIcon[] = [
+  { id: "blank", icon: FileText, desc: "Start from scratch with a minimal agent.", i18nKey: "Blank" },
+  { id: "assistant", icon: Bot, desc: "General-purpose assistant with tool calling.", provider: "openai", model: "gpt-4o", i18nKey: "Assistant" },
+  { id: "local", icon: Globe, desc: "Use Ollama or other local models.", provider: "ollama", model: "qwen2.5:7b", i18nKey: "Local" },
 ];
 
 export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
+  const { t } = useTranslation();
+  const STEPS = STEP_ICONS.map((s) => ({ ...s, label: t(`createWizard.step${s.key.charAt(0).toUpperCase()}${s.key.slice(1)}`) }));
+  const TEMPLATES = TEMPLATE_ICONS.map((tmpl) => ({
+    ...tmpl,
+    name: t(`createWizard.template${tmpl.i18nKey}`),
+  }));
   const [step, setStep] = useState<WizardStep>("basic");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,7 +131,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
 
   if (!open) return null;
 
-  const nextLabel = step === "preview" ? "Create Agent" : "Next";
+  const nextLabel = step === "preview" ? t("createWizard.buttonCreateAgent") : t("createWizard.buttonNext");
   const canProceed = canNext() && !busy;
 
   return (
@@ -227,7 +217,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                   type="text"
                   value={form.name}
                   onChange={(e) => update({ name: e.target.value })}
-                  placeholder="My Agent"
+                  placeholder={t("createWizard.placeholderAgentName")}
                   className="bg-white dark:bg-zinc-700"
                 />
               </div>
@@ -252,7 +242,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                     type="text"
                     value={form.author}
                     onChange={(e) => update({ author: e.target.value })}
-                    placeholder="Your Name"
+                    placeholder={t("createWizard.placeholderYourName")}
                     className="bg-white dark:bg-zinc-700"
                   />
                 </div>
@@ -264,7 +254,7 @@ export function CreateWizard({ open, onCreated, onClose }: CreateWizardProps) {
                 <StyledTextarea
                   value={form.description}
                   onChange={(e) => update({ description: e.target.value })}
-                  placeholder="Describe what this agent does..."
+                  placeholder={t("createWizard.placeholderDescribe")}
                   rows={3}
                   className="resize-none bg-white dark:bg-zinc-700"
                 />
@@ -357,7 +347,7 @@ dev = true
             disabled={busy}
             className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
-            {stepIndex === 0 ? "Cancel" : "Back"}
+            {stepIndex === 0 ? t("common.cancel") : t("common.back")}
           </button>
 
           <button

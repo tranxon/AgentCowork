@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { ChevronRight, ChevronDown, Search, Wrench, Terminal, Check, X } from "lucide-react";
 import type { ChatMessage, ToolApprovalNeededEvent } from "../../lib/types";
 import { ThinkBlock } from "./ThinkBlock";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface ExploreBlockProps {
   items: ChatMessage[];
@@ -49,6 +50,7 @@ function approvalMatchesSession(
  * - Collapse (manual): user can collapse at any time.
  */
 export function ExploreBlock({ items, isStreaming, pendingApproval, currentSessionId, onApprove, hasFollowUpReply }: ExploreBlockProps) {
+  const { t } = useTranslation();
   // Start collapsed only if this block already has a follow-up reply (historical/loaded).
   // For new active blocks, always start expanded — collapses ONLY when
   // an assistant reply appears after it.
@@ -136,10 +138,10 @@ export function ExploreBlock({ items, isStreaming, pendingApproval, currentSessi
       >
         <Search className="h-3.5 w-3.5 shrink-0 text-zinc-400 dark:text-zinc-500" />
         <span className="font-medium text-zinc-400 dark:text-zinc-500">
-          {hasFollowUpReply ? "Explored" : "Exploring..."}
+          {hasFollowUpReply ? t("exploreBlock.explored") : t("exploreBlock.exploring")}
         </span>
         <span className="text-zinc-400 dark:text-zinc-500">
-          ({stepCount} {stepCount === 1 ? "step" : "steps"})
+          ({t("exploreBlock.step", { count: stepCount })})
         </span>
         {expanded ? (
           <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 text-zinc-400" />

@@ -157,9 +157,9 @@ fi
 echo -e "${YELLOW}[2/5] Building Gateway ($PROFILE mode)...${NC}"
 cd "$CORE_DIR"
 if [ "$PROFILE" = "release" ]; then
-    cargo_args=(build --release -p acowork-gateway)
+    cargo_args=(cargo build --release -p acowork-gateway)
 else
-    cargo_args=(build -p acowork-gateway)
+    cargo_args=(cargo build -p acowork-gateway)
 fi
 if "${cargo_args[@]}" 2>&1 | tee /tmp/gateway_build.log; then
     if grep -q "error" /tmp/gateway_build.log 2>/dev/null; then
@@ -176,9 +176,9 @@ echo ""
 # Step 3: Build Runtime
 echo -e "${YELLOW}[3/5] Building Runtime ($PROFILE mode)...${NC}"
 if [ "$PROFILE" = "release" ]; then
-    cargo_args=(build --release -p acowork-runtime)
+    cargo_args=(cargo build --release -p acowork-runtime)
 else
-    cargo_args=(build -p acowork-runtime)
+    cargo_args=(cargo build -p acowork-runtime)
 fi
 if "${cargo_args[@]}" 2>&1 | tee /tmp/runtime_build.log; then
     if grep -q "error" /tmp/runtime_build.log 2>/dev/null; then
@@ -260,9 +260,9 @@ else
     fi
 
     if [ "$PROFILE" = "release" ]; then
-        cargo_args=(build --release -p acowork-embed)
+        cargo_args=(cargo build --release -p acowork-embed)
     else
-        cargo_args=(build -p acowork-embed)
+        cargo_args=(cargo build -p acowork-embed)
     fi
     if "${cargo_args[@]}" 2>&1 | tee /tmp/embed_build.log; then
         if grep -q "error" /tmp/embed_build.log 2>/dev/null; then

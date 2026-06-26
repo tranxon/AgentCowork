@@ -187,9 +187,9 @@ echo ""
 echo -e "${YELLOW}[2/6] Building Gateway ($PROFILE)...${NC}"
 cd "$CORE_DIR"
 if [ "$PROFILE" = "release" ]; then
-    cargo_args=(build --release -p acowork-gateway)
+    cargo_args=(cargo build --release -p acowork-gateway)
 else
-    cargo_args=(build -p acowork-gateway)
+    cargo_args=(cargo build -p acowork-gateway)
 fi
 if "${cargo_args[@]}" 2>&1 | tail -20; then
     echo -e "${GREEN}  ✓ Gateway compiled successfully${NC}"
@@ -202,9 +202,9 @@ echo ""
 # ── Step 3: Build Runtime ───────────────────────────────────────────────────
 echo -e "${YELLOW}[3/6] Building Runtime ($PROFILE)...${NC}"
 if [ "$PROFILE" = "release" ]; then
-    cargo_args=(build --release -p acowork-runtime)
+    cargo_args=(cargo build --release -p acowork-runtime)
 else
-    cargo_args=(build -p acowork-runtime)
+    cargo_args=(cargo build -p acowork-runtime)
 fi
 if "${cargo_args[@]}" 2>&1 | tail -20; then
     echo -e "${GREEN}  ✓ Runtime compiled successfully${NC}"
@@ -231,9 +231,9 @@ else
     fi
 
     if [ "$PROFILE" = "release" ]; then
-        cargo_args=(build --release -p acowork-embed --features "$EMBED_FEATURES")
+        cargo_args=(cargo build --release -p acowork-embed --features "$EMBED_FEATURES")
     else
-        cargo_args=(build -p acowork-embed --features "$EMBED_FEATURES")
+        cargo_args=(cargo build -p acowork-embed --features "$EMBED_FEATURES")
     fi
     if "${cargo_args[@]}" 2>&1 | tail -30; then
         echo -e "${GREEN}  ✓ Embed compiled successfully${NC}"

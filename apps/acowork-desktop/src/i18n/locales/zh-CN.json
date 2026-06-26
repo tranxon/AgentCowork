@@ -9,7 +9,8 @@
         "projects": "项目",
         "docs": "文档",
         "harness": "Harness",
-        "settings": "设置"
+        "settings": "设置",
+        "ariaLabelMainNavigation": "主导航"
     },
     "common": {
         "me": "我",
@@ -17,7 +18,12 @@
         "delete": "删除",
         "confirm": "确认",
         "retry": "重试",
-        "refresh": "刷新"
+        "refresh": "刷新",
+        "ariaLabelDismiss": "关闭",
+        "loading": "加载中...",
+        "remove": "移除",
+        "back": "返回",
+        "backToList": "返回列表"
     },
     "time": {
         "justNow": "刚刚",
@@ -55,7 +61,23 @@
         "selectModel": "选择模型",
         "selectReasoningEffort": "思考深度",
         "startAgent": "启动 Agent",
-        "llmNotConfigured": "未配置 LLM 服务商。请在 Harness → 模型服务商 中添加 API 密钥。"
+        "llmNotConfigured": "未配置 LLM 服务商。请在 Harness → 模型服务商 中添加 API 密钥。",
+        "thinking": "正在思考...",
+        "working": "正在处理...",
+        "compacting": "上下文压缩中...",
+        "inputMessage": "输入消息...（Enter 发送，Shift+Enter 换行）",
+        "inputMessageConnecting": "输入消息...（正在连接 Agent...）",
+        "inputGatewayDisconnected": "Gateway 未连接",
+        "ariaLabelChatMessages": "聊天消息",
+        "ariaLabelScrollToBottom": "滚动到底部",
+        "ariaLabelClearActiveSkill": "清除当前技能",
+        "modelFallback": "模型",
+        "reasoningAuto": "自动",
+        "reasoningOff": "关闭",
+        "reasoningLow": "低",
+        "reasoningMedium": "中",
+        "reasoningHigh": "高",
+        "addModel": "添加模型"
     },
     "sessionTabBar": {
         "llmReasoning": "LLM 推理进行中",
@@ -65,7 +87,12 @@
         "closeTab": "关闭标签",
         "newConversation": "新建会话",
         "sessionHistory": "会话历史",
-        "deleteSession": "删除会话"
+        "deleteSession": "删除会话",
+        "sidebarShowing": "显示 {{start}}–{{end}} 共 {{total}} 条",
+        "sidebarNoSessions": "无会话",
+        "sidebarSearchPlaceholder": "搜索会话...",
+        "sidebarNoSessionsYet": "暂无会话",
+        "untitled": "未命名"
     },
     "contextUsage": {
         "ariaLabel": "上下文用量",
@@ -77,13 +104,55 @@
         "doubleClickToStart": "双击启动",
         "searchPlaceholder": "搜索 Agent...",
         "stopConfirm": "确定要停止 {{agent}} 吗？当前对话状态将保留。",
-        "uninstallConfirm": "确定要卸载 {{agent}} 吗？此操作不可撤销。"
+        "uninstallConfirm": "确定要卸载 {{agent}} 吗？此操作不可撤销。",
+        "confirmStop": "停止",
+        "confirmUninstall": "卸载",
+        "ariaLabelAgentList": "Agent 列表",
+        "ariaLabelAddAgent": "添加 Agent",
+        "contextStart": "启动",
+        "contextStartInDebug": "调试启动",
+        "contextStop": "停止",
+        "contextRestartInDebug": "重启调试",
+        "contextDetails": "详情",
+        "contextClone": "克隆",
+        "contextPublish": "发布",
+        "contextUninstall": "卸载",
+        "createAgent": "创建 Agent",
+        "installAgent": "安装 Agent",
+        "filterAgentPackage": "Agent 包",
+        "agentStarted": "Agent 已启动",
+        "agentStartedDebug": "Agent 已以调试模式启动",
+        "agentInstalled": "Agent 安装成功",
+        "agentStopped": "Agent 已停止",
+        "agentUninstalled": "Agent 已卸载",
+        "agentCloned": "Agent 已克隆：{{agentId}}",
+        "agentCreated": "Agent 已创建：{{agentId}}",
+        "systemAgentCannotUninstall": "系统 Agent 无法卸载",
+        "titleStopAgent": "停止 Agent",
+        "titleUninstallAgent": "卸载 Agent",
+        "noAgentsInstalled": "未安装任何 Agent",
+        "noMatchingAgents": "无匹配的 Agent",
+        "errorFailedToInstallAgent": "安装 Agent 失败：{{error}}",
+        "errorFailedToStartAgent": "启动 Agent 失败：{{error}}",
+        "errorFailedToStartDebugAgent": "调试启动 Agent 失败：{{error}}",
+        "errorFailedToRestartInDebug": "重启调试失败：{{error}}",
+        "errorFailedToStopAgent": "停止 Agent 失败：{{error}}",
+        "errorFailedToUninstallAgent": "卸载 Agent 失败：{{error}}"
     },
     "cloneDialog": {
         "skeleton": "骨架",
         "skeletonDesc": "仅复制 manifest + prompts + config + tools + resources。开发模式下可从骨架开始定制。",
         "full": "完整",
-        "fullDesc": "复制全部内容，包括 skills + data + conversations + memory。适合调试和深度定制场景。"
+        "fullDesc": "复制全部内容，包括 skills + data + conversations + memory。适合调试和深度定制场景。",
+        "title": "克隆 Agent",
+        "cloningFrom": "克隆自：",
+        "newAgentIdLabel": "新 Agent ID",
+        "newAgentIdPlaceholder": "com.example.myagent",
+        "cloneModeLabel": "克隆模式",
+        "errorEmptyId": "请输入新的 Agent ID",
+        "errorSameAsSource": "新 Agent ID 必须与源不同",
+        "cloning": "克隆中...",
+        "clone": "克隆"
     },
     "settings": {
         "tabProfile": "我的资料",
@@ -395,7 +464,20 @@
         "agent": "Agent",
         "version": "版本",
         "sessions": "会话数",
-        "noAgentSelected": "未选择 Agent"
+        "noAgentSelected": "未选择 Agent",
+        "buttonStep": "单步 (F10)",
+        "buttonStop": "停止",
+        "buttonRestart": "重启",
+        "buttonReExecute": "使用补丁重新执行",
+        "labelModel": "模型",
+        "labelProvider": "服务商",
+        "labelCharactersPerToken": "字符/Token",
+        "labelThinkingLevel": "思考深度",
+        "labelTemperature": "温度",
+        "statePaused": "已暂停",
+        "stateStepping": "单步中",
+        "stateIdle": "空闲",
+        "stateStopped": "已停止"
     },
     "workspace": {
         "delete": "删除",
@@ -426,7 +508,16 @@
             "copy": "复制",
             "paste": "粘贴",
             "delete": "删除"
-        }
+        },
+        "ariaLabelClearSearch": "清除搜索",
+        "removeWorkspaceTitle": "移除工作区",
+        "buttonRemove": "移除",
+        "defaultWorkspaceName": "工作区",
+        "buttonBrowse": "浏览",
+        "loading": "加载中...",
+        "defaultWorkingDirectory": "默认工作目录",
+        "noMatchingWorkspaces": "无匹配的工作区",
+        "noWorkspacesConfigured": "未配置工作区"
     },
     "fileEditor": {
         "emptyState": "双击工作区文件树中的文件以打开",
@@ -518,10 +609,22 @@
         "totalNodes": "总节点数",
         "active": "活跃",
         "dormant": "休眠",
-        "health": "健康度"
+        "health": "健康度",
+        "typeKnowledge": "知识",
+        "typeEpisodic": "情景",
+        "typeProcedural": "程序",
+        "typeAutobiographical": "自传"
     },
     "skillsPanel": {
-        "selectSkill": "选择技能"
+        "selectSkill": "选择技能",
+        "title": "技能",
+        "skillsLabel_one": "{{count}} 个技能",
+        "skillsLabel_other": "{{count}} 个技能",
+        "loading": "加载中...",
+        "importing": "导入中...",
+        "buttonImport": "导入",
+        "searchPlaceholder": "搜索技能...",
+        "buttonImportSkills": "导入技能"
     },
     "statusBar": {
         "agent": "agent",
@@ -531,6 +634,119 @@
     "debugPanel": {
         "editSection": "编辑区域",
         "copyContent": "复制内容",
-        "rewindToIteration": "回退到第 {{iteration}} 轮迭代"
+        "rewindToIteration": "回退到第 {{iteration}} 轮迭代",
+        "title": "调试",
+        "buttonStep": "单步 (F10)",
+        "buttonStop": "停止",
+        "buttonRestart": "重启",
+        "buttonReExecute": "使用补丁重新执行",
+        "labelIteration": "迭代",
+        "labelPhase": "阶段",
+        "labelTokens": "Tokens",
+        "labelState": "状态",
+        "environment": "环境"
+    },
+    "exploreBlock": {
+        "exploring": "正在探索...",
+        "explored": "已探索",
+        "step_one": "{{count}} 步",
+        "step_other": "{{count}} 步"
+    },
+    "thinkBlock": {
+        "thinking": "正在思考",
+        "thought": "深度思考"
+    },
+    "askQuestionCard": {
+        "other": "其他",
+        "placeholder": "输入你的回答...",
+        "submit": "提交",
+        "submitted": "已提交"
+    },
+    "debugPausedBanner": {
+        "resume": "继续",
+        "step": "单步",
+        "statePaused": "已暂停",
+        "stateStepping": "单步中"
+    },
+    "compactionCard": {
+        "title": "上下文摘要",
+        "empty": "（空摘要）",
+        "model": "模型: {{model}}",
+        "keepLastRounds": "保留最近 {{count}} 轮",
+        "tokens": "tokens: {{before}} → {{after}}"
+    },
+    "codeBlock": {
+        "ariaLabelCopy": "复制代码"
+    },
+    "createWizard": {
+        "stepBasic": "基础",
+        "stepLLM": "LLM",
+        "stepTemplate": "模板",
+        "stepPreview": "预览",
+        "templateBlank": "空白",
+        "templateAssistant": "助手",
+        "buttonCreateAgent": "创建 Agent",
+        "buttonNext": "下一步",
+        "buttonBack": "上一步",
+        "placeholderAgentName": "我的 Agent",
+        "placeholderYourName": "你的名字",
+        "placeholderDescribe": "描述此 Agent 的功能...",
+        "templateLocal": "本地 LLM"
+    },
+    "publishWizard": {
+        "stepCheck": "检查",
+        "stepClean": "清理",
+        "stepPackage": "打包",
+        "stepSign": "签名",
+        "stepDistribute": "分发",
+        "statusSigned": "已签名 ✓",
+        "statusUnsigned": "未签名",
+        "buttonClose": "关闭",
+        "ariaLabelRemoveAvatar": "移除打包的头像"
+    },
+    "splashScreen": {
+        "ready": "就绪",
+        "retrying": "重试中...",
+        "retryConnection": "重试连接",
+        "altLogo": "Acowork"
+    },
+    "appLayout": {
+        "ariaLabelResizeSidebar": "调整侧栏大小",
+        "ariaLabelResizeFileEditor": "调整文件编辑器大小"
+    },
+    "fileTree": {
+        "deleteConfirmOk": "删除",
+        "deleteConfirmCancel": "取消"
+    },
+    "memoryNodeDetail": {
+        "ariaLabelBackToList": "返回列表",
+        "content": "内容",
+        "labelStatus": "状态",
+        "labelConfidence": "置信度",
+        "labelAccessCount": "访问次数",
+        "labelCreated": "创建时间",
+        "labelLastAccessed": "最后访问",
+        "statusStable": "稳定",
+        "statusDecaying": "衰退中",
+        "statusCritical": "关键"
+    },
+    "modelsPage": {
+        "title": "模型",
+        "labelProvider": "服务商"
+    },
+    "agentDetailDialog": {
+        "ariaLabelClose": "关闭",
+        "labelName": "名称",
+        "labelAgentId": "Agent ID",
+        "labelVersion": "版本",
+        "labelAuthor": "作者",
+        "labelDescription": "描述",
+        "labelStatus": "状态",
+        "labelPid": "PID",
+        "labelStartedAt": "启动时间",
+        "labelInstallPath": "安装路径",
+        "labelCurrentModel": "当前模型",
+        "statusRunning": "运行中",
+        "statusStopped": "已停止"
     }
 }

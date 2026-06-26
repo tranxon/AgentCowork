@@ -153,11 +153,11 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
     : currentWsId
       ? (() => {
         const w = workspaces.find((ws) => ws.id === currentWsId);
-        if (!w) return "Workspace";
+        if (!w) return t("workspace.defaultWorkspaceName");
         const name = workspaceDisplayName(w);
         return name.length > 24 ? name.slice(0, 24) + "..." : name;
       })()
-      : "Workspace";
+      : t("workspace.defaultWorkspaceName");
 
   return (
     <>
@@ -196,7 +196,7 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
                     Agent Home
                   </div>
                   <div className="truncate text-[10px] text-zinc-500 dark:text-zinc-400">
-                    Default working directory
+                    {t("workspace.defaultWorkingDirectory")}
                   </div>
                 </div>
                 {currentWsId === "__agent_home__" && (
@@ -208,10 +208,10 @@ export function WorkspaceSelector({ dropDirection = "up" }: { dropDirection?: "u
               <div className="mx-2 my-1 border-t border-zinc-200 dark:border-zinc-700" />
 
               {loading ? (
-                <div className="py-4 text-center text-xs text-zinc-400">Loading...</div>
+                <div className="py-4 text-center text-xs text-zinc-400">{t("workspace.loading")}</div>
               ) : filteredWorkspaces.length === 0 ? (
                 <div className="py-4 text-center text-xs text-zinc-400">
-                  {searchQuery ? "No matching workspaces" : "No workspaces configured"}
+                  {searchQuery ? t("workspace.noMatchingWorkspaces") : t("workspace.noWorkspacesConfigured")}
                 </div>
               ) : (
                 <div className="space-y-0.5">

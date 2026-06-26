@@ -1070,7 +1070,7 @@ export function ChatPanel() {
             onScroll={handleScroll}
             className="h-full overflow-y-auto px-4 py-3 select-text cursor-text"
             role="log"
-            aria-label="Chat messages"
+            aria-label={t("chatPanel.ariaLabelChatMessages")}
           >
             {/* Loading more indicator at top */}
             {isLoadingMore && (
@@ -1142,7 +1142,7 @@ export function ChatPanel() {
                       >
                         <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
                           <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>Context compacting...</span>
+                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>{t("chatPanel.compacting")}</span>
                         </div>
                       </div>
                     );
@@ -1165,7 +1165,7 @@ export function ChatPanel() {
                       >
                         <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
                           <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>working ...</span>
+                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>{t("chatPanel.working")}</span>
                         </div>
                       </div>
                     );
@@ -1265,7 +1265,7 @@ export function ChatPanel() {
             <button
               onClick={scrollToBottom}
               className="absolute bottom-3 right-4 z-10 rounded-full bg-zinc-100 dark:bg-zinc-700 border border-zinc-200 dark:border-zinc-600 shadow-md p-1.5 hover:bg-zinc-200 dark:hover:bg-zinc-600 transition-all animate-in fade-in zoom-in"
-              aria-label="Scroll to bottom"
+              aria-label={t("chatPanel.ariaLabelScrollToBottom")}
             >
               <ChevronsDown className="h-4 w-4 text-zinc-500 dark:text-zinc-400" />
             </button>
@@ -1390,7 +1390,7 @@ export function ChatPanel() {
                   type="button"
                   onClick={clearActiveSkill}
                   className="ml-0.5 inline-flex items-center justify-center rounded-sm hover:bg-[var(--color-accent)]/15"
-                  aria-label="Clear active skill"
+                  aria-label={t("chatPanel.ariaLabelClearActiveSkill")}
                 >
                   <X size={12} />
                 </button>
@@ -1447,14 +1447,14 @@ export function ChatPanel() {
             onChange={(e) => setInputValue(e.target.value)}
             placeholder={
               gatewayStatus !== "connected"
-                ? "Gateway not connected"
+                ? t("chatPanel.inputGatewayDisconnected")
                 : !wsMap[selectedAgentId!] || wsMap[selectedAgentId!].readyState !== WebSocket.OPEN
                   ? activeSkill
                     ? t("chatPanel.inputParamsConnecting")
-                    : "Type a message... (Connecting to agent...)"
+                    : t("chatPanel.inputMessageConnecting")
                   : activeSkill
                     ? t("chatPanel.inputParams")
-                    : "Type a message... (Enter to send, Shift+Enter for new line)"
+                    : t("chatPanel.inputMessage")
             }
             disabled={inputDisabled}
             className="w-full resize-none border-0 bg-transparent p-3 pb-2 outline-none placeholder:text-zinc-400 dark:placeholder:text-zinc-500 dark:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-50 max-h-48 overflow-y-auto min-h-[4.5rem]"
@@ -1713,6 +1713,7 @@ function MessageContentWrapper({ children }: { children: React.ReactNode }) {
 
 /** Single message bubble */
 function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage; isStreaming: boolean; agentId: string }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   // Use CSS custom property for font size — set once in store, global effect
   const fontSizeStyle = { fontSize: "var(--ui-font-size, 0.875rem)" };
@@ -1799,7 +1800,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
               {showPlaceholder && (
                 <span className="inline-flex items-center gap-1.5">
                   <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                  <span className="text-zinc-400">Thinking...</span>
+                  <span className="text-zinc-400">{t("chatPanel.thinking")}</span>
                 </span>
               )}
               {isStreaming && <span className="ml-0.5 inline-block animate-pulse">▌</span>}
@@ -2099,7 +2100,7 @@ function ModelMenu({
   }, [open]);
 
   const modelDisplayName = (() => {
-    if (!currentModel || !currentModel.includes('/')) return currentModel ?? "Model";
+    if (!currentModel || !currentModel.includes('/')) return currentModel ?? t("chatPanel.modelFallback");
     const parts = currentModel.split('/');
     const prefix = parts[0];
     const modelName = parts.slice(1).join('/');
@@ -2184,7 +2185,7 @@ function ModelMenu({
             className="mx-1.5 mt-2 mb-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
           >
             <Plus className="h-3.5 w-3.5" />
-            Add Model
+            {t("chatPanel.addModel")}
           </button>
         </div>
       )}
@@ -2215,11 +2216,11 @@ function ReasoningEffortMenu({
 
   // Values are lowercase to match backend ReasoningEffort serde serialization.
   const OPTIONS: { value: string; label: string; color: string }[] = [
-    { value: "auto", label: "Auto", color: "#22c55e" },
-    { value: "off", label: "Off", color: "#9ca3af" },
-    { value: "low", label: "Low", color: "#3b82f6" },
-    { value: "medium", label: "Medium", color: "#8b5cf6" },
-    { value: "high", label: "High", color: "#ef4444" },
+    { value: "auto", label: t("chatPanel.reasoningAuto"), color: "#22c55e" },
+    { value: "off", label: t("chatPanel.reasoningOff"), color: "#9ca3af" },
+    { value: "low", label: t("chatPanel.reasoningLow"), color: "#3b82f6" },
+    { value: "medium", label: t("chatPanel.reasoningMedium"), color: "#8b5cf6" },
+    { value: "high", label: t("chatPanel.reasoningHigh"), color: "#ef4444" },
   ];
 
   const currentOpt = OPTIONS.find((o) => o.value === effort);

@@ -3,6 +3,7 @@ import { ChevronRight, ChevronDown, FileText } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { CompactionEventMeta } from "../../lib/types";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface CompactionCardProps {
   /** Summary text (already stripped of `<summary>` tags by the store). */
@@ -49,6 +50,7 @@ function formatTime(ms: number): string {
  * draft.
  */
 export function CompactionCard({ summary, meta, timestampMs }: CompactionCardProps) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   const before = meta?.before_tokens ?? 0;
@@ -67,7 +69,7 @@ export function CompactionCard({ summary, meta, timestampMs }: CompactionCardPro
         style={{ fontSize: CARD_FONT_SIZE }}
       >
         <FileText className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-        <span className="shrink-0 font-medium">上下文摘要</span>
+        <span className="shrink-0 font-medium">{t("compactionCard.title")}</span>
         {hasTokenStats && (
           <span className="shrink-0 text-zinc-500 dark:text-zinc-400">
             · {beforeStr} → {afterStr} tokens
@@ -95,21 +97,21 @@ export function CompactionCard({ summary, meta, timestampMs }: CompactionCardPro
             {summary ? (
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{summary}</ReactMarkdown>
             ) : (
-              <span className="italic text-zinc-400">（空摘要）</span>
+              <span className="italic text-zinc-400">{t("compactionCard.empty")}</span>
             )}
           </div>
           <div
             className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-zinc-500 dark:text-zinc-400 select-text"
             style={{ fontSize: DETAIL_FONT_SIZE }}
           >
-            {meta?.model && <span>model: {meta.model}</span>}
+            {meta?.model && <span>{t("compactionCard.model", { model: meta.model })}</span>}
             {meta?.keep_last_rounds != null && meta.keep_last_rounds > 0 && (
-              <span>keep last rounds: {meta.keep_last_rounds}</span>
+              <span>{t("compactionCard.keepLastRounds", { count: meta.keep_last_rounds })}</span>
             )}
             <span>{formatTime(timestampMs)}</span>
             {hasTokenStats && (
               <span>
-                tokens: {before} → {after}
+                {t("compactionCard.tokens", { before, after })}
               </span>
             )}
           </div>

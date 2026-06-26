@@ -284,7 +284,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
                       debugState === "Paused"
                         ? "Resume (F5)"
                         : debugState === "Stopped"
-                          ? "Restart"
+                          ? t("resultsPanel.buttonRestart")
                           : "Pause (F6)"
                     }
                     active={debugState === "Paused"}
@@ -296,19 +296,19 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
                   </ControlButton>
                   <ControlButton
                     onClick={() => step(activeSessionId, "iteration")}
-                    title="Step (F10)"
+                    title={t("resultsPanel.buttonStep")}
                     disabled={debugState === "Stopped"}
                   >
                     <StepForward className="h-3.5 w-3.5" />
                   </ControlButton>
                   <ControlButton
                     onClick={() => stop(activeSessionId)}
-                    title="Stop"
+                    title={t("resultsPanel.buttonStop")}
                     disabled={debugState === "Stopped"}
                   >
                     <Square className="h-3.5 w-3.5" />
                   </ControlButton>
-                  <ControlButton onClick={() => restart(activeSessionId)} title="Restart" disabled={!debugAgentId}>
+                  <ControlButton onClick={() => restart(activeSessionId)} title={t("resultsPanel.buttonRestart")} disabled={!debugAgentId}>
                     <RefreshCw className="h-3.5 w-3.5" />
                   </ControlButton>
                   {hasPendingPatches && (
@@ -316,7 +316,7 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
                       <div className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
                       <ControlButton
                         onClick={() => reExecute(activeSessionId).catch(console.error)}
-                        title="Re-execute with patches"
+                        title={t("resultsPanel.buttonReExecute")}
                         active
                       >
                         <RotateCcw className="h-3.5 w-3.5" />
@@ -429,16 +429,16 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
               <StatRow label={t("resultsPanel.totalTokens")} value={(tokenUsage?.total_tokens ?? contextUsage?.total_tokens)?.toLocaleString()} />
               <StatRow label={t("resultsPanel.iterations")} value={iterations ? String(iterations) : undefined} />
               {sessionModel && (
-                <StatRow label="Model" value={sessionModel} />
+                <StatRow label={t("resultsPanel.labelModel")} value={sessionModel} />
               )}
               {sessionProvider && (
-                <StatRow label="Provider" value={sessionProvider} />
+                <StatRow label={t("resultsPanel.labelProvider")} value={sessionProvider} />
               )}
-              <StatRow label="Characters/Token" value={modelRatio != null ? modelRatio.toFixed(2) : undefined} />
+              <StatRow label={t("resultsPanel.labelCharactersPerToken")} value={modelRatio != null ? modelRatio.toFixed(2) : undefined} />
               {reasoningEffort != null && (
-                <StatRow label="Thinking Level" value={reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1)} />
+                <StatRow label={t("resultsPanel.labelThinkingLevel")} value={reasoningEffort.charAt(0).toUpperCase() + reasoningEffort.slice(1)} />
               )}
-              <StatRow label="Temperature" value={temperature != null ? temperature.toFixed(2) : undefined} />
+              <StatRow label={t("resultsPanel.labelTemperature")} value={temperature != null ? temperature.toFixed(2) : undefined} />
               <div className="flex justify-between py-1">
                 <span className="text-zinc-500">{t("resultsPanel.sessionStatusLabel")}</span>
                 <span className="flex items-center gap-1.5 text-zinc-700 dark:text-zinc-300">

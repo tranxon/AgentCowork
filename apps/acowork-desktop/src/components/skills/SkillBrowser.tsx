@@ -6,8 +6,10 @@ import { RefreshCw, AlertTriangle, Wrench, FolderPlus, X, Loader2 } from "lucide
 import { useToast } from "../common/ToastProvider";
 import { cn } from "../../lib/utils";
 import { StyledInput } from "../common/StyledInput";
+import { useTranslation } from "../../i18n/useTranslation";
 
 export function SkillBrowser() {
+  const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
   const {
     skills,
@@ -134,7 +136,7 @@ export function SkillBrowser() {
     <div className="flex flex-1 flex-col bg-white dark:bg-zinc-900">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-zinc-200 px-6 py-4 dark:border-zinc-800">
-        <h1 className="text-xl font-semibold">Skills</h1>
+        <h1 className="text-xl font-semibold">{t("skillsPanel.title")}</h1>
         <div className="flex items-center gap-2">
           <button
             onClick={handleImportClick}
@@ -174,7 +176,7 @@ export function SkillBrowser() {
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Search skills..."
+                placeholder={t("skillsPanel.searchPlaceholder")}
                 className="bg-white dark:bg-zinc-800"
               />
             </div>
@@ -354,7 +356,7 @@ export function SkillBrowser() {
                 onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
               >
                 {importing && <Loader2 className="h-3 w-3 animate-spin" />}
-                {importing ? "Importing..." : "Import"}
+                {importing ? t("skillsPanel.importing") : t("skillsPanel.buttonImport")}
               </button>
             </div>
           </div>

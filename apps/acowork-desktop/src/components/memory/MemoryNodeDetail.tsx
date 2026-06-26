@@ -1,6 +1,7 @@
 import type { MemoryNodeResponse } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { ArrowLeft, Trash2 } from "lucide-react";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface MemoryNodeDetailProps {
   node: MemoryNodeResponse;
@@ -19,7 +20,7 @@ function getDecayColor(_score: number): string {
   return "bg-[var(--color-accent)]";
 }
 
-function getDecayLabel(score: number): string {
+function getDecayTier(score: number): "Stable" | "Decaying" | "Critical" {
   if (score <= 0.3) return "Stable";
   if (score <= 0.7) return "Decaying";
   return "Critical";
@@ -32,7 +33,14 @@ function formatDate(ts: number): string {
 }
 
 export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailProps) {
+  const { t } = useTranslation();
   const colors = getTypeColor(node.node_type);
+  const decayLabel = (() => {
+    const tier = getDecayTier(node.decay_score);
+    if (tier === "Stable") return t("memoryNodeDetail.statusStable");
+    if (tier === "Decaying") return t("memoryNodeDetail.statusDecaying");
+    return t("memoryNodeDetail.statusCritical");
+  })();
 
   const handleDelete = () => {
     if (confirm(`Delete node #${node.node_id}? This action cannot be undone.`)) {
@@ -48,7 +56,7 @@ export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailPr
         <button
           onClick={onClose}
           className="inline-flex items-center gap-1 rounded p-0.5 text-[11px] text-zinc-500 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-800"
-          aria-label="Back to list"
+          aria-label={t("memoryNodeDetail.ariaLabelBackToList")}
         >
           <ArrowLeft className="h-3.5 w-3.5" />
           Back to List
@@ -71,17 +79,17 @@ export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailPr
       <div className="flex-1 overflow-y-auto p-3">
         {/* Full content */}
         <div className="mb-3">
-          <h3 className="mb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">Content</h3>
+          <h3 className="mb-1 text-[11px] font-medium text-zinc-500 dark:text-zinc-400">{t("memoryNodeDetail.content")}</h3>
           <p className="whitespace-pre-wrap text-xs text-zinc-800 dark:text-zinc-200">{node.content}</p>
         </div>
 
         {/* Metadata grid */}
         <div className="mb-3 grid grid-cols-2 gap-2">
-          <MetaItem label="Status" value={node.status} />
-          <MetaItem label="Confidence" value={`${(node.confidence * 100).toFixed(1)}%`} />
-          <MetaItem label="Access Count" value={String(node.access_count)} />
-          <MetaItem label="Created" value={formatDate(node.created_at)} />
-          <MetaItem label="Last Accessed" value={formatDate(node.last_accessed_at)} />
+          <MetaItem label={t("memoryNodeDetail.labelStatus")} value={node.status} />
+          <MetaItem label={t("memoryNodeDetail.labelConfidence")} value={`${(node.confidence * 100).toFixed(1)}%`} />
+          <MetaItem label={t("memoryNodeDetail.labelAccessCount")} value={String(node.access_count)} />
+          <MetaItem label={t("memoryNodeDetail.labelCreated")} value={formatDate(node.created_at)} />
+          <MetaItem label={t("memoryNodeDetail.labelLastAccessed")} value={formatDate(node.last_accessed_at)} />
         </div>
 
         {/* Decay score visualization */}
@@ -94,7 +102,7 @@ export function MemoryNodeDetail({ node, onClose, onDelete }: MemoryNodeDetailPr
                 accentText,
               )}
             >
-              {getDecayLabel(node.decay_score)}
+              {decayLabel}
             </span>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-zinc-200 dark:bg-zinc-700">

@@ -9,7 +9,8 @@
         "projects": "Projects",
         "docs": "Docs",
         "harness": "Harness",
-        "settings": "Settings"
+        "settings": "Settings",
+        "ariaLabelMainNavigation": "Main navigation"
     },
     "common": {
         "me": "Me",
@@ -17,7 +18,12 @@
         "delete": "Delete",
         "confirm": "Confirm",
         "retry": "Retry",
-        "refresh": "Refresh"
+        "refresh": "Refresh",
+        "ariaLabelDismiss": "Dismiss",
+        "loading": "Loading...",
+        "remove": "Remove",
+        "back": "Back",
+        "backToList": "Back to list"
     },
     "time": {
         "justNow": "Just now",
@@ -52,10 +58,26 @@
         "imageUnsupportedDesc": "Please switch to one of these image-capable models:",
         "inputParams": "Enter params... (Enter to send, Shift+Enter for new line)",
         "inputParamsConnecting": "Enter params... (Connecting to agent...)",
+        "inputMessage": "Type a message... (Enter to send, Shift+Enter for new line)",
+        "inputMessageConnecting": "Type a message... (Connecting to agent...)",
+        "inputGatewayDisconnected": "Gateway not connected",
         "selectModel": "Select model",
         "selectReasoningEffort": "Reasoning effort",
         "startAgent": "Start Agent",
-        "llmNotConfigured": "No LLM provider configured. Please add an API key in Harness → Providers."
+        "llmNotConfigured": "No LLM provider configured. Please add an API key in Harness → Providers.",
+        "thinking": "Thinking...",
+        "working": "working ...",
+        "compacting": "Context compacting...",
+        "ariaLabelChatMessages": "Chat messages",
+        "ariaLabelScrollToBottom": "Scroll to bottom",
+        "ariaLabelClearActiveSkill": "Clear active skill",
+        "modelFallback": "Model",
+        "reasoningAuto": "Auto",
+        "reasoningOff": "Off",
+        "reasoningLow": "Low",
+        "reasoningMedium": "Medium",
+        "reasoningHigh": "High",
+        "addModel": "Add Model"
     },
     "sessionTabBar": {
         "llmReasoning": "LLM is reasoning",
@@ -65,7 +87,12 @@
         "closeTab": "Close tab",
         "newConversation": "New conversation",
         "sessionHistory": "Session history",
-        "deleteSession": "Delete session"
+        "deleteSession": "Delete session",
+        "sidebarShowing": "Showing {{start}}–{{end}} of {{total}}",
+        "sidebarNoSessions": "No sessions",
+        "sidebarSearchPlaceholder": "Search sessions...",
+        "sidebarNoSessionsYet": "No sessions yet",
+        "untitled": "Untitled"
     },
     "contextUsage": {
         "ariaLabel": "Context usage",
@@ -77,13 +104,161 @@
         "doubleClickToStart": "Double-click to start",
         "searchPlaceholder": "Search agents...",
         "stopConfirm": "Stop {{agent}}? Current conversation state will be preserved.",
-        "uninstallConfirm": "Uninstall {{agent}}? This action cannot be undone."
+        "uninstallConfirm": "Uninstall {{agent}}? This action cannot be undone.",
+        "confirmStop": "Stop",
+        "confirmUninstall": "Uninstall",
+        "ariaLabelAgentList": "Agent list",
+        "ariaLabelAddAgent": "Add agent",
+        "contextStart": "Start",
+        "contextStartInDebug": "Start in Debug",
+        "contextStop": "Stop",
+        "contextRestartInDebug": "Restart in Debug",
+        "contextDetails": "Details",
+        "contextClone": "Clone",
+        "contextPublish": "Publish",
+        "contextUninstall": "Uninstall",
+        "createAgent": "Create Agent",
+        "installAgent": "Install Agent",
+        "filterAgentPackage": "Agent Package",
+        "agentStarted": "Agent started",
+        "agentStartedDebug": "Agent started in debug mode",
+        "agentInstalled": "Agent installed successfully",
+        "agentStopped": "Agent stopped",
+        "agentUninstalled": "Agent uninstalled",
+        "agentCloned": "Agent cloned: {{agentId}}",
+        "agentCreated": "Agent created: {{agentId}}",
+        "systemAgentCannotUninstall": "System Agent cannot be uninstalled",
+        "titleStopAgent": "Stop Agent",
+        "titleUninstallAgent": "Uninstall Agent",
+        "noAgentsInstalled": "No agents installed",
+        "noMatchingAgents": "No matching agents",
+        "errorFailedToInstallAgent": "Failed to install agent: {{error}}",
+        "errorFailedToStartAgent": "Failed to start agent: {{error}}",
+        "errorFailedToStartDebugAgent": "Failed to start debug agent: {{error}}",
+        "errorFailedToRestartInDebug": "Failed to restart in debug: {{error}}",
+        "errorFailedToStopAgent": "Failed to stop agent: {{error}}",
+        "errorFailedToUninstallAgent": "Failed to uninstall agent: {{error}}"
     },
     "cloneDialog": {
         "skeleton": "Skeleton",
         "skeletonDesc": "Copy manifest, prompts, config, tools and resources only. Start from skeleton for customization in dev mode.",
         "full": "Full",
-        "fullDesc": "Copy everything including skills, data, conversations and memory. Suitable for debugging and deep customization."
+        "fullDesc": "Copy everything including skills, data, conversations and memory. Suitable for debugging and deep customization.",
+        "title": "Clone Agent",
+        "cloningFrom": "Cloning from:",
+        "newAgentIdLabel": "New Agent ID",
+        "newAgentIdPlaceholder": "com.example.myagent",
+        "cloneModeLabel": "Clone Mode",
+        "errorEmptyId": "Please enter a new agent ID",
+        "errorSameAsSource": "New agent ID must be different from source",
+        "cloning": "Cloning...",
+        "clone": "Clone"
+    },
+    "createWizard": {
+        "stepBasic": "Basic",
+        "stepLLM": "LLM",
+        "stepTemplate": "Template",
+        "stepPreview": "Preview",
+        "templateBlank": "Blank",
+        "templateAssistant": "Assistant",
+        "templateLocal": "Local LLM",
+        "buttonCreateAgent": "Create Agent",
+        "buttonNext": "Next",
+        "buttonBack": "Back",
+        "placeholderAgentName": "My Agent",
+        "placeholderYourName": "Your Name",
+        "placeholderDescribe": "Describe what this agent does..."
+    },
+    "publishWizard": {
+        "stepCheck": "Check",
+        "stepClean": "Clean",
+        "stepPackage": "Package",
+        "stepSign": "Sign",
+        "stepDistribute": "Distribute",
+        "statusSigned": "Signed ✓",
+        "statusUnsigned": "Unsigned",
+        "buttonClose": "Close",
+        "ariaLabelRemoveAvatar": "Remove packaged avatar"
+    },
+    "splashScreen": {
+        "ready": "Ready",
+        "retrying": "Retrying...",
+        "retryConnection": "Retry Connection",
+        "altLogo": "Acowork"
+    },
+    "appLayout": {
+        "ariaLabelResizeSidebar": "Resize sidebar",
+        "ariaLabelResizeFileEditor": "Resize file editor"
+    },
+    "workspace": {
+        "delete": "Delete",
+        "cancel": "Cancel",
+        "selectWorkspace": "Select workspace",
+        "removeWorkspace": "Remove workspace",
+        "changeToReadOnly": "Change to read-only",
+        "changeToReadWrite": "Change to read-write",
+        "newFile": "New file",
+        "newFolder": "New folder",
+        "addWorkspace": "Add Workspace",
+        "remoteBrowseTitle": "Browse Remote Server",
+        "remoteBrowseBtn": "Browse Server",
+        "remoteBrowseEmpty": "No directories found",
+        "remoteBrowseSelected": "Selected",
+        "remoteBrowseSelect": "Select This Folder",
+        "explorer": {
+            "agentNotRunning": "Start an agent to browse workspace",
+            "loading": "Loading...",
+            "refresh": "Refresh",
+            "searchPlaceholder": "Search files..."
+        },
+        "contextMenu": {
+            "addToChat": "Add to Chat",
+            "preview": "Preview",
+            "newFile": "New File",
+            "newFolder": "New Folder",
+            "copy": "Copy",
+            "paste": "Paste",
+            "delete": "Delete"
+        },
+        "defaultWorkingDirectory": "Default working directory",
+        "noMatchingWorkspaces": "No matching workspaces",
+        "noWorkspacesConfigured": "No workspaces configured"
+    },
+    "fileTree": {
+        "deleteConfirmOk": "Delete",
+        "deleteConfirmCancel": "Cancel"
+    },
+    "memoryNodeDetail": {
+        "ariaLabelBackToList": "Back to list",
+        "content": "Content",
+        "labelStatus": "Status",
+        "labelConfidence": "Confidence",
+        "labelAccessCount": "Access Count",
+        "labelCreated": "Created",
+        "labelLastAccessed": "Last Accessed",
+        "statusStable": "Stable",
+        "statusDecaying": "Decaying",
+        "statusCritical": "Critical"
+    },
+    "skillsPanel": {
+        "selectSkill": "Select skill",
+        "title": "Skills",
+        "skillsLabel_one": "{{count}} Skill",
+        "skillsLabel_other": "{{count}} Skills",
+        "loading": "Loading...",
+        "importing": "Importing...",
+        "buttonImport": "Import",
+        "buttonImportSkills": "Import Skills",
+        "searchPlaceholder": "Search skills..."
+    },
+    "modelsPage": {
+        "title": "Models",
+        "labelProvider": "Provider"
+    },
+    "debugPanel": {
+        "editSection": "Edit section",
+        "copyContent": "Copy content",
+        "rewindToIteration": "Rewind to iteration {{iteration}}"
     },
     "settings": {
         "tabProfile": "My Profile",
@@ -206,6 +381,21 @@
         "resetToDefaults": "Reset",
         "resetAgentSetup": "Reset Agent Setup",
         "reset": "Reset"
+    },
+    "agentDetailDialog": {
+        "ariaLabelClose": "Close",
+        "labelName": "Name",
+        "labelAgentId": "Agent ID",
+        "labelVersion": "Version",
+        "labelAuthor": "Author",
+        "labelDescription": "Description",
+        "labelStatus": "Status",
+        "labelPid": "PID",
+        "labelStartedAt": "Started At",
+        "labelInstallPath": "Install Path",
+        "labelCurrentModel": "Current Model",
+        "statusRunning": "Running",
+        "statusStopped": "Stopped"
     },
     "harness": {
         "tabProviders": "Providers",
@@ -396,38 +586,20 @@
         "agent": "Agent",
         "version": "Version",
         "sessions": "Sessions",
-        "noAgentSelected": "No Agent selected"
-    },
-    "workspace": {
-        "delete": "Delete",
-        "cancel": "Cancel",
-        "selectWorkspace": "Select workspace",
-        "removeWorkspace": "Remove workspace",
-        "changeToReadOnly": "Change to read-only",
-        "changeToReadWrite": "Change to read-write",
-        "newFile": "New file",
-        "newFolder": "New folder",
-        "addWorkspace": "Add Workspace",
-        "remoteBrowseTitle": "Browse Remote Server",
-        "remoteBrowseBtn": "Browse Server",
-        "remoteBrowseEmpty": "No directories found",
-        "remoteBrowseSelected": "Selected",
-        "remoteBrowseSelect": "Select This Folder",
-        "explorer": {
-            "agentNotRunning": "Start an agent to browse workspace",
-            "loading": "Loading...",
-            "refresh": "Refresh",
-            "searchPlaceholder": "Search files..."
-        },
-        "contextMenu": {
-            "addToChat": "Add to Chat",
-            "preview": "Preview",
-            "newFile": "New File",
-            "newFolder": "New Folder",
-            "copy": "Copy",
-            "paste": "Paste",
-            "delete": "Delete"
-        }
+        "noAgentSelected": "No Agent selected",
+        "buttonStep": "Step (F10)",
+        "buttonStop": "Stop",
+        "buttonRestart": "Restart",
+        "buttonReExecute": "Re-execute with patches",
+        "labelModel": "Model",
+        "labelProvider": "Provider",
+        "labelCharactersPerToken": "Characters/Token",
+        "labelThinkingLevel": "Thinking Level",
+        "labelTemperature": "Temperature",
+        "statePaused": "Paused",
+        "stateStepping": "Stepping",
+        "stateIdle": "Idle",
+        "stateStopped": "Stopped"
     },
     "fileEditor": {
         "emptyState": "Double-click a file in the workspace tree to open it",
@@ -519,19 +691,47 @@
         "totalNodes": "Total Nodes",
         "active": "Active",
         "dormant": "Dormant",
-        "health": "Health"
-    },
-    "skillsPanel": {
-        "selectSkill": "Select skill"
+        "health": "Health",
+        "typeKnowledge": "Knowledge",
+        "typeEpisodic": "Episodic",
+        "typeProcedural": "Procedural",
+        "typeAutobiographical": "Autobiographical"
     },
     "statusBar": {
         "agent": "agent",
         "sessions": "sessions",
         "context": "context"
     },
-    "debugPanel": {
-        "editSection": "Edit section",
-        "copyContent": "Copy content",
-        "rewindToIteration": "Rewind to iteration {{iteration}}"
+    "exploreBlock": {
+        "exploring": "Exploring...",
+        "explored": "Explored",
+        "step_one": "{{count}} step",
+        "step_other": "{{count}} steps"
+    },
+    "thinkBlock": {
+        "thinking": "Thinking",
+        "thought": "Thought"
+    },
+    "askQuestionCard": {
+        "other": "Other",
+        "placeholder": "Type your answer...",
+        "submit": "Submit",
+        "submitted": "Submitted"
+    },
+    "debugPausedBanner": {
+        "resume": "Resume",
+        "step": "Step",
+        "statePaused": "Paused",
+        "stateStepping": "Stepping"
+    },
+    "codeBlock": {
+        "ariaLabelCopy": "Copy code"
+    },
+    "compactionCard": {
+        "title": "Context summary",
+        "empty": "(empty summary)",
+        "model": "model: {{model}}",
+        "keepLastRounds": "keep last rounds: {{count}}",
+        "tokens": "tokens: {{before}} → {{after}}"
     }
 }

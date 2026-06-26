@@ -61,6 +61,7 @@ export function formatBytes(bytes: number): string {
 // ── Component ──────────────────────────────────────────────────────────
 
 export function DebugPanel({ width = 320 }: { width?: number }) {
+  const { t } = useTranslation();
   const { selectedAgentId } = useAgentStore();
   const selectedAgent = useAgentStore((s) => s.selectedAgentId ? s.agents[s.selectedAgentId]?.meta : undefined);
   const {
@@ -189,7 +190,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
         <div className="flex items-center gap-2 text-sm font-medium text-zinc-700 dark:text-zinc-300">
           <Bug className="h-4 w-4 text-amber-600" />
-          <span>Debug</span>
+          <span>{t("debugPanel.title")}</span>
           <Wifi className="h-3 w-3 text-emerald-500" />
         </div>
 
@@ -209,7 +210,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
               : debugState === "Paused"
                 ? "Resume (F5)"
                 : debugState === "Stopped"
-                  ? "Restart"
+                  ? t("debugPanel.buttonRestart")
                   : "Pause (F6)"
           }
           active={debugState === "Paused"}
@@ -222,19 +223,19 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
         </ControlButton>
         <ControlButton
           onClick={() => step(activeSessionId, "iteration")}
-          title={waitingForFirstMessage ? "Send a message to start" : "Step (F10)"}
+          title={waitingForFirstMessage ? "Send a message to start" : t("debugPanel.buttonStep")}
           disabled={waitingForFirstMessage || debugState !== "Paused"}
         >
           <StepForward className="h-3.5 w-3.5" />
         </ControlButton>
         <ControlButton
           onClick={() => stop(activeSessionId)}
-          title="Stop"
+          title={t("debugPanel.buttonStop")}
           disabled={waitingForFirstMessage || debugState === "Stopped"}
         >
           <Square className="h-3.5 w-3.5" />
         </ControlButton>
-        <ControlButton onClick={() => restart(activeSessionId)} title="Restart" disabled={!debugAgentId}>
+        <ControlButton onClick={() => restart(activeSessionId)} title={t("debugPanel.buttonRestart")} disabled={!debugAgentId}>
           <RefreshCw className="h-3.5 w-3.5" />
         </ControlButton>
         {hasPendingPatches && (
@@ -242,7 +243,7 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
             <div className="mx-1 h-4 w-px bg-zinc-200 dark:bg-zinc-700" />
             <ControlButton
               onClick={() => reExecute(activeSessionId).catch(console.error)}
-              title="Re-execute with patches"
+              title={t("debugPanel.buttonReExecute")}
               active
             >
               <RotateCcw className="h-3.5 w-3.5" />
@@ -254,11 +255,11 @@ export function DebugPanel({ width = 320 }: { width?: number }) {
       {/* State display */}
       <div className="border-b border-zinc-200 px-3 py-2 dark:border-zinc-800">
         <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs">
-          <StateLabel label="Iteration" value={`#${iteration}`} />
-          <StateLabel label="Phase" value={phase} highlight />
-          <StateLabel label="Tokens" value={`${promptTokens + completionTokens}`} />
+          <StateLabel label={t("debugPanel.labelIteration")} value={`#${iteration}`} />
+          <StateLabel label={t("debugPanel.labelPhase")} value={phase} highlight />
+          <StateLabel label={t("debugPanel.labelTokens")} value={`${promptTokens + completionTokens}`} />
           <StateLabel
-            label="State"
+            label={t("debugPanel.labelState")}
             value={debugState}
             highlight={debugState !== "Running" && debugState !== "Stepping"}
           />

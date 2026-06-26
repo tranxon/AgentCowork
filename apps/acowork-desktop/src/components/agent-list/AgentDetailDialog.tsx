@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { AgentDetail } from "../../lib/types";
 import { cn } from "../../lib/utils";
 import { getGatewayUrl } from "../../lib/config";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface AgentDetailDialogProps {
   open: boolean;
@@ -17,6 +18,7 @@ interface AgentModelInfo {
 }
 
 export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogProps) {
+  const { t } = useTranslation();
   const [detail, setDetail] = useState<AgentDetail | null>(null);
   const [modelInfo, setModelInfo] = useState<AgentModelInfo | null>(null);
   const [loading, setLoading] = useState(false);
@@ -66,7 +68,7 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
             ref={closeRef}
             onClick={onClose}
             className="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-            aria-label="Close"
+            aria-label={t("agentDetailDialog.ariaLabelClose")}
           >
             ✕
           </button>
@@ -86,13 +88,13 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
 
         {detail && !loading && (
           <div className="space-y-3 text-xs">
-            <DetailRow label="Name" value={detail.name} />
-            <DetailRow label="Agent ID" value={detail.agent_id} mono />
-            <DetailRow label="Version" value={detail.version} />
-            <DetailRow label="Author" value={detail.author || "—"} />
-            <DetailRow label="Description" value={detail.description || "—"} />
+            <DetailRow label={t("agentDetailDialog.labelName")} value={detail.name} />
+            <DetailRow label={t("agentDetailDialog.labelAgentId")} value={detail.agent_id} mono />
+            <DetailRow label={t("agentDetailDialog.labelVersion")} value={detail.version} />
+            <DetailRow label={t("agentDetailDialog.labelAuthor")} value={detail.author || "—"} />
+            <DetailRow label={t("agentDetailDialog.labelDescription")} value={detail.description || "—"} />
             <DetailRow
-              label="Status"
+              label={t("agentDetailDialog.labelStatus")}
               value={
                 <span className="flex items-center gap-1.5">
                   <span
@@ -101,16 +103,16 @@ export function AgentDetailDialog({ open, agentId, onClose }: AgentDetailDialogP
                       detail.running ? "bg-[var(--color-accent)]" : "bg-zinc-300 dark:bg-zinc-600",
                     )}
                   />
-                  {detail.running ? "Running" : "Stopped"}
+                  {detail.running ? t("agentDetailDialog.statusRunning") : t("agentDetailDialog.statusStopped")}
                 </span>
               }
             />
-            {detail.pid !== null && <DetailRow label="PID" value={String(detail.pid)} mono />}
-            {detail.started_at && <DetailRow label="Started At" value={detail.started_at} />}
-            <DetailRow label="Install Path" value={detail.install_path} mono />
+            {detail.pid !== null && <DetailRow label={t("agentDetailDialog.labelPid")} value={String(detail.pid)} mono />}
+            {detail.started_at && <DetailRow label={t("agentDetailDialog.labelStartedAt")} value={detail.started_at} />}
+            <DetailRow label={t("agentDetailDialog.labelInstallPath")} value={detail.install_path} mono />
             {modelInfo && (
               <DetailRow
-                label="Current Model"
+                label={t("agentDetailDialog.labelCurrentModel")}
                 value={
                   <span className="flex items-center gap-1.5">
                     <span className="font-mono text-xs" style={{ color: "var(--color-accent)" }}>{modelInfo.model}</span>

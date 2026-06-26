@@ -3,6 +3,7 @@ import { Bug, Pause, Play, StepForward } from "lucide-react";
 import { useAgentStore } from "../../stores/agentStore";
 import { useChatStore } from "../../stores/chatStore";
 import { useDebugStore } from "../../stores/debugStore";
+import { useTranslation } from "../../i18n/useTranslation";
 
 /**
  * Banner shown inside the chat panel when the selected agent is in debug mode
@@ -13,6 +14,7 @@ import { useDebugStore } from "../../stores/debugStore";
  * automatically when the debugger transitions back to "Running".
  */
 export function DebugPausedBanner() {
+  const { t } = useTranslation();
   const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
   const devMode = useAgentStore((s) => {
     if (!s.selectedAgentId) return false;
@@ -68,7 +70,7 @@ export function DebugPausedBanner() {
     void useDebugStore.getState().step(currentSessionId, "iteration");
   };
 
-  const stateLabel = debugState === "Paused" ? "Paused" : "Stepping";
+  const stateLabel = debugState === "Paused" ? t("debugPausedBanner.statePaused") : t("debugPausedBanner.stateStepping");
 
   return (
     <div
@@ -92,7 +94,7 @@ export function DebugPausedBanner() {
           className="flex items-center gap-1 rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-amber-600"
         >
           <Play className="h-3 w-3" fill="currentColor" />
-          <span>Resume</span>
+          <span>{t("debugPausedBanner.resume")}</span>
           <KbdHint>F5</KbdHint>
         </button>
         <button
@@ -101,7 +103,7 @@ export function DebugPausedBanner() {
           className="flex items-center gap-1 rounded bg-amber-500 px-2 py-0.5 text-[11px] font-medium text-white transition-colors hover:bg-amber-600"
         >
           <StepForward className="h-3 w-3" />
-          <span>Step</span>
+          <span>{t("debugPausedBanner.step")}</span>
           <KbdHint>F10</KbdHint>
         </button>
       </div>

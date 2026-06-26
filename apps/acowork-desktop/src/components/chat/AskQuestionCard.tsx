@@ -2,6 +2,7 @@ import { useState } from "react";
 import { MessageCircleQuestion } from "lucide-react";
 import type { AskQuestionEvent } from "../../lib/types";
 import { StyledTextarea } from "../common/StyledInput";
+import { useTranslation } from "../../i18n/useTranslation";
 
 interface AskQuestionCardProps {
   event: AskQuestionEvent;
@@ -21,6 +22,7 @@ interface AskQuestionCardProps {
  * - Disabled after submission
  */
 export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
+  const { t } = useTranslation();
   const [selected, setSelected] = useState<string | null>(null);
   const [otherText, setOtherText] = useState("");
   const [submitted, setSubmitted] = useState(false);
@@ -99,7 +101,7 @@ export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
             className="shrink-0 h-3 w-3"
             style={{ accentColor: "var(--color-accent)" }}
           />
-          <span className="font-medium text-zinc-800 dark:text-zinc-200">Other</span>
+          <span className="font-medium text-zinc-800 dark:text-zinc-200">{t("askQuestionCard.other")}</span>
         </label>
 
         {/* Other textarea */}
@@ -107,7 +109,7 @@ export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
           <StyledTextarea
             className="mt-1 ml-4 border-zinc-300 bg-white dark:border-zinc-600 dark:bg-zinc-800"
             rows={1}
-            placeholder="Type your answer..."
+            placeholder={t("askQuestionCard.placeholder")}
             value={otherText}
             onChange={(e) => setOtherText(e.target.value)}
             autoFocus
@@ -123,7 +125,7 @@ export function AskQuestionCard({ event, onAnswer }: AskQuestionCardProps) {
           className="rounded px-3 py-0.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed"
           style={{ backgroundColor: "var(--color-accent)" }}
         >
-          {submitted ? "Submitted" : "Submit"}
+          {submitted ? t("askQuestionCard.submitted") : t("askQuestionCard.submit")}
         </button>
         {submitted && (
           <span className="text-[10px] text-zinc-500 dark:text-zinc-400">

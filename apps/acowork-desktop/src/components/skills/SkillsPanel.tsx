@@ -111,7 +111,7 @@ export function SkillsPanel() {
   };
 
   const skillCount = skills.length;
-  const skillsLabel = skillCount > 0 ? `${skillCount} Skills` : "Skills";
+  const skillsLabel = skillCount > 0 ? t("skillsPanel.skillsLabel", { count: skillCount }) : t("skillsPanel.title");
 
   return (
     <>
@@ -131,7 +131,7 @@ export function SkillsPanel() {
             {/* Skills list */}
             <div className="max-h-56 overflow-y-auto py-1">
               {loading && skills.length === 0 ? (
-                <div className="py-4 text-center text-xs text-zinc-400">Loading...</div>
+                <div className="py-4 text-center text-xs text-zinc-400">{t("skillsPanel.loading")}</div>
               ) : skills.length === 0 ? (
                 <div className="py-4 text-center text-xs text-zinc-400">No skills loaded</div>
               ) : (
@@ -190,7 +190,7 @@ export function SkillsPanel() {
               className="mx-1.5 mt-2 mb-1.5 flex w-[calc(100%-0.75rem)] items-center justify-center gap-1.5 rounded-md bg-zinc-100 px-3 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-700 transition-colors hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-600"
             >
               <FolderPlus className="h-3.5 w-3.5" />
-              Import Skills
+              {t("skillsPanel.buttonImportSkills")}
             </button>
           </div>
         )}
@@ -295,7 +295,7 @@ export function SkillsPanel() {
                 onMouseLeave={(e) => { e.currentTarget.style.filter = ""; }}
               >
                 {importing && <Loader2 className="h-3 w-3 animate-spin" />}
-                {importing ? "Importing..." : "Import"}
+                {importing ? t("skillsPanel.importing") : t("skillsPanel.buttonImport")}
               </button>
             </div>
           </div>

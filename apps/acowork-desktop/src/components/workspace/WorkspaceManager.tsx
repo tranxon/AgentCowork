@@ -22,6 +22,7 @@ interface WorkspaceManagerProps {
 }
 
 export function WorkspaceManager({ agentId, onClose }: WorkspaceManagerProps) {
+  const { t } = useTranslation();
   const [workspaces, setWorkspaces] = useState<WorkspaceDir[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddDialog, setShowAddDialog] = useState(false);
@@ -244,9 +245,9 @@ export function WorkspaceManager({ agentId, onClose }: WorkspaceManagerProps) {
       {/* Delete Confirm Dialog */}
       <ConfirmDialog
         open={deleteConfirm.open}
-        title="Remove Workspace"
+        title={t("workspace.removeWorkspaceTitle")}
         message={`Remove \"${deleteConfirm.name}\" from the workspace list? The directory itself will not be deleted.`}
-        confirmLabel="Remove"
+        confirmLabel={t("workspace.buttonRemove")}
         destructive
         onConfirm={async () => {
           setDeleteConfirm(prev => ({ ...prev, open: false }));
@@ -318,7 +319,7 @@ function AddWorkspaceDialog({ onClose, onAdd, recentPaths: _recentPaths }: { onC
                 onClick={handleBrowse}
                 className="rounded-md border border-zinc-300 px-3 py-2 text-sm hover:bg-zinc-50 dark:border-zinc-600 dark:hover:bg-zinc-700"
               >
-                {gatewayMode === "remote" ? t("workspace.remoteBrowseBtn") : "Browse"}
+                {gatewayMode === "remote" ? t("workspace.remoteBrowseBtn") : t("workspace.buttonBrowse")}
               </button>
             </div>
           </div>

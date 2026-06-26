@@ -66,11 +66,11 @@ export function CloneDialog({
   const handleClone = async () => {
     const trimmed = newAgentId.trim();
     if (!trimmed) {
-      setError("Please enter a new agent ID");
+      setError(t("cloneDialog.errorEmptyId"));
       return;
     }
     if (trimmed === agentId) {
-      setError("New agent ID must be different from source");
+      setError(t("cloneDialog.errorSameAsSource"));
       return;
     }
     setCloning(true);
@@ -104,7 +104,7 @@ export function CloneDialog({
         <div className="flex items-center gap-2 border-b border-zinc-200 px-5 py-3.5 dark:border-zinc-700">
           <Copy className="h-5 w-5 text-zinc-500 dark:text-zinc-400" />
           <h2 className="text-sm font-semibold text-zinc-800 dark:text-zinc-100">
-            Clone Agent
+            {t("cloneDialog.title")}
           </h2>
         </div>
 
@@ -114,7 +114,7 @@ export function CloneDialog({
           <div className="flex items-center gap-2 rounded-md bg-zinc-50 px-3 py-2 text-xs dark:bg-zinc-700/50">
             <Info className="h-4 w-4 text-zinc-400" />
             <span className="text-zinc-500 dark:text-zinc-400">
-              Cloning from:{" "}
+              {t("cloneDialog.cloningFrom")}{" "}
             </span>
             <span className="font-medium text-zinc-700 dark:text-zinc-200">
               {agentName}
@@ -125,7 +125,7 @@ export function CloneDialog({
           {/* New agent ID */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              New Agent ID
+              {t("cloneDialog.newAgentIdLabel")}
             </label>
             <StyledInput
               ref={inputRef}
@@ -138,7 +138,7 @@ export function CloneDialog({
               onKeyDown={(e) => {
                 if (e.key === "Enter") void handleClone();
               }}
-              placeholder="com.example.myagent"
+              placeholder={t("cloneDialog.newAgentIdPlaceholder")}
               className="bg-white dark:bg-zinc-700"
             />
           </div>
@@ -146,7 +146,7 @@ export function CloneDialog({
           {/* Clone mode */}
           <div>
             <label className="mb-1.5 block text-xs font-medium text-zinc-500 dark:text-zinc-400">
-              Clone Mode
+              {t("cloneDialog.cloneModeLabel")}
             </label>
             <div className="flex gap-2">
               {(["skeleton", "full"] as CloneMode[]).map((m) => (
@@ -184,7 +184,7 @@ export function CloneDialog({
             disabled={cloning}
             className="rounded-md px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100 dark:text-zinc-400 dark:hover:bg-zinc-700"
           >
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             onClick={handleClone}
@@ -194,12 +194,12 @@ export function CloneDialog({
             {cloning ? (
               <>
                 <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/30 border-t-white" />
-                Cloning...
+                {t("cloneDialog.cloning")}
               </>
             ) : (
               <>
                 <Copy className="h-3.5 w-3.5" />
-                Clone
+                {t("cloneDialog.clone")}
               </>
             )}
           </button>

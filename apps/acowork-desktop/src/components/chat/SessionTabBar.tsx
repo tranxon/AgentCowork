@@ -110,9 +110,9 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
       <div className="flex items-center justify-between border-b border-zinc-200 px-3 py-1.5 text-[11px] text-zinc-500 dark:border-zinc-700 dark:text-zinc-400">
         <span>
           {totalCount > 0 ? (
-            <>Showing {start}&ndash;{end} of {totalCount}</>
+            <>{t("sessionTabBar.sidebarShowing", { start, end, total: totalCount })}</>
           ) : (
-            <>No sessions</>
+            <>{t("sessionTabBar.sidebarNoSessions")}</>
           )}
         </span>
       </div>
@@ -125,7 +125,7 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search sessions..."
+            placeholder={t("sessionTabBar.sidebarSearchPlaceholder")}
             className="pl-7"
           />
         </div>
@@ -134,7 +134,7 @@ function SessionListDropdown({ agentId, onClose }: SessionListDropdownProps) {
       <div className="max-h-80 overflow-y-auto py-1">
         {filteredSessions.length === 0 && (
           <div className="px-3 py-4 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            No sessions yet
+            {t("sessionTabBar.sidebarNoSessionsYet")}
           </div>
         )}
 
@@ -252,7 +252,7 @@ export function SessionTabBar({ agentId }: SessionTabBarProps) {
   // Get title for a session
   const getTitle = (sessionId: string): string => {
     const session = sessions.find((s) => s.session_id === sessionId);
-    return session?.title || "Untitled";
+    return session?.title || t("sessionTabBar.untitled");
   };
 
   // Get status for a session tab

@@ -5,6 +5,7 @@ import remarkGfm from "remark-gfm";
 import { CodeBlock } from "./CodeBlock";
 import { useAgentStore } from "../../stores/agentStore";
 import { useFileEditorStore } from "../../stores/fileEditorStore";
+import { useTranslation } from "../../i18n/useTranslation";
 
 /** ReactMarkdown component overrides — code blocks with title bar */
 const thinkMarkdownComponents = {
@@ -71,6 +72,7 @@ const THINK_DURATION_FONT_SIZE = "calc(var(--ui-font-size, 0.875rem) * 0.8)";
  *   so only the latest output is visible during long thinking phases.
  */
 export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultExpanded }: ThinkBlockProps) {
+  const { t } = useTranslation();
   const isThinking = !!(isStreaming && endTime == null);
   const [expanded, setExpanded] = useState(defaultExpanded ?? isThinking);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -120,7 +122,7 @@ export function ThinkBlock({ content, isStreaming, startTime, endTime, defaultEx
         style={{ fontSize: THINK_HEADER_FONT_SIZE }}
       >
         <Atom className="h-3 w-3 shrink-0" />
-        <span>{(!isStreaming || endTime != null) ? "Thought" : "Thinking"}</span>
+        <span>{(!isStreaming || endTime != null) ? t("thinkBlock.thought") : t("thinkBlock.thinking")}</span>
         {duration !== null && <span style={{ fontSize: THINK_DURATION_FONT_SIZE }}>({duration}s)</span>}
         {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </button>

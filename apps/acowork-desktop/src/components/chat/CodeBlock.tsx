@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from "react";
 import { ChevronRight, ChevronDown, Copy, Check } from "lucide-react";
+import { useTranslation } from "../../i18n/useTranslation";
 import hljs from "highlight.js/lib/core";
 import javascript from "highlight.js/lib/languages/javascript";
 import typescript from "highlight.js/lib/languages/typescript";
@@ -76,6 +77,7 @@ interface CodeBlockProps {
 }
 
 export function CodeBlock({ language, code }: CodeBlockProps) {
+    const { t } = useTranslation();
     const [collapsed, setCollapsed] = useState(false);
     const [copied, setCopied] = useState(false);
 
@@ -140,7 +142,7 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
                 <button
                     onClick={handleCopy}
                     className="flex items-center gap-1 rounded px-1.5 py-0.5 text-xs text-zinc-500 hover:text-zinc-700 hover:bg-zinc-200 dark:text-zinc-400 dark:hover:text-zinc-200 dark:hover:bg-zinc-700"
-                    aria-label="Copy code"
+                    aria-label={t("codeBlock.ariaLabelCopy")}
                 >
                     {copied ? (
                         <>

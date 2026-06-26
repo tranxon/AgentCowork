@@ -425,7 +425,7 @@ export function AppLayout() {
               className="group relative w-1 shrink-0 cursor-col-resize select-none"
               onMouseDown={handleMouseDown}
               role="separator"
-              aria-label="Resize sidebar"
+              aria-label={t("appLayout.ariaLabelResizeSidebar")}
             >
               {/* Visible divider line — removed, use glass bg as separator */}
               <div className="absolute inset-y-0 left-0 w-1 group-hover:bg-[var(--color-accent)]/30 group-active:bg-[var(--color-accent)]/60 transition-colors rounded-full" />
@@ -442,7 +442,7 @@ export function AppLayout() {
                   className="group relative w-1 shrink-0 cursor-col-resize select-none"
                   onMouseDown={handleMouseDownFile}
                   role="separator"
-                  aria-label="Resize file editor"
+                  aria-label={t("appLayout.ariaLabelResizeFileEditor")}
                 >
                   <div className="absolute inset-y-0 left-0 w-1 group-hover:bg-[var(--color-accent)]/30 group-active:bg-[var(--color-accent)]/60 transition-colors rounded-full" />
                 </div>

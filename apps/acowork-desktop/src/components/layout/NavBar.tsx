@@ -159,7 +159,7 @@ export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps
     <nav
       className="flex w-[var(--spacing-nav)] flex-col items-center gap-2 pt-2"
       role="navigation"
-      aria-label="Main navigation"
+      aria-label={t("navBar.ariaLabelMainNavigation")}
     >
       {/* User avatar — click to edit profile (WeChat-style top placement) */}
       <Tooltip content={t("navBar.editProfile")} variant="plain" position="right">

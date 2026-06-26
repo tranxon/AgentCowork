@@ -47,7 +47,7 @@ export function AgentList({ width }: AgentListProps) {
     setStartingAgentIds((prev) => new Set(prev).add(agentId));
     try {
       await syncAgentUI(agentId);
-      addToast({ type: "success", message: devMode ? "Agent started in debug mode" : "Agent started" });
+      addToast({ type: "success", message: devMode ? t("agentList.agentStartedDebug") : t("agentList.agentStarted") });
     } catch (e: any) {
       addToast({ type: "error", message: e?.message ?? String(e) });
     } finally {
@@ -71,7 +71,7 @@ export function AgentList({ width }: AgentListProps) {
     open: false,
     title: "",
     message: "",
-    confirmLabel: "Confirm",
+      confirmLabel: t("common.confirm"),
     destructive: false,
     onConfirm: () => { },
   });
@@ -122,12 +122,12 @@ export function AgentList({ width }: AgentListProps) {
     try {
       const selected = await open({
         multiple: false,
-        filters: [{ name: "Agent Package", extensions: ["agent"] }],
+        filters: [{ name: t("agentList.filterAgentPackage"), extensions: ["agent"] }],
       });
       if (selected) {
         setInstalling(true);
         await useAgentStore.getState().installAgent(selected);
-        addToast({ type: "success", message: "Agent installed successfully" });
+        addToast({ type: "success", message: t("agentList.agentInstalled") });
         // Auto-select the newly installed agent
         await fetchAgents();
         const agentsNow = useAgentStore.getState().agents;
@@ -137,7 +137,7 @@ export function AgentList({ width }: AgentListProps) {
         }
       }
     } catch (e) {
-      addToast({ type: "error", message: `Failed to install agent: ${String(e)}` });
+      addToast({ type: "error", message: t("agentList.errorFailedToInstallAgent", { error: String(e) }) });
     } finally {
       setInstalling(false);
     }
@@ -153,7 +153,7 @@ export function AgentList({ width }: AgentListProps) {
       // Poll until ready, then connect WebSocket
       waitForAgentReady(agentId, false);
     } catch (e) {
-      addToast({ type: "error", message: `Failed to start agent: ${String(e)}` });
+      addToast({ type: "error", message: t("agentList.errorFailedToStartAgent", { error: String(e) }) });
     }
     setContextMenu(null);
   };
@@ -171,7 +171,7 @@ export function AgentList({ width }: AgentListProps) {
       // Poll until ready, then connect WebSocket
       waitForAgentReady(agentId, true);
     } catch (e) {
-      addToast({ type: "error", message: `Failed to start debug agent: ${String(e)}` });
+      addToast({ type: "error", message: t("agentList.errorFailedToStartDebugAgent", { error: String(e) }) });
     }
     setContextMenu(null);
   };
@@ -180,7 +180,7 @@ export function AgentList({ width }: AgentListProps) {
     try {
       await restartAgentInDebug(agentId);
     } catch (e) {
-      addToast({ type: "error", message: `Failed to restart in debug: ${String(e)}` });
+      addToast({ type: "error", message: t("agentList.errorFailedToRestartInDebug", { error: String(e) }) });
     }
     setContextMenu(null);
   };
@@ -189,17 +189,17 @@ export function AgentList({ width }: AgentListProps) {
     const agent = agentsMap[agentId]?.meta;
     setConfirmDialog({
       open: true,
-      title: "Stop Agent",
+      title: t("agentList.titleStopAgent"),
       message: t("agentList.stopConfirm", { agent: agent?.name ?? agentId }),
-      confirmLabel: "Stop",
+      confirmLabel: t("agentList.confirmStop"),
       destructive: true,
       onConfirm: async () => {
         setConfirmDialog((prev) => ({ ...prev, open: false }));
         try {
           await stopAgent(agentId);
-          addToast({ type: "success", message: "Agent stopped" });
+          addToast({ type: "success", message: t("agentList.agentStopped") });
         } catch (e) {
-          addToast({ type: "error", message: `Failed to stop agent: ${String(e)}` });
+          addToast({ type: "error", message: t("agentList.errorFailedToStopAgent", { error: String(e) }) });
         }
       },
     });
@@ -209,23 +209,23 @@ export function AgentList({ width }: AgentListProps) {
   const handleUninstall = (agentId: string) => {
     // Block uninstalling System Agent
     if (agentId === "com.acowork.system") {
-      addToast({ type: "warning", message: "System Agent cannot be uninstalled" });
+      addToast({ type: "warning", message: t("agentList.systemAgentCannotUninstall") });
       return;
     }
     const agent = agentsMap[agentId]?.meta;
     setConfirmDialog({
       open: true,
-      title: "Uninstall Agent",
+      title: t("agentList.titleUninstallAgent"),
       message: t("agentList.uninstallConfirm", { agent: agent?.name ?? agentId }),
-      confirmLabel: "Uninstall",
+      confirmLabel: t("agentList.confirmUninstall"),
       destructive: true,
       onConfirm: async () => {
         setConfirmDialog((prev) => ({ ...prev, open: false }));
         try {
           await uninstallAgent(agentId);
-          addToast({ type: "success", message: "Agent uninstalled" });
+          addToast({ type: "success", message: t("agentList.agentUninstalled") });
         } catch (e) {
-          addToast({ type: "error", message: `Failed to uninstall agent: ${String(e)}` });
+          addToast({ type: "error", message: t("agentList.errorFailedToUninstallAgent", { error: String(e) }) });
         }
       },
     });
@@ -268,7 +268,7 @@ export function AgentList({ width }: AgentListProps) {
       </div>
 
       {/* Agent list */}
-      <div className="flex-1 overflow-y-auto overflow-x-hidden" role="list" aria-label="Agent list">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden" role="list" aria-label={t("agentList.ariaLabelAgentList")}>
 
         {loading && agentsList.length === 0 && (
           <div className="flex items-center justify-center py-8">
@@ -366,7 +366,7 @@ export function AgentList({ width }: AgentListProps) {
                             <span className="zzz-n">z</span>
                             <span className="zzz-n">z</span>
                           </span>
-                        ) : (sessionTitle || "Untitled session")}
+                        ) : (sessionTitle || t("sessionTabBar.untitled"))}
                       </span>
                     )}
                   </div>
@@ -377,7 +377,7 @@ export function AgentList({ width }: AgentListProps) {
 
         {filteredAgents.length === 0 && !loading && (
           <div className="px-3 py-8 text-center text-xs text-zinc-400 dark:text-zinc-500">
-            {agentsList.length === 0 ? "No agents installed" : "No matching agents"}
+            {agentsList.length === 0 ? t("agentList.noAgentsInstalled") : t("agentList.noMatchingAgents")}
           </div>
         )}
       </div>
@@ -386,7 +386,7 @@ export function AgentList({ width }: AgentListProps) {
         <button
           onClick={() => setAddMenuOpen(!addMenuOpen)}
           className="flex w-full items-center justify-center rounded-md bg-[#D8D9DC] px-0 py-[var(--ui-btn-py)] text-xs font-medium text-zinc-600 transition-colors hover:bg-[#C8C9CC] dark:bg-[#3D3D3F] dark:text-zinc-300 dark:hover:bg-[#474749]"
-          aria-label="Add agent"
+          aria-label={t("agentList.ariaLabelAddAgent")}
         >
           <Plus className="h-3.5 w-3.5" />
         </button>
@@ -400,7 +400,7 @@ export function AgentList({ width }: AgentListProps) {
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
             >
               <Sparkles className="h-3.5 w-3.5" />
-              Create Agent
+              {t("agentList.createAgent")}
             </button>
             <button
               onClick={() => {
@@ -411,7 +411,7 @@ export function AgentList({ width }: AgentListProps) {
               className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
             >
               <Plus className="h-3.5 w-3.5" />
-              Install Agent
+              {t("agentList.installAgent")}
             </button>
           </div>
         )}
@@ -430,13 +430,13 @@ export function AgentList({ width }: AgentListProps) {
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
                 onClick={() => handleStart(contextMenu.agentId)}
               >
-                <Play className="h-3.5 w-3.5" /> Start
+                <Play className="h-3.5 w-3.5" /> {t("agentList.contextStart")}
               </button>
               <button
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
                 onClick={() => handleDebugStart(contextMenu.agentId)}
               >
-                <Bug className="h-3.5 w-3.5" /> Start in Debug
+                <Bug className="h-3.5 w-3.5" /> {t("agentList.contextStartInDebug")}
               </button>
             </>
           )}
@@ -446,13 +446,13 @@ export function AgentList({ width }: AgentListProps) {
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
                 onClick={() => handleStop(contextMenu.agentId)}
               >
-                <Square className="h-3.5 w-3.5" /> Stop
+                <Square className="h-3.5 w-3.5" /> {t("agentList.contextStop")}
               </button>
               <button
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-amber-600 transition-colors hover:bg-amber-50 dark:text-amber-400 dark:hover:bg-amber-900/20"
                 onClick={() => handleRestartDebug(contextMenu.agentId)}
               >
-                <Bug className="h-3.5 w-3.5" /> Restart in Debug
+                <Bug className="h-3.5 w-3.5" /> {t("agentList.contextRestartInDebug")}
               </button>
             </>
           )}
@@ -463,7 +463,7 @@ export function AgentList({ width }: AgentListProps) {
               setContextMenu(null);
             }}
           >
-            <Info className="h-3.5 w-3.5" /> Details
+            <Info className="h-3.5 w-3.5" /> {t("agentList.contextDetails")}
           </button>
           <button
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
@@ -477,7 +477,7 @@ export function AgentList({ width }: AgentListProps) {
               }
             }}
           >
-            <Copy className="h-3.5 w-3.5" /> Clone
+            <Copy className="h-3.5 w-3.5" /> {t("agentList.contextClone")}
           </button>
           <button
             className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
@@ -491,7 +491,7 @@ export function AgentList({ width }: AgentListProps) {
               }
             }}
           >
-            <Package className="h-3.5 w-3.5" /> Publish
+            <Package className="h-3.5 w-3.5" /> {t("agentList.contextPublish")}
           </button>
 
           {contextAgent && contextAgent.agent_id !== "com.acowork.system" && (
@@ -501,7 +501,7 @@ export function AgentList({ width }: AgentListProps) {
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs text-zinc-600 transition-colors hover:bg-zinc-50 dark:text-zinc-300 dark:hover:bg-zinc-700/50"
                 onClick={() => handleUninstall(contextMenu.agentId)}
               >
-                <Trash2 className="h-3.5 w-3.5" /> Uninstall
+                <Trash2 className="h-3.5 w-3.5" /> {t("agentList.contextUninstall")}
               </button>
             </>
           )}
@@ -533,7 +533,7 @@ export function AgentList({ width }: AgentListProps) {
         agentName={cloneSource?.agentName ?? ""}
         onCloned={(result: CloneResponse) => {
           setCloneSource(null);
-          addToast({ type: "success", message: `Agent cloned: ${result.agent_id}` });
+          addToast({ type: "success", message: t("agentList.agentCloned", { agentId: result.agent_id }) });
           void fetchAgents().then(() => {
             selectAgent(result.agent_id);
           });
@@ -554,7 +554,7 @@ export function AgentList({ width }: AgentListProps) {
         open={showCreateWizard}
         onCreated={(agentId) => {
           setShowCreateWizard(false);
-          addToast({ type: "success", message: `Agent created: ${agentId}` });
+          addToast({ type: "success", message: t("agentList.agentCreated", { agentId }) });
           void fetchAgents().then(() => {
             selectAgent(agentId);
           });

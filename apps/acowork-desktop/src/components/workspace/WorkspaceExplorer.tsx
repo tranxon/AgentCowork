@@ -369,7 +369,7 @@ export function WorkspaceExplorer() {
                                 searchInputRef.current?.focus();
                             }}
                             className="text-[10px] text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
-                            title="Clear search"
+                            title={t("workspace.ariaLabelClearSearch")}
                         >
                             <X className="h-3 w-3" />
                         </button>

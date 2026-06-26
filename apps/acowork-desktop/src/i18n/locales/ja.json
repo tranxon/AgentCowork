@@ -9,7 +9,8 @@
         "projects": "Projects",
         "docs": "Docs",
         "harness": "Harness",
-        "settings": "Settings"
+        "settings": "Settings",
+        "ariaLabelMainNavigation": "メインナビゲーション"
     },
     "common": {
         "me": "自分",
@@ -17,7 +18,12 @@
         "delete": "削除",
         "confirm": "確認",
         "retry": "再試行",
-        "refresh": "更新"
+        "refresh": "更新",
+        "ariaLabelDismiss": "閉じる",
+        "loading": "読み込み中...",
+        "remove": "削除",
+        "back": "戻る",
+        "backToList": "リストに戻る"
     },
     "time": {
         "justNow": "たった今",
@@ -55,7 +61,23 @@
         "selectReasoningEffort": "思考深度",
         "selectModel": "Select model",
         "startAgent": "Start Agent",
-        "llmNotConfigured": "LLM プロバイダーが設定されていません。Harness → Providers で API キーを追加してください。"
+        "llmNotConfigured": "LLM プロバイダーが設定されていません。Harness → Providers で API キーを追加してください。",
+        "thinking": "思考中...",
+        "working": "処理中...",
+        "compacting": "コンテキスト圧縮中...",
+        "inputMessage": "メッセージを入力...（Enterで送信、Shift+Enterで改行）",
+        "inputMessageConnecting": "メッセージを入力...（Agentに接続中...）",
+        "inputGatewayDisconnected": "Gateway 未接続",
+        "ariaLabelChatMessages": "チャットメッセージ",
+        "ariaLabelScrollToBottom": "一番下までスクロール",
+        "ariaLabelClearActiveSkill": "アクティブなスキルをクリア",
+        "modelFallback": "モデル",
+        "reasoningAuto": "自動",
+        "reasoningOff": "オフ",
+        "reasoningLow": "低",
+        "reasoningMedium": "中",
+        "reasoningHigh": "高",
+        "addModel": "モデルを追加"
     },
     "sessionTabBar": {
         "llmReasoning": "LLM推論中",
@@ -65,7 +87,12 @@
         "closeTab": "Close tab",
         "newConversation": "New conversation",
         "sessionHistory": "Session history",
-        "deleteSession": "Delete session"
+        "deleteSession": "Delete session",
+        "sidebarShowing": "{{start}}–{{end}} / {{total}} 件を表示",
+        "sidebarNoSessions": "セッションなし",
+        "sidebarSearchPlaceholder": "セッションを検索...",
+        "sidebarNoSessionsYet": "セッションはまだありません",
+        "untitled": "無題"
     },
     "contextUsage": {
         "ariaLabel": "コンテキスト使用量",
@@ -76,13 +103,55 @@
     "agentList": {
         "searchPlaceholder": "Agentを検索...",
         "stopConfirm": "{{agent}} を停止しますか？現在の会話状態は保持されます。",
-        "uninstallConfirm": "{{agent}} をアンインストールしますか？この操作は元に戻せません。"
+        "uninstallConfirm": "{{agent}} をアンインストールしますか？この操作は元に戻せません。",
+        "confirmStop": "停止",
+        "confirmUninstall": "アンインストール",
+        "ariaLabelAgentList": "Agentリスト",
+        "ariaLabelAddAgent": "Agentを追加",
+        "contextStart": "起動",
+        "contextStartInDebug": "デバッグ起動",
+        "contextStop": "停止",
+        "contextRestartInDebug": "デバッグ再起動",
+        "contextDetails": "詳細",
+        "contextClone": "クローン",
+        "contextPublish": "公開",
+        "contextUninstall": "アンインストール",
+        "createAgent": "Agent を作成",
+        "installAgent": "Agent をインストール",
+        "filterAgentPackage": "Agent パッケージ",
+        "agentStarted": "Agent を起動しました",
+        "agentStartedDebug": "Agent をデバッグモードで起動しました",
+        "agentInstalled": "Agent をインストールしました",
+        "agentStopped": "Agent を停止しました",
+        "agentUninstalled": "Agent をアンインストールしました",
+        "agentCloned": "Agent をクローンしました：{{agentId}}",
+        "agentCreated": "Agent を作成しました：{{agentId}}",
+        "systemAgentCannotUninstall": "システム Agent はアンインストールできません",
+        "titleStopAgent": "Agent を停止",
+        "titleUninstallAgent": "Agent をアンインストール",
+        "noAgentsInstalled": "Agent がインストールされていません",
+        "noMatchingAgents": "一致する Agent がありません",
+        "errorFailedToInstallAgent": "Agent のインストールに失敗しました：{{error}}",
+        "errorFailedToStartAgent": "Agent の起動に失敗しました：{{error}}",
+        "errorFailedToStartDebugAgent": "デバッグモードでの Agent 起動に失敗しました：{{error}}",
+        "errorFailedToRestartInDebug": "デバッグ再起動に失敗しました：{{error}}",
+        "errorFailedToStopAgent": "Agent の停止に失敗しました：{{error}}",
+        "errorFailedToUninstallAgent": "Agent のアンインストールに失敗しました：{{error}}"
     },
     "cloneDialog": {
         "skeleton": "スケルトン",
         "skeletonDesc": "マニフェスト、プロンプト、設定、ツール、リソースのみコピー。開発モードでスケルトンからカスタマイズを開始できます。",
         "full": "フル",
-        "fullDesc": "スキル、データ、会話、メモリを含むすべてをコピー。デバッグや詳細なカスタマイズに適しています。"
+        "fullDesc": "スキル、データ、会話、メモリを含むすべてをコピー。デバッグや詳細なカスタマイズに適しています。",
+        "title": "Agent をクローン",
+        "cloningFrom": "クローン元：",
+        "newAgentIdLabel": "新しい Agent ID",
+        "newAgentIdPlaceholder": "com.example.myagent",
+        "cloneModeLabel": "クローン モード",
+        "errorEmptyId": "新しい Agent ID を入力してください",
+        "errorSameAsSource": "新しい Agent ID は元と異なっている必要があります",
+        "cloning": "クローン中...",
+        "clone": "クローン"
     },
     "settings": {
         "tabProfile": "マイプロフィール",
@@ -392,7 +461,20 @@
         "stopped": "停止中",
         "agent": "Agent",
         "version": "バージョン",
-        "noAgentSelected": "Agentが選択されていません"
+        "noAgentSelected": "Agentが選択されていません",
+        "buttonStep": "ステップ (F10)",
+        "buttonStop": "停止",
+        "buttonRestart": "再起動",
+        "buttonReExecute": "パッチで再実行",
+        "labelModel": "モデル",
+        "labelProvider": "プロバイダー",
+        "labelCharactersPerToken": "文字数/トークン",
+        "labelThinkingLevel": "思考レベル",
+        "labelTemperature": "温度",
+        "statePaused": "一時停止中",
+        "stateStepping": "ステップ中",
+        "stateIdle": "アイドル",
+        "stateStopped": "停止済み"
     },
     "workspace": {
         "delete": "削除",
@@ -423,7 +505,16 @@
             "copy": "コピー",
             "paste": "貼り付け",
             "delete": "削除"
-        }
+        },
+        "ariaLabelClearSearch": "検索をクリア",
+        "removeWorkspaceTitle": "ワークスペースを削除",
+        "buttonRemove": "削除",
+        "defaultWorkspaceName": "ワークスペース",
+        "buttonBrowse": "参照",
+        "loading": "読み込み中...",
+        "defaultWorkingDirectory": "デフォルトの作業ディレクトリ",
+        "noMatchingWorkspaces": "一致するワークスペースがありません",
+        "noWorkspacesConfigured": "ワークスペースが設定されていません"
     },
     "fileEditor": {
         "emptyState": "ワークスペースツリーのファイルをダブルクリックして開く",
@@ -515,10 +606,22 @@
         "totalNodes": "総ノード数",
         "active": "アクティブ",
         "dormant": "休眠",
-        "health": "健全性"
+        "health": "健全性",
+        "typeKnowledge": "ナレッジ",
+        "typeEpisodic": "エピソード",
+        "typeProcedural": "手続き",
+        "typeAutobiographical": "自伝"
     },
     "skillsPanel": {
-        "selectSkill": "スキルを選択"
+        "selectSkill": "スキルを選択",
+        "title": "スキル",
+        "skillsLabel_one": "{{count}} スキル",
+        "skillsLabel_other": "{{count}} スキル",
+        "loading": "読み込み中...",
+        "importing": "インポート中...",
+        "buttonImport": "インポート",
+        "searchPlaceholder": "スキルを検索...",
+        "buttonImportSkills": "スキルをインポート"
     },
     "statusBar": {
         "agent": "agent",
@@ -528,6 +631,119 @@
     "debugPanel": {
         "editSection": "Edit section",
         "copyContent": "Copy content",
-        "rewindToIteration": "Rewind to iteration {{iteration}}"
+        "rewindToIteration": "Rewind to iteration {{iteration}}",
+        "title": "デバッグ",
+        "buttonStep": "ステップ (F10)",
+        "buttonStop": "停止",
+        "buttonRestart": "再起動",
+        "buttonReExecute": "パッチで再実行",
+        "labelIteration": "イテレーション",
+        "labelPhase": "フェーズ",
+        "labelTokens": "トークン",
+        "labelState": "状態",
+        "environment": "環境"
+    },
+    "exploreBlock": {
+        "exploring": "探索中...",
+        "explored": "探索済み",
+        "step_one": "{{count}} ステップ",
+        "step_other": "{{count}} ステップ"
+    },
+    "thinkBlock": {
+        "thinking": "思考中",
+        "thought": "深い思考"
+    },
+    "askQuestionCard": {
+        "other": "その他",
+        "placeholder": "回答を入力...",
+        "submit": "送信",
+        "submitted": "送信済み"
+    },
+    "debugPausedBanner": {
+        "resume": "再開",
+        "step": "ステップ",
+        "statePaused": "一時停止中",
+        "stateStepping": "ステップ中"
+    },
+    "compactionCard": {
+        "title": "コンテキスト要約",
+        "empty": "（空の要約）",
+        "model": "モデル: {{model}}",
+        "keepLastRounds": "直近 {{count}} ラウンドを保持",
+        "tokens": "tokens: {{before}} → {{after}}"
+    },
+    "codeBlock": {
+        "ariaLabelCopy": "コードをコピー"
+    },
+    "createWizard": {
+        "stepBasic": "基本",
+        "stepLLM": "LLM",
+        "stepTemplate": "テンプレート",
+        "stepPreview": "プレビュー",
+        "templateBlank": "空",
+        "templateAssistant": "アシスタント",
+        "buttonCreateAgent": "Agent を作成",
+        "buttonNext": "次へ",
+        "buttonBack": "戻る",
+        "placeholderAgentName": "マイ Agent",
+        "placeholderYourName": "あなたの名前",
+        "placeholderDescribe": "この Agent の機能を説明...",
+        "templateLocal": "ローカル LLM"
+    },
+    "publishWizard": {
+        "stepCheck": "チェック",
+        "stepClean": "クリーン",
+        "stepPackage": "パッケージ",
+        "stepSign": "署名",
+        "stepDistribute": "配布",
+        "statusSigned": "署名済み ✓",
+        "statusUnsigned": "未署名",
+        "buttonClose": "閉じる",
+        "ariaLabelRemoveAvatar": "パッケージされたアバターを削除"
+    },
+    "splashScreen": {
+        "ready": "準備完了",
+        "retrying": "再試行中...",
+        "retryConnection": "接続を再試行",
+        "altLogo": "Acowork"
+    },
+    "appLayout": {
+        "ariaLabelResizeSidebar": "サイドバーのサイズを変更",
+        "ariaLabelResizeFileEditor": "ファイルエディタのサイズを変更"
+    },
+    "fileTree": {
+        "deleteConfirmOk": "削除",
+        "deleteConfirmCancel": "キャンセル"
+    },
+    "memoryNodeDetail": {
+        "ariaLabelBackToList": "リストに戻る",
+        "content": "内容",
+        "labelStatus": "ステータス",
+        "labelConfidence": "信頼度",
+        "labelAccessCount": "アクセス回数",
+        "labelCreated": "作成日時",
+        "labelLastAccessed": "最終アクセス",
+        "statusStable": "安定",
+        "statusDecaying": "衰退中",
+        "statusCritical": "クリティカル"
+    },
+    "modelsPage": {
+        "title": "モデル",
+        "labelProvider": "プロバイダー"
+    },
+    "agentDetailDialog": {
+        "ariaLabelClose": "閉じる",
+        "labelName": "名前",
+        "labelAgentId": "Agent ID",
+        "labelVersion": "バージョン",
+        "labelAuthor": "作者",
+        "labelDescription": "説明",
+        "labelStatus": "ステータス",
+        "labelPid": "PID",
+        "labelStartedAt": "起動時刻",
+        "labelInstallPath": "インストール パス",
+        "labelCurrentModel": "現在のモデル",
+        "statusRunning": "実行中",
+        "statusStopped": "停止済み"
     }
 }
