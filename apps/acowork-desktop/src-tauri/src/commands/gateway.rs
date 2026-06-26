@@ -283,6 +283,82 @@ pub async fn start_local_gateway(
     wait_for_gateway_ready(&base_url).await
 }
 
+/// Result of a single Gateway health probe, returned to the frontend via
+/// [`check_gateway_health`]. The frontend uses `connected` to drive its
+/// `status` field; `health` carries the parsed `/health` body when present.
+#[derive(Debug, Serialize)]
+pub struct GatewayHealthOutput {
+    /// `true` when the Gateway responded with 2xx and a parseable body.
+    pub connected: bool,
+    /// Raw JSON body of `/health`, matching the frontend `HealthResponse`
+    /// shape. `None` when the probe failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<serde_json::Value>,
+    /// Error description when the probe failed. Frontend logs this; the
+    /// user-facing status flips to "error".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Probe the configured Gateway's `/health` endpoint via the Rust HTTP
+/// client (reqwest) and return the result to the frontend.
+///
+/// This replaces the frontend's direct `fetch(${baseUrl}/health)` call.
+/// The reason is CORS: in production MSI builds, the Tauri WebView serves
+/// the frontend from `http://tauri.localhost` (Windows) / `tauri://localhost`
+/// (macOS), and the Gateway's restrictive CORS allowlist only permits
+/// Vite dev origins (`http://localhost:5173`, `http://localhost:3000`,
+/// `http://127.0.0.1:3000`). The Tauri WebView origins are not in the
+/// list, so the cross-origin fetch is blocked by the browser layer,
+/// the frontend `status` stays `disconnected`, and the Onboarding page
+/// keeps showing "Not started" even though the Gateway is fully up.
+///
+/// Going through Rust-side reqwest is CORS-free (no browser involved),
+/// works identically in dev and MSI builds, and keeps the
+/// `cors_enabled=false` default's security posture intact for anyone
+/// else (CLI users, custom integrators) who may be talking to the
+/// Gateway directly.
+///
+/// In dev mode this is a no-op change in practice (fetch works there),
+/// but the same code path now runs everywhere, removing the dev/prod
+/// drift that originally masked this bug.
+#[tauri::command]
+pub async fn check_gateway_health(
+    state: tauri::State<'_, AppState>,
+) -> Result<GatewayHealthOutput, String> {
+    let base_url = state.gateway.read().await.base_url().to_string();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+    let health_url = format!("{}/health", base_url);
+    match client.get(&health_url).send().await {
+        Ok(resp) if resp.status().is_success() => match resp.json::<serde_json::Value>().await {
+            Ok(health) => Ok(GatewayHealthOutput {
+                connected: true,
+                health: Some(health),
+                error: None,
+            }),
+            Err(e) => Ok(GatewayHealthOutput {
+                connected: false,
+                health: None,
+                error: Some(format!("Failed to parse /health body: {}", e)),
+            }),
+        },
+        Ok(resp) => Ok(GatewayHealthOutput {
+            connected: false,
+            health: None,
+            error: Some(format!("Gateway returned HTTP {}", resp.status())),
+        }),
+        Err(e) => Ok(GatewayHealthOutput {
+            connected: false,
+            health: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
 /// Spawn the Gateway process without waiting for readiness.
 /// Used by both `start_local_gateway` command and Rust-side early startup.
 ///
@@ -358,6 +434,21 @@ pub async fn spawn_gateway(state: &AppState, app_handle: &tauri::AppHandle) -> R
             "ACOWORK_LSP_CONFIG_DIR",
             resource_dir.to_string_lossy().to_string(),
         );
+    // Suppress the pop-up Windows Terminal / conhost window. The Gateway
+    // is a console-subsystem binary, so when spawned from a non-console
+    // parent (the Tauri WebView2 host), Windows otherwise allocates a new
+    // console and the user's screen gets a flashing terminal showing the
+    // gateway's startup banner — confusing in a desktop app. Logs are
+    // already captured by the Gateway's own file logger
+    // (data/logs/gateway.log), and debug output is forwarded to the
+    // Tauri dev console in dev mode. CREATE_NO_WINDOW has no effect on
+    // macOS / Linux; the cfg gate keeps it platform-correct.
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
     if let Some(ort_lib_dir) = locate_bundled_ort_lib_dir(&gateway_bin, &resource_dir) {
         inject_ort_env(&mut command, &ort_lib_dir);
         tracing::info!(ort_lib_dir = %ort_lib_dir.display(), "Injected bundled ORT for Gateway");
