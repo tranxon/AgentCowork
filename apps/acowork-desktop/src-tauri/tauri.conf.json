@@ -53,7 +53,6 @@
     "resources": {
       "../../../examples/agent-packages": "agent-packages",
       "../../../assets/offline_providers.json": "offline_providers.json",
-      "../../../assets/lsp_servers.json": "lsp_servers.json",
       "../../../assets/lsp_install": "lsp_install",
       "../../../core/acowork-embed/assets/embedding_models.json": "embedding_models.json",
       "bin/*": "./"
