@@ -255,21 +255,30 @@ pub fn build_router(state: AppState) -> Router {
         // Local-only CORS allowlist. Covers two deployment shapes:
         //   1. Vite dev — page served from a Vite dev server on :3000 / :5173
         //   2. Packaged Tauri v2 desktop app — the WebView origin is
-        //      `http://tauri.localhost` on Windows / Linux and
-        //      `tauri://localhost` on macOS. Without these entries every
-        //      `fetch()` from the MSI-installed app is silently blocked.
-        //      (See AGENTS.md / dev notes: all WebView → Gateway traffic
-        //       is HTTP, CORS is the canonical mechanism, do not wrap
-        //       gateway calls in Tauri commands.)
+        //      `http://tauri.localhost` on Windows / Linux.
+        //
+        //      macOS uses `tauri://localhost` at runtime, but the http
+        //      crate (1.4.x) rejects non-HTTP schemes in HeaderValue at
+        //      compile-time-runtime boundary, so it is added separately
+        //      via a `try_parse` guard below rather than `.unwrap()`.
         tower_http::cors::CorsLayer::new()
-            .allow_origin([
-                "http://localhost:3000".parse().unwrap(),
-                "http://localhost:5173".parse().unwrap(),
-                "http://127.0.0.1:3000".parse().unwrap(),
-                // Tauri v2 WebView origins (packaged app)
-                "http://tauri.localhost".parse().unwrap(),
-                "tauri://localhost".parse().unwrap(),
-            ])
+            .allow_origin({
+                let mut origins = vec![
+                    "http://localhost:3000".parse().unwrap(),
+                    "http://localhost:5173".parse().unwrap(),
+                    "http://127.0.0.1:3000".parse().unwrap(),
+                    "http://tauri.localhost".parse().unwrap(),
+                ];
+                // macOS Tauri WebView sends `Origin: tauri://localhost`.
+                // The `http` crate may reject this at runtime. Use a
+                // soft parse so the gateway does not panic on startup
+                // when the binary is built on Windows (the macOS user
+                // will see a CORS error, not a crash).
+                if let Ok(v) = "tauri://localhost".parse() {
+                    origins.push(v);
+                }
+                origins
+            })
             .allow_methods([
                 axum::http::Method::GET,
                 axum::http::Method::POST,
