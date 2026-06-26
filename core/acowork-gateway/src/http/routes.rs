@@ -254,26 +254,28 @@ pub fn build_router(state: AppState) -> Router {
     } else {
         // Local-only CORS allowlist. Covers two deployment shapes:
         //   1. Vite dev — page served from a Vite dev server on :3000 / :5173
-        //   2. Packaged Tauri v2 desktop app — the WebView origin is
-        //      `http://tauri.localhost` on Windows / Linux.
+        //   2. Packaged Tauri v2 desktop app:
+        //      - Windows / Linux: `https://tauri.localhost`
+        //      - macOS:           `tauri://localhost`
         //
-        //      macOS uses `tauri://localhost` at runtime, but the http
-        //      crate (1.4.x) rejects non-HTTP schemes in HeaderValue at
-        //      compile-time-runtime boundary, so it is added separately
-        //      via a `try_parse` guard below rather than `.unwrap()`.
+        //      Tauri v2 uses HTTPS (not HTTP) for the custom protocol on
+        //      Windows/Linux (v2 migration). Without the exact scheme the
+        //      browser's `Origin` header won't match and CORS silently
+        //      blocks every `fetch()` from the MSI-installed app.
         tower_http::cors::CorsLayer::new()
             .allow_origin({
                 let mut origins = vec![
                     "http://localhost:3000".parse().unwrap(),
                     "http://localhost:5173".parse().unwrap(),
                     "http://127.0.0.1:3000".parse().unwrap(),
-                    "http://tauri.localhost".parse().unwrap(),
+                    // Tauri v2 production WebView on Windows / Linux
+                    "https://tauri.localhost".parse().unwrap(),
                 ];
-                // macOS Tauri WebView sends `Origin: tauri://localhost`.
-                // The `http` crate may reject this at runtime. Use a
-                // soft parse so the gateway does not panic on startup
-                // when the binary is built on Windows (the macOS user
-                // will see a CORS error, not a crash).
+                // macOS Tauri v2 sends `Origin: tauri://localhost`.
+                // The `http` crate (1.4.x) may reject non-HTTP URI
+                // schemes at runtime. Use a soft parse so the gateway
+                // does not panic on startup — macOS users see a CORS
+                // error instead of a gateway crash.
                 if let Ok(v) = "tauri://localhost".parse() {
                     origins.push(v);
                 }
