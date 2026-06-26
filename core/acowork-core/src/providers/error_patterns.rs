@@ -108,6 +108,8 @@ pub fn is_non_retryable_rate_limit(msg: &str) -> bool {
         "package not active",
         "model not available for your plan",
         "free usage limit",
+        "token plan",
+        "用量上限",
     ];
     BUSINESS_PATTERNS.iter().any(|p| lower.contains(p))
 }
@@ -229,6 +231,14 @@ mod tests {
             "500 internal error".to_string(),
         ));
         assert!(!is_balance_exhausted(&err));
+    }
+
+    #[test]
+    fn test_is_balance_exhausted_cn_pattern() {
+        let err = AcoworkError::Provider(ProviderError::unknown(
+            "已达到 Token Plan 用量上限：请升级 Token Plan 套餐或购买积分补充用量。 (2056)".to_string(),
+        ));
+        assert!(is_balance_exhausted(&err));
     }
 
     #[test]

@@ -344,11 +344,16 @@ impl Provider for ReliableProvider {
             .chain(self.fallbacks.iter())
             .collect();
 
+        let mut last_provider_error: Option<ProviderError> = None;
+
         for provider in candidates {
             for attempt in 0..self.retry_config.max_attempts {
                 match provider.chat(request.clone()).await {
                     Ok(response) => return Ok(response),
-                    Err(e) if !is_retryable(&e) || is_balance_exhausted(&e) => {
+                    Err(ref e) if !is_retryable(e) || is_balance_exhausted(e) => {
+                        if let acowork_core::AcoworkError::Provider(pe) = e {
+                            last_provider_error = Some(pe.clone());
+                        }
                         tracing::warn!(
                             provider = %provider.name(),
                             error = %e,
@@ -356,8 +361,8 @@ impl Provider for ReliableProvider {
                         );
                         break;
                     }
-                    Err(e) if attempt + 1 < self.retry_config.max_attempts => {
-                        let retry_after_ms = match &e {
+                    Err(ref e) if attempt + 1 < self.retry_config.max_attempts => {
+                        let retry_after_ms = match e {
                             acowork_core::AcoworkError::Provider(pe) => pe.retry_after_ms,
                             _ => None,
                         };
@@ -374,7 +379,10 @@ impl Provider for ReliableProvider {
                         );
                         self.retry_sleep(wait_ms, attempt + 1).await;
                     }
-                    Err(e) => {
+                    Err(ref e) => {
+                        if let acowork_core::AcoworkError::Provider(pe) = e {
+                            last_provider_error = Some(pe.clone());
+                        }
                         tracing::error!(
                             provider = %provider.name(),
                             attempts = self.retry_config.max_attempts,
@@ -388,7 +396,9 @@ impl Provider for ReliableProvider {
         }
 
         Err(acowork_core::AcoworkError::Provider(
-            ProviderError::unknown("All providers failed (primary + fallbacks)".to_string()),
+            last_provider_error.unwrap_or_else(|| {
+                ProviderError::unknown("All providers failed (primary + fallbacks)".to_string())
+            }),
         ))
     }
 
@@ -401,11 +411,16 @@ impl Provider for ReliableProvider {
             .chain(self.fallbacks.iter())
             .collect();
 
+        let mut last_provider_error: Option<ProviderError> = None;
+
         for provider in candidates {
             for attempt in 0..self.retry_config.max_attempts {
                 match provider.chat_stream(request.clone()).await {
                     Ok(stream) => return Ok(stream),
-                    Err(e) if !is_retryable(&e) || is_balance_exhausted(&e) => {
+                    Err(ref e) if !is_retryable(e) || is_balance_exhausted(e) => {
+                        if let acowork_core::AcoworkError::Provider(pe) = e {
+                            last_provider_error = Some(pe.clone());
+                        }
                         tracing::warn!(
                             provider = %provider.name(),
                             error = %e,
@@ -413,8 +428,8 @@ impl Provider for ReliableProvider {
                         );
                         break; // Move to next provider
                     }
-                    Err(e) if attempt + 1 < self.retry_config.max_attempts => {
-                        let retry_after_ms = match &e {
+                    Err(ref e) if attempt + 1 < self.retry_config.max_attempts => {
+                        let retry_after_ms = match e {
                             acowork_core::AcoworkError::Provider(pe) => pe.retry_after_ms,
                             _ => None,
                         };
@@ -431,7 +446,10 @@ impl Provider for ReliableProvider {
                         );
                         self.retry_sleep(wait_ms, attempt + 1).await;
                     }
-                    Err(e) => {
+                    Err(ref e) => {
+                        if let acowork_core::AcoworkError::Provider(pe) = e {
+                            last_provider_error = Some(pe.clone());
+                        }
                         tracing::error!(
                             provider = %provider.name(),
                             attempts = self.retry_config.max_attempts,
@@ -445,7 +463,9 @@ impl Provider for ReliableProvider {
         }
 
         Err(acowork_core::AcoworkError::Provider(
-            ProviderError::network("All providers failed for streaming".to_string()),
+            last_provider_error.unwrap_or_else(|| {
+                ProviderError::network("All providers failed for streaming".to_string())
+            }),
         ))
     }
 

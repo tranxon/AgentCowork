@@ -1462,8 +1462,8 @@ export function ChatPanel() {
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
-                // Let handleSend() itself decide whether to proceed
-                handleSend();
+                // Match the button logic: during sending (streaming), queue the message
+                (sending ? handleStop : handleSend)();
               }
             }}
           />
