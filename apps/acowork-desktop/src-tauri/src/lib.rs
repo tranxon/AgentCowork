@@ -255,7 +255,7 @@ pub fn run() {
                 let effects = WindowEffectsConfig {
                     effects: vec![tauri::window::Effect::Acrylic],
                     state: Some(EffectState::Active),
-                    radius: Some(12),
+                    radius: Some(12.0),
                     color: None,
                 };
                 let _ = main_window.set_effects(effects);
