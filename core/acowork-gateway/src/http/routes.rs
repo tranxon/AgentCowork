@@ -7,8 +7,10 @@ use axum::{
     Json, Router,
     extract::State,
     http::StatusCode,
+    middleware::{self, Next},
     routing::{get, post},
 };
+use axum::extract::Request;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -245,6 +247,30 @@ impl AppState {
     }
 }
 
+/// Log request Origin and response CORS header for every HTTP request.
+/// This middleware runs AFTER the CORS layer, so `Access-Control-Allow-Origin`
+/// reflects what the browser actually sees.
+async fn log_request_origin(req: Request, next: Next) -> axum::response::Response {
+    let origin = req
+        .headers()
+        .get("origin")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<none>");
+    let method = req.method().clone();
+    let uri = req.uri().clone();
+    let msg = format!("HTTP request: origin={} method={} uri={}", origin, method, uri);
+    tracing::info!("{}", msg);
+    let response = next.run(req).await;
+    let acao = response
+        .headers()
+        .get("access-control-allow-origin")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("<none>");
+    let msg = format!("HTTP response: status={} access-control-allow-origin={}", response.status(), acao);
+    tracing::info!("{}", msg);
+    response
+}
+
 /// Build the HTTP router with all routes
 pub fn build_router(state: AppState) -> Router {
     // When CORS is enabled (remote Desktop ↔ Gateway scenarios),
@@ -269,6 +295,9 @@ pub fn build_router(state: AppState) -> Router {
                     "http://localhost:5173".parse().unwrap(),
                     "http://127.0.0.1:3000".parse().unwrap(),
                     // Tauri v2 production WebView on Windows / Linux
+                    // (confirmed via request logging: the WebView sends
+                    //  Origin: http://tauri.localhost, not https://)
+                    "http://tauri.localhost".parse().unwrap(),
                     "https://tauri.localhost".parse().unwrap(),
                 ];
                 // macOS Tauri v2 sends `Origin: tauri://localhost`.
@@ -324,6 +353,7 @@ pub fn build_router(state: AppState) -> Router {
             post(crate::lsp::lsp_install_run),
         )
         .with_state(state)
+        .layer(middleware::from_fn(log_request_origin))
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .layer(cors)
 }

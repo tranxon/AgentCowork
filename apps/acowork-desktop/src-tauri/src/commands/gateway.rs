@@ -390,17 +390,33 @@ pub async fn spawn_gateway(state: &AppState, app_handle: &tauri::AppHandle) -> R
     Ok(())
 }
 
-/// Stop the locally running Gateway process.
+/// Stop the locally running Gateway process and all its children.
+///
+/// On Windows, uses `taskkill /T /F` to kill the entire process tree
+/// (Gateway + Runtime + Embed) in one shot.
+/// On Unix, sends SIGINT so the Gateway's signal handler cleans up
+/// children before exiting.
 #[tauri::command]
 pub async fn stop_local_gateway(state: tauri::State<'_, AppState>) -> Result<(), String> {
     let mut proc = state.gateway_process.lock().await;
-    if let Some(mut child) = proc.take() {
-        tracing::info!("Stopping local Gateway (pid: {:?})", child.id());
-        if let Err(e) = child.kill() {
-            // Process may already be dead — not an error
-            tracing::warn!("Failed to kill Gateway process: {}", e);
+    if let Some(child) = proc.take() {
+        let pid = child.id();
+        tracing::info!(pid = pid, "Stopping local Gateway process tree");
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .output();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Send SIGINT so Gateway's signal handler cleans up children
+            let _ = std::process::Command::new("kill")
+                .args(["-INT", &pid.to_string()])
+                .output();
         }
         // Reap the child to avoid zombies
+        let mut child = child; // Child::wait needs &mut
         let _ = child.wait();
     }
     *proc = None;

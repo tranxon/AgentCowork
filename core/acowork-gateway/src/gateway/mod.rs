@@ -744,6 +744,37 @@ impl Gateway {
             _ = tokio::signal::ctrl_c() => {
                 tracing::info!("Received shutdown signal, cleaning up...");
 
+                // Kill all running Runtime (agent) processes before exiting.
+                // This prevents orphaned Runtime processes when Gateway shuts
+                // down normally. Collect PIDs under a short read-lock, then
+                // release the lock before issuing async kill calls.
+                {
+                    let gw = shared_state.read().await;
+                    let runtime_pids: Vec<(String, u32)> = gw
+                        .running_agents
+                        .iter()
+                        .map(|(id, info)| (id.clone(), info.pid))
+                        .collect();
+                    // Drop the read lock before calling async kill operations
+                    drop(gw);
+                    for (agent_id, pid) in &runtime_pids {
+                        tracing::info!(
+                            agent_id = %agent_id,
+                            pid = pid,
+                            "Shutting down Runtime process"
+                        );
+                        if let Err(e) =
+                            crate::lifecycle::process::kill_agent_process(*pid).await
+                        {
+                            tracing::warn!(
+                                agent_id = %agent_id,
+                                error = %e,
+                                "Failed to kill Runtime process"
+                            );
+                        }
+                    }
+                }
+
                 // Kill the embedding service process before exiting.
                 // This prevents acowork-embed from becoming an orphan process.
                 {
