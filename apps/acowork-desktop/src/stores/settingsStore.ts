@@ -46,17 +46,18 @@ const STORAGE_KEY_GATEWAY_MODE = "acowork-gateway-mode";
 const STORAGE_KEY_LOG_FILE_SIZE = "acowork-log-file-size";
 const STORAGE_KEY_LOG_FILE_COUNT = "acowork-log-file-count";
 
-/** Apply theme to DOM by toggling .dark class on <html> */
-function applyTheme(theme: Theme) {
-  if (theme === "dark") {
-    document.documentElement.classList.add("dark");
-  } else if (theme === "light") {
-    document.documentElement.classList.remove("dark");
-  } else {
-    // "system" — follow OS preference
-    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-    document.documentElement.classList.toggle("dark", prefersDark);
-  }
+/** Read current OS theme preference from matchMedia */
+function readOsTheme(): "light" | "dark" {
+  if (typeof window === "undefined" || !window.matchMedia) return "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+}
+
+/** Apply theme to DOM by toggling .dark class on <html>.
+ * For "system" mode, `osTheme` must be passed so the correct value
+ * is applied even when the OS theme changed since the last call. */
+function applyTheme(theme: Theme, osTheme: "light" | "dark") {
+  const effective = theme === "system" ? osTheme : theme;
+  document.documentElement.classList.toggle("dark", effective === "dark");
 }
 
 /** Apply fontSize to CSS custom property on root */
@@ -189,6 +190,7 @@ function getPersistedOpacity(): number {
 
 interface SettingsStore {
   theme: Theme;
+  osTheme: "light" | "dark";
   fontSize: number;
   contentWidth: number;
   opacity: number;
@@ -213,19 +215,49 @@ interface SettingsStore {
 export const useSettingsStore = create<SettingsStore>((set, get) => {
   // Initialize from persisted values and apply theme to DOM immediately
   const initialTheme = getPersistedTheme();
+  const initialOsTheme = readOsTheme();
   const initialFontSize = getPersistedFontSize();
   const initialLogLevel = getPersistedLogLevel();
   const initialOpacity = getPersistedOpacity();
   const initialContentWidth = getPersistedContentWidth();
   const initialAccentColor = getPersistedAccentColor();
-  applyTheme(initialTheme);
+  applyTheme(initialTheme, initialOsTheme);
   applyFontSize(initialFontSize);
   applyOpacity(initialOpacity);
   applyContentWidth(initialContentWidth);
   applyAccentColor(initialAccentColor);
 
+  // Subscribe to OS theme changes so theme="system" stays in sync.
+  // Without this listener the .dark class on <html> is frozen at app
+  // start, so Tailwind dark variants and any component reading the
+  // resolved theme (AppLayout glass, NavBar, SetiIcon) stay stale when
+  // the user switches macOS appearance while the app is running.
+  if (typeof window !== "undefined" && window.matchMedia) {
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (e: MediaQueryListEvent) => {
+      const nextOsTheme: "light" | "dark" = e.matches ? "dark" : "light";
+      const current = get();
+      if (current.osTheme === nextOsTheme) return;
+      // Always update osTheme so any component subscribed via the store
+      // re-renders with the new effective theme.
+      // If current.theme === "system", also re-apply to DOM so the
+      // .dark class on <html> flips and Tailwind dark variants kick in.
+      const applyNeeded = current.theme === "system";
+      set({ osTheme: nextOsTheme });
+      if (applyNeeded) applyTheme(current.theme, nextOsTheme);
+    };
+    if (mq.addEventListener) {
+      mq.addEventListener("change", handleChange);
+    } else if ((mq as any).addListener) {
+      // Safari < 14 fallback (not strictly needed since Tauri requires
+      // macOS 11+/Safari 14+, but kept for safety)
+      (mq as any).addListener(handleChange);
+    }
+  }
+
   return {
     theme: initialTheme,
+    osTheme: initialOsTheme,
     fontSize: initialFontSize,
     contentWidth: initialContentWidth,
     opacity: initialOpacity,
@@ -237,7 +269,8 @@ export const useSettingsStore = create<SettingsStore>((set, get) => {
     logFileCount: getPersistedLogFileCount(),
 
     setTheme: (theme) => {
-      applyTheme(theme);
+      const osTheme = get().osTheme;
+      applyTheme(theme, osTheme);
       try { localStorage.setItem(STORAGE_KEY_THEME, theme); } catch { }
       set({ theme });
     },

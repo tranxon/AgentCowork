@@ -12,6 +12,7 @@ import { useMcpStore } from "../../stores/mcpStore";
 import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
 import { EmbeddingModelTab } from "./EmbeddingModelTab";
+import { LspTab } from "./LspTab";
 import { ModelCapEditor } from "./ModelCapEditor";
 import { ProviderPicker } from "./ProviderPicker";
 import { AddProviderFlow } from "./AddProviderFlow";
@@ -19,7 +20,7 @@ import { useTranslation } from "../../i18n/useTranslation";
 import { Tooltip } from "../common/Tooltip";
 import { TabButton } from "../common/tab";
 
-type HarnessTab = "providers" | "search" | "mcp" | "embedding";
+type HarnessTab = "providers" | "search" | "mcp" | "embedding" | "lsp";
 
 export function HarnessPage() {
   const { t } = useTranslation();
@@ -30,6 +31,7 @@ export function HarnessPage() {
     { id: "search", label: t("harness.tabSearch") },
     { id: "mcp", label: t("harness.tabMcp") },
     { id: "embedding", label: t("harness.tabEmbedding") },
+    { id: "lsp", label: t("harnessLsp.tabLsp") },
   ];
 
   return (
@@ -53,6 +55,7 @@ export function HarnessPage() {
         {activeTab === "search" && <SearchTab />}
         {activeTab === "mcp" && <McpTab />}
         {activeTab === "embedding" && <EmbeddingModelTab />}
+        {activeTab === "lsp" && <LspTab />}
       </div>
     </div>
   );

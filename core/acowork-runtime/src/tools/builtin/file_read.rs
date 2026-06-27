@@ -3,7 +3,6 @@
 use acowork_core::tools::traits::{Tool, ToolResult, ToolSpec};
 use async_trait::async_trait;
 use serde_json::Value;
-use std::path::Path;
 
 use crate::tools::output;
 
@@ -52,10 +51,7 @@ impl Tool for FileReadTool {
         params: Value,
         work_dir: Option<&str>,
     ) -> acowork_core::error::Result<ToolResult> {
-        let path = params["path"]
-            .as_str()
-            .unwrap_or("")
-            .trim_start_matches('/');
+        let path = params["path"].as_str().unwrap_or("");
         if path.is_empty() {
             return Ok(ToolResult {
                 ok: false,
@@ -124,10 +120,9 @@ impl Tool for FileReadTool {
             });
         }
 
-        let base = work_dir.unwrap_or(".");
-        let full_path = Path::new(base).join(path);
+        let full_path = acowork_core::path_utils::resolve(path, work_dir);
         tracing::debug!(
-            work_dir = %base,
+            work_dir = ?work_dir,
             input_path = %path,
             full_path = %full_path.display(),
             exists = full_path.exists(),
@@ -206,7 +201,7 @@ impl Tool for FileReadTool {
             }
             Err(e) => {
                 tracing::warn!(
-                    work_dir = %base,
+                    work_dir = ?work_dir,
                     input_path = %path,
                     full_path = %full_path.display(),
                     error = %e,

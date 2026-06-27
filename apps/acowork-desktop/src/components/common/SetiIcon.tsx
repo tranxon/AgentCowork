@@ -172,11 +172,8 @@ interface SetiIconProps {
  */
 export function SetiIcon({ name, size = 20, className, color }: SetiIconProps) {
     const theme = useSettingsStore((s) => s.theme);
-    const isDark =
-        theme === "dark" ||
-        (theme === "system" &&
-            typeof window !== "undefined" &&
-            window.matchMedia("(prefers-color-scheme: dark)").matches);
+    const osTheme = useSettingsStore((s) => s.osTheme);
+    const isDark = theme === "dark" || (theme === "system" && osTheme === "dark");
 
     const raw = SETI_ICONS[name] ?? SETI_ICONS["default"];
 

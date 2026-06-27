@@ -122,17 +122,10 @@ impl Tool for DocReaderTool {
             });
         }
 
-        // Support both relative and absolute paths.
-        // Absolute paths (e.g. from Gateway document upload) bypass work_dir join.
-        let is_absolute =
-            raw_path.starts_with('/') || (raw_path.len() > 2 && raw_path.as_bytes()[1] == b':');
-        let full_path = if is_absolute {
-            std::path::PathBuf::from(raw_path)
-        } else {
-            let relative = raw_path.trim_start_matches('/');
-            let base = work_dir.unwrap_or(".");
-            std::path::Path::new(base).join(relative)
-        };
+        // Support both relative and absolute paths. Absolute paths (e.g. from
+        // Gateway document upload) bypass work_dir join — see
+        // `acowork_core::path_utils::resolve` for the full rule set.
+        let full_path = acowork_core::path_utils::resolve(raw_path, work_dir);
 
         // Size check
         match tokio::fs::metadata(&full_path).await {

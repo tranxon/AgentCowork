@@ -126,8 +126,12 @@ export function AppLayout() {
   const { t } = useTranslation();
 
   // ── Glass background color ───────────────────────────────────────
-  const { opacity, theme } = useSettingsStore();
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  // Read both `theme` and `osTheme` from the store. The store keeps
+  // `osTheme` in sync with macOS appearance via a matchMedia listener
+  // (see settingsStore.ts), so re-renders here happen automatically when
+  // the user switches dark/light while the app is running.
+  const { opacity, theme, osTheme } = useSettingsStore();
+  const isDark = theme === "dark" || (theme === "system" && osTheme === "dark");
   const glassBg = isDark ? `rgba(41,42,44,${opacity})` : `rgba(226,227,233,${opacity})`;
 
   // ── Switch to debug tab when entering debug mode ─────────────────

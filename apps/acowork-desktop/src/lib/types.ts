@@ -861,6 +861,68 @@ export interface AgentSearchConfig {
   providers: AgentSearchProvider[];
 }
 
+// ── LSP types ────────────────────────────────────────────────────────────
+
+/** LSP server entry — matches acowork_gateway::lsp::LspServerEntry */
+export interface LspServerEntry {
+  /** Candidate command names (tried in order) */
+  candidates: string[];
+  /** Extra arguments for stdio-mode LSP communication */
+  args: string[];
+  /** Per-candidate arg overrides */
+  candidate_args?: Record<string, string[]>;
+  /** One-line install hint shown to the user */
+  install_hint: string;
+  /** Name of the install script file (e.g. "rust" → assets/lsp_install/rust.sh) */
+  install_script?: string;
+  /** Human-readable description */
+  description: string;
+}
+
+/** LSP servers config — matches acowork_gateway::lsp::LspServersConfig */
+export interface LspServersConfig {
+  /** Schema version */
+  version: number;
+  /** Language-keyed server entries (canonical language names only) */
+  servers: Record<string, LspServerEntry>;
+}
+
+/** LSP install script response from GET /api/lsp/install/{language} */
+export interface LspInstallScriptResponse {
+  language: string;
+  filename: string;
+  script: string;
+  platform: string;
+}
+
+/** LSP install run response from POST /api/lsp/install/{language} */
+export interface LspInstallRunResponse {
+  language: string;
+  success: boolean;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+/** LSP server health status (frontend-only) */
+export type LspHealthStatus = "unknown" | "checking" | "installed" | "not_installed" | "error";
+
+/** LSP server with resolved status for UI display */
+export interface LspServerWithStatus {
+  /** Canonical language name (e.g. "rust", "python") */
+  language: string;
+  /** Server entry from config */
+  entry: LspServerEntry;
+  /** Whether the command is found on PATH */
+  installed: boolean;
+  /** Resolved command path (if installed) */
+  command?: string;
+  /** Health status */
+  status: LspHealthStatus;
+  /** Error message if status is "error" */
+  error?: string;
+}
+
 /** MCP preset definition (frontend-only, not persisted) */
 export interface McpPresetDef {
   id: string;

@@ -248,6 +248,12 @@ export function ChatPanel() {
    *  away.  Used by the ResizeObserver to keep content pinned when virtual
    *  items grow (e.g. thinking block streams in). */
   const pinnedToBottomRef = useRef(false);
+  /** Timestamp of the last compositionEnd event. On macOS WKWebView, compositionEnd
+   *  fires BEFORE the keydown(Enter) that confirmed the IME selection, so
+   *  isComposing is already false when keydown runs. We use a time-window
+   *  check instead: if compositionEnd happened within the last 300ms, the
+   *  Enter was almost certainly an IME confirmation, not a send intent. */
+  const lastCompositionEndRef = useRef(0);
   /** Tracks whether the thinking indicator was visible in the previous render.
    *  When it transitions from false → true (first appearance in a turn),
    *  we force-scroll to bottom so the expanded thinking content is visible. */
@@ -1461,10 +1467,18 @@ export function ChatPanel() {
             style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}
             onKeyDown={(e) => {
               if (e.key === "Enter" && !e.shiftKey) {
+                // On macOS, compositionEnd fires before keydown(Enter) when the user
+                // presses Enter to confirm an IME selection. isComposing is already
+                // false by then, so we check a time window instead.
+                const elapsed = Date.now() - lastCompositionEndRef.current;
+                if (elapsed < 300) return; // IME confirmation — do not send
                 e.preventDefault();
                 // Match the button logic: during sending (streaming), queue the message
                 (sending ? handleStop : handleSend)();
               }
+            }}
+            onCompositionEnd={() => {
+              lastCompositionEndRef.current = Date.now();
             }}
           />
 

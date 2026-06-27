@@ -14,6 +14,9 @@ import type {
   EmbeddingTestResponse,
   MigrationProgressResponse,
   SelectModelMigrationResponse,
+  LspServersConfig,
+  LspInstallScriptResponse,
+  LspInstallRunResponse,
 } from "./types";
 import { getGatewayUrl } from "./config";
 
@@ -287,3 +290,40 @@ export async function selectEmbeddingModelWithMigration(
   if (!resp.ok) throw new Error((data as EmbeddingModelActionResponse).message ?? `Select failed: ${resp.status}`);
   return data as SelectModelMigrationResponse | EmbeddingModelActionResponse;
 }
+
+
+// ── LSP API ──────────────────────────────────────────────────────────────
+
+/** Fetch all configured LSP servers from Gateway */
+export async function fetchLspServers(
+  gatewayUrl = getGatewayUrl(),
+): Promise<LspServersConfig> {
+  const resp = await fetch(`${gatewayUrl}/api/lsp/servers`);
+  if (!resp.ok) throw new Error(`Failed to fetch LSP servers: ${resp.status}`);
+  return resp.json();
+}
+
+/** Fetch install script content for a language */
+export async function fetchLspInstallScript(
+  language: string,
+  gatewayUrl = getGatewayUrl(),
+): Promise<LspInstallScriptResponse> {
+  const resp = await fetch(`${gatewayUrl}/api/lsp/install/${encodeURIComponent(language)}`);
+  if (!resp.ok) throw new Error(`Failed to fetch install script: ${resp.status}`);
+  return resp.json();
+}
+
+/** Run the install script for a language */
+export async function runLspInstall(
+  language: string,
+  gatewayUrl = getGatewayUrl(),
+): Promise<LspInstallRunResponse> {
+  const resp = await fetch(`${gatewayUrl}/api/lsp/install/${encodeURIComponent(language)}`, {
+    method: "POST",
+  });
+  const data = await resp.json();
+  if (!resp.ok) throw new Error((data as { error?: string }).error ?? `Install failed: ${resp.status}`);
+  return data as LspInstallRunResponse;
+}
+
+

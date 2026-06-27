@@ -1,18 +1,9 @@
-import { useRef } from "react";
 import { Minus, Square, X } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 export function TitleBar() {
   const isMacOS = navigator.platform.includes("Mac");
   const win = getCurrentWindow();
-
-  // Timer to distinguish single-click (drag) from double-click (maximize).
-  // On Windows, startDragging() blocks the event loop synchronously, which
-  // prevents dblclick from firing.  A short delay before startDragging()
-  // gives the second click time to arrive — if it does, we cancel the drag
-  // timer and toggle maximize instead.  The 250ms delay is short enough to
-  // feel instant for drag but long enough to catch a double-click.
-  const dragTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const handleMinimize = async () => {
     try {
@@ -38,39 +29,17 @@ export function TitleBar() {
     }
   };
 
-  const handleMouseDown = async (e: React.MouseEvent) => {
-    // Only handle primary mouse button (left click)
-    if (e.button !== 0) return;
-
-    if (dragTimer.current) {
-      // Second click — double-click detected, cancel drag timer
-      clearTimeout(dragTimer.current);
-      dragTimer.current = null;
-
-      try {
-        await win.toggleMaximize();
-      } catch (error) {
-        console.error("Failed to toggle maximize:", error);
-      }
-      return;
-    }
-
-    // First click — wait briefly; if no second click comes, start dragging
-    dragTimer.current = setTimeout(async () => {
-      dragTimer.current = null;
-      try {
-        await win.startDragging();
-      } catch (error) {
-        console.error("Failed to start drag:", error);
-      }
-    }, 250);
-  };
-
   // On macOS, the native traffic lights provide close/minimize/maximize.
   // On Windows/Linux, we render custom buttons.
+  //
+  // `data-tauri-drag-region` enables native window dragging with zero JS
+  // latency — Tauri's webview layer handles mousedown directly, so the
+  // cursor stays anchored at the click point.  Double-click to maximize is
+  // also handled natively by Tauri, replacing the previous setTimeout-based
+  // workaround that caused a 250ms delay and cursor drift on macOS.
   return (
     <div
-      onMouseDown={handleMouseDown}
+      data-tauri-drag-region
       className={`flex h-8 w-full items-center justify-between select-none ${
         isMacOS ? "pl-[80px]" : "pl-3"
       }`}

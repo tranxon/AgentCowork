@@ -152,8 +152,8 @@ function FilledProjectsIcon({ className }: { className?: string }) {
 export function NavBar({ currentView, onViewChange, onAvatarClick }: NavBarProps) {
   const { t } = useTranslation();
   const profile = useUserProfileStore((s) => s.profile);
-  const { theme } = useSettingsStore();
-  const isDark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  const { theme, osTheme } = useSettingsStore();
+  const isDark = theme === "dark" || (theme === "system" && osTheme === "dark");
 
   return (
     <nav

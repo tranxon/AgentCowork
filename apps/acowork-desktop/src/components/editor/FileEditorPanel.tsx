@@ -495,29 +495,19 @@ export function FileEditorPanel({ width }: { width: number }) {
         }));
     }, [activeFile?.id, activeFile?.cursorLine]);
 
-    // Determine Monaco theme based on app theme
+    // Determine Monaco theme based on app theme.
+    // For "system" mode we read `osTheme` from the settings store, which
+    // stays in sync with macOS appearance via a matchMedia listener
+    // registered once in the store (see settingsStore.ts). This avoids
+    // each component registering its own listener.
+    const osTheme = useSettingsStore((s) => s.osTheme);
     const monacoTheme = useMemo(() => {
         if (theme === "dark") return "vs-dark";
         if (theme === "light") return "vs";
-        // system: check DOM
-        return document.documentElement.classList.contains("dark") ? "vs-dark" : "vs";
-    }, [theme]);
+        return osTheme === "dark" ? "vs-dark" : "vs";
+    }, [theme, osTheme]);
 
-    // System theme change listener
-    const [systemDark, setSystemDark] = useState(() =>
-        document.documentElement.classList.contains("dark")
-    );
-    useEffect(() => {
-        if (theme !== "system") return;
-        const mq = window.matchMedia("(prefers-color-scheme: dark)");
-        const handler = () => setSystemDark(mq.matches);
-        mq.addEventListener("change", handler);
-        return () => mq.removeEventListener("change", handler);
-    }, [theme]);
-
-    const resolvedMonacoTheme = theme === "system"
-        ? (systemDark ? "vs-dark" : "vs")
-        : monacoTheme;
+    const resolvedMonacoTheme = monacoTheme;
 
     // Compute Monaco editor font size in pixels from global fontSize (rem-based).
     // Root font size is 16px by browser default, so fontSize rem * 16 = px.

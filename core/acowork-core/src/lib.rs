@@ -22,6 +22,7 @@ pub mod logging;
 pub mod manifest;
 pub mod memory;
 pub mod packaging;
+pub mod path_utils;
 pub mod permission;
 pub mod protocol;
 pub mod providers;
@@ -44,6 +45,7 @@ pub use packaging::{
     PACKAGE_ALWAYS_EXCLUDE_DIRS, PACKAGE_DEFAULT_EXCLUDE_DIRS, PACKAGE_EXCLUDE_PATTERNS,
     PackageOptions, should_exclude_path,
 };
+pub use path_utils::{is_absolute, resolve};
 pub use permission::{Permission, ShellApprovalThreshold};
 pub use providers::{
     ChatMessage, ChatRequest, ChatResponse, ContentPart, ImageUrlPart, Provider, ProviderError,

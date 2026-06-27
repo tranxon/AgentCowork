@@ -261,42 +261,40 @@ impl Tool for PathGuardedTool {
                                 token_usage: None,
                             });
                         }
-                        // Rewrite relative paths to absolute using work_dir
-                        if let Some(wd) = work_dir {
-                            let target = std::path::Path::new(&path);
-                            if !target.is_absolute() {
-                                let abs_path = std::path::Path::new(wd).join(&path);
-                                let abs_path_str = abs_path.to_string_lossy();
-                                // Re-validate the rewritten absolute path to ensure it
-                                // still falls within an allowed directory and has the
-                                // correct access level for the actual target location.
-                                match self.validate_path(&abs_path_str) {
-                                    Ok(resolved_access) => {
-                                        if self.is_write_tool()
-                                            && resolved_access != WorkspaceAccess::ReadWrite
-                                        {
-                                            return Ok(ToolResult {
-                                                ok: false,
-                                                content: String::new(),
-                                                error: Some(format!(
-                                                    "Write access denied for resolved path '{}': directory is read-only",
-                                                    abs_path_str
-                                                )),
-                                                token_usage: None,
-                                            });
-                                        }
-                                        params["path"] =
-                                            serde_json::Value::String(abs_path_str.into_owned());
-                                    }
-                                    Err(e) => {
-                                        return Ok(ToolResult {
-                                            ok: false,
-                                            content: String::new(),
-                                            error: Some(e),
-                                            token_usage: None,
-                                        });
-                                    }
+                        // Rewrite relative paths to absolute using work_dir.
+                        // All filesystem tools route through `path_utils::resolve`
+                        // for this exact step, so behaviour stays in lock-step.
+                        let abs_path_str = acowork_core::path_utils::resolve(&path, work_dir)
+                            .to_string_lossy()
+                            .into_owned();
+                        // Re-validate the rewritten absolute path to ensure it
+                        // still falls within an allowed directory and has the
+                        // correct access level for the actual target location.
+                        match self.validate_path(&abs_path_str) {
+                            Ok(resolved_access) => {
+                                if self.is_write_tool()
+                                    && resolved_access != WorkspaceAccess::ReadWrite
+                                {
+                                    return Ok(ToolResult {
+                                        ok: false,
+                                        content: String::new(),
+                                        error: Some(format!(
+                                            "Write access denied for resolved path '{}': directory is read-only",
+                                            abs_path_str
+                                        )),
+                                        token_usage: None,
+                                    });
                                 }
+                                params["path"] =
+                                    serde_json::Value::String(abs_path_str);
+                            }
+                            Err(e) => {
+                                return Ok(ToolResult {
+                                    ok: false,
+                                    content: String::new(),
+                                    error: Some(e),
+                                    token_usage: None,
+                                });
                             }
                         }
                     }
