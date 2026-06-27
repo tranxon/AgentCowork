@@ -3,8 +3,8 @@ import { useTranslation } from "../../i18n/useTranslation";
 import { useGatewayStore } from "../../stores/gatewayStore";
 import { cn } from "../../lib/utils";
 import { getGatewayUrl } from "../../lib/config";
-import { fetchLspServers, fetchLspInstallScript, runLspInstall } from "../../lib/gateway-api";
-import type { LspServersConfig, LspServerEntry, LspHealthStatus } from "../../lib/types";
+import { fetchLspServers, fetchLspStatus, fetchLspInstallScript, runLspInstall } from "../../lib/gateway-api";
+import type { LspServersConfig, LspServerEntry, LspServerStatusEntry, LspHealthStatus } from "../../lib/types";
 import { CheckCircle2, XCircle, Loader2, Eye, Terminal, Code2, RefreshCw } from "lucide-react";
 import { ErrorBox } from "../common/ErrorBox";
 
@@ -65,11 +65,48 @@ export function LspTab() {
     }
   }, []);
 
+  /**
+   * Fetch per-language install status from the backend (PATH probe) and
+   * seed healthStatus from it.
+   *
+   * Runs on mount so the UI shows the correct installed / not-installed
+   * state immediately — without it every server would appear as unknown
+   * until the user manually clicks Check, and the Install button would
+   * be available even for already-installed servers (the original bug).
+   *
+   * Failure is non-fatal: we keep whatever state was there (likely the
+   * initial empty map), and the user can still trigger a Check manually.
+   */
+  const loadStatus = useCallback(async () => {
+    try {
+      const entries: LspServerStatusEntry[] = await fetchLspStatus();
+      setHealthStatus((prev) => {
+        const next = { ...prev };
+        for (const entry of entries) {
+          // Only seed if the user has not started a manual check / install
+          // for this language since the request was issued. A checking
+          // value means a probe is in flight; leave it alone.
+          const current = next[entry.language];
+          if (current === "checking" || current === "error") continue;
+          next[entry.language] = entry.installed ? "installed" : "not_installed";
+        }
+        return next;
+      });
+    } catch (e) {
+      // Silent — do not surface to user; the empty initial state plus the
+      // manual Check button still give them a recovery path.
+      console.warn("Failed to fetch LSP status:", e);
+    }
+  }, []);
+
   useEffect(() => {
     if (status === "connected") {
-      loadServers();
+      // Run in parallel: config drives the server list, status drives
+      // the per-row badges and the Install-button gating.
+      void loadServers();
+      void loadStatus();
     }
-  }, [status, loadServers]);
+  }, [status, loadServers, loadStatus]);
 
   /** Check if an LSP server is available by attempting a WebSocket handshake */
   const handleCheck = useCallback(async (language: string) => {
@@ -228,7 +265,10 @@ export function LspTab() {
         <div className="flex items-center justify-between mb-3">
           <h2 className="text-xs font-medium">{t("harnessLsp.lspServerManagement")}</h2>
           <button
-            onClick={loadServers}
+            onClick={() => {
+              void loadServers();
+              void loadStatus();
+            }}
             disabled={loading}
             className="inline-flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300"
           >
@@ -414,8 +454,12 @@ function LspServerCard({
             </button>
           )}
 
-          {/* Install button */}
-          {entry.install_script && (
+          {/* Install button — hidden once we know the server is installed.
+              Mirrors the MCP Tab pattern: instead of a no-op button we show
+              a green "installed" indicator in the action area. The user can
+              still re-run Check to confirm the server actually responds to
+              LSP protocol messages. */}
+          {entry.install_script && healthStatus !== "installed" && (
             <button
               onClick={onInstall}
               disabled={isInstalling}
@@ -428,6 +472,15 @@ function LspServerCard({
               )}
               {isInstalling ? t("harnessLsp.installing") : t("harnessLsp.install")}
             </button>
+          )}
+          {entry.install_script && healthStatus === "installed" && (
+            <span
+              data-testid="lsp-installed-indicator"
+              className="inline-flex items-center gap-1 rounded bg-green-100 px-2 py-1 text-[11px] font-medium text-green-700 dark:bg-green-900/30 dark:text-green-400"
+            >
+              <CheckCircle2 className="h-3 w-3" />
+              {t("harnessLsp.installed")}
+            </span>
           )}
         </div>
       </div>

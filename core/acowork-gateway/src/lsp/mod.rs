@@ -96,6 +96,27 @@ pub struct LspServersConfig {
     pub servers: std::collections::HashMap<String, LspServerEntry>,
 }
 
+/// Per-language LSP server installation status (computed at request time).
+///
+/// Returned by `GET /api/lsp/status`. Unlike [`LspServerEntry`], which is a
+/// static config record, this struct reflects whether the server's command
+/// is actually reachable on `PATH` right now.
+///
+/// The check is identical to the one used by the LSP WebSocket handler
+/// (`resolve_lsp_command` → `find_on_path`), so the UI's "installed" badge
+/// always matches the editor's ability to actually launch the server.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LspServerStatusEntry {
+    /// Canonical language name (e.g. "rust", "python").
+    pub language: String,
+    /// Whether any candidate command was found on `PATH`.
+    pub installed: bool,
+    /// Resolved command path or name (e.g. "rust-analyzer" or
+    /// "C:\\Users\\...\\rust-analyzer.exe"). `None` when `installed` is false.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+}
+
 /// Resolved LSP server specification: command name + launch arguments.
 ///
 /// Different LSP servers have different stdio-mode requirements:
@@ -497,6 +518,48 @@ pub struct LspQuery {
 pub async fn lsp_servers_list(State(_state): State<AppState>) -> Json<LspServersConfig> {
     let cfg = lsp_servers_config();
     Json(cfg.clone())
+}
+
+/// `GET /api/lsp/status` — report per-language installation status.
+///
+/// Returns one [`LspServerStatusEntry`] for every language configured in
+/// `lsp_servers.json`. The `installed` flag is computed by trying each
+/// candidate command against the current `PATH`, so it reflects the same
+/// source of truth as the LSP WebSocket handler.
+///
+/// This endpoint exists so the Harness UI can show "installed" / "not
+/// installed" badges and disable the Install button for already-installed
+/// servers, without having to spawn N WebSocket handshakes on mount.
+pub async fn lsp_status_list(State(_state): State<AppState>) -> Json<Vec<LspServerStatusEntry>> {
+    Json(compute_lsp_status())
+}
+
+/// Pure helper: compute installation status for every configured language.
+///
+/// Extracted from [`lsp_status_list`] so unit tests can validate the result
+/// shape without constructing an [`AppState`].
+fn compute_lsp_status() -> Vec<LspServerStatusEntry> {
+    let cfg = lsp_servers_config();
+    // Iterate in deterministic (sorted) order so the response is stable
+    // across calls — makes UI diffing and testing predictable.
+    let mut entries: Vec<LspServerStatusEntry> = cfg
+        .servers
+        .keys()
+        .map(|lang| match resolve_lsp_command(lang) {
+            Some(spec) => LspServerStatusEntry {
+                language: spec.language,
+                installed: true,
+                command: Some(spec.command),
+            },
+            None => LspServerStatusEntry {
+                language: lang.clone(),
+                installed: false,
+                command: None,
+            },
+        })
+        .collect();
+    entries.sort_by(|a, b| a.language.cmp(&b.language));
+    entries
 }
 
 /// `GET /api/lsp/install/{language}` — return the install script content.
@@ -1330,5 +1393,67 @@ mod tests {
     #[test]
     fn test_find_on_path_nonexistent() {
         assert!(find_on_path("this_command_definitely_does_not_exist_12345").is_none());
+    }
+
+    /// `compute_lsp_status` must return one entry per configured language.
+    ///
+    /// The exact `installed` flag depends on the host PATH, so we only
+    /// assert structural invariants: count matches the config, languages
+    /// are unique, and each entry's `installed`/`command` fields are
+    /// consistent with each other.
+    #[test]
+    fn test_compute_lsp_status_invariants() {
+        let cfg = lsp_servers_config();
+        let status = compute_lsp_status();
+
+        // Count and content match the config.
+        assert_eq!(status.len(), cfg.servers.len());
+
+        // Languages are unique.
+        let mut langs: Vec<&str> = status.iter().map(|s| s.language.as_str()).collect();
+        langs.sort();
+        let mut deduped = langs.clone();
+        deduped.dedup();
+        assert_eq!(langs, deduped, "status contains duplicate languages");
+
+        // `command` is set iff `installed` is true.
+        for entry in &status {
+            assert_eq!(
+                entry.installed,
+                entry.command.is_some(),
+                "language '{}': installed={} but command={:?}",
+                entry.language,
+                entry.installed,
+                entry.command
+            );
+        }
+
+        // Result is sorted by language (deterministic response).
+        let mut sorted = status.clone();
+        sorted.sort_by(|a, b| a.language.cmp(&b.language));
+        assert_eq!(status, sorted, "status list is not sorted by language");
+    }
+
+    /// `LspServerStatusEntry` must serialize without the `command` field
+    /// when it's `None`, keeping the JSON payload minimal.
+    #[test]
+    fn test_lsp_server_status_entry_serde_skips_none_command() {
+        let entry = LspServerStatusEntry {
+            language: "brainfuck".to_string(),
+            installed: false,
+            command: None,
+        };
+        let json = serde_json::to_string(&entry).unwrap();
+        assert!(!json.contains("command"), "command field must be skipped when None: {}", json);
+        assert!(json.contains("\"installed\":false"));
+
+        let entry_installed = LspServerStatusEntry {
+            language: "rust".to_string(),
+            installed: true,
+            command: Some("rust-analyzer".to_string()),
+        };
+        let json_installed = serde_json::to_string(&entry_installed).unwrap();
+        assert!(json_installed.contains("\"command\":\"rust-analyzer\""));
+        assert!(json_installed.contains("\"installed\":true"));
     }
 }

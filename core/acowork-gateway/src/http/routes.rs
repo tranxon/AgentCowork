@@ -344,6 +344,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(crate::http::fs_browse::fs_routes())
         .route("/lsp/{language}", get(crate::lsp::lsp_handler))
         .route("/api/lsp/servers", get(crate::lsp::lsp_servers_list))
+        .route("/api/lsp/status", get(crate::lsp::lsp_status_list))
         .route(
             "/api/lsp/install/{language}",
             get(crate::lsp::lsp_install_script),

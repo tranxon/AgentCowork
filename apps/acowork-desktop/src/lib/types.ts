@@ -904,6 +904,22 @@ export interface LspInstallRunResponse {
   stderr: string;
 }
 
+/**
+ * Per-language LSP server installation status returned by
+ * `GET /api/lsp/status`. The backend probes `PATH` for each candidate
+ * command at request time using the same logic the LSP WebSocket handler
+ * uses, so the value here matches the editor's actual ability to launch
+ * the server.
+ */
+export interface LspServerStatusEntry {
+  /** Canonical language name (e.g. "rust", "python") */
+  language: string;
+  /** Whether any candidate command was found on PATH */
+  installed: boolean;
+  /** Resolved command path or name; only present when `installed` is true */
+  command?: string;
+}
+
 /** LSP server health status (frontend-only) */
 export type LspHealthStatus = "unknown" | "checking" | "installed" | "not_installed" | "error";
 

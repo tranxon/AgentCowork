@@ -17,6 +17,7 @@ import type {
   LspServersConfig,
   LspInstallScriptResponse,
   LspInstallRunResponse,
+  LspServerStatusEntry,
 } from "./types";
 import { getGatewayUrl } from "./config";
 
@@ -300,6 +301,25 @@ export async function fetchLspServers(
 ): Promise<LspServersConfig> {
   const resp = await fetch(`${gatewayUrl}/api/lsp/servers`);
   if (!resp.ok) throw new Error(`Failed to fetch LSP servers: ${resp.status}`);
+  return resp.json();
+}
+
+/**
+ * Fetch per-language LSP installation status from the Gateway.
+ *
+ * The backend probes `PATH` for each configured candidate command and
+ * returns whether a usable binary was found. This is the source of
+ * truth for the UI's "installed" badge and is used to disable the
+ * Install button for already-installed servers.
+ *
+ * Unlike `handleCheck` in `LspTab`, this endpoint does NOT spawn any
+ * LSP process — it's a fast PATH lookup, so it's safe to call on mount.
+ */
+export async function fetchLspStatus(
+  gatewayUrl = getGatewayUrl(),
+): Promise<LspServerStatusEntry[]> {
+  const resp = await fetch(`${gatewayUrl}/api/lsp/status`);
+  if (!resp.ok) throw new Error(`Failed to fetch LSP status: ${resp.status}`);
   return resp.json();
 }
 
