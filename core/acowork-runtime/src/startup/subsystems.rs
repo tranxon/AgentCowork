@@ -10,6 +10,7 @@
 use crate::config::RuntimeConfig;
 use crate::error::Result;
 use crate::startup::context::{AgentBootContext, SessionBootContext};
+use crate::agent::loop_::SessionChunkEvent;
 
 /// Resources produced by Phase C, needed by Phase D.
 pub(crate) struct SubsystemHandles {
@@ -49,6 +50,9 @@ pub(crate) async fn phase_c_spawn_subsystems(
     // This separation ensures control events are never blocked by
     // data-event backpressure.
     let agent_id_for_relay = ctx.agent_id.clone();
+    // Bridge capacity matches on_chunk_capacity so the Reader never becomes
+    // a narrower bottleneck than the AgentLoop's data channel.
+    let bridge_capacity = config.data_flow.on_chunk_capacity;
     let chunk_relay = if ctx.chunk_rx.is_some() {
         let chunk_rx = ctx.chunk_rx.take().unwrap();
         let control_chunk_rx = ctx.control_chunk_rx.take();
@@ -64,20 +68,53 @@ pub(crate) async fn phase_c_spawn_subsystems(
             .expect("grpc_client must be Some in Gateway mode")
             .outbound_ctrl_sender();
         Some(tokio::spawn(async move {
-            tracing::info!("Chunk relay started (shared gRPC connection, dual-channel)");
+            tracing::info!(
+                "Chunk relay started (shared gRPC connection, dual-channel, read-write split)"
+            );
             let mut chunk_rx = chunk_rx;
+
+            // P2 (ADR-020 fix #2): Split read and write into separate tasks
+            // connected by an internal bridge channel. This prevents downstream
+            // backpressure (e.g. outbound_ctrl full → send().await blocks) from
+            // starving the upstream read loop.
+            //
+            // Bridge capacity matches on_chunk_capacity (default 1024) so the
+            // Reader can buffer as many events as the AgentLoop can produce
+            // before feeling backpressure. If the Writer stalls long enough to
+            // fill the bridge, the backpressure correctly propagates upward.
+            let (bridge_tx, mut bridge_rx) =
+                tokio::sync::mpsc::channel::<SessionChunkEvent>(bridge_capacity);
+
+            // Writer task: reads from bridge, writes to outbound channels.
+            // This is the only place where send().await can block; it does not
+            // affect the reader's ability to drain chunk_rx/control_rx.
+            let writer_agent_id = agent_id_for_relay.clone();
+            let writer_data_tx = outbound_data_tx.clone();
+            let writer_ctrl_tx = outbound_ctrl_tx.clone();
+            let writer = tokio::spawn(async move {
+                while let Some(event) = bridge_rx.recv().await {
+                    relay_chunk_event(
+                        &writer_data_tx,
+                        &writer_ctrl_tx,
+                        &writer_agent_id,
+                        &event.session_id,
+                        event.event,
+                    )
+                    .await;
+                }
+                tracing::debug!("Chunk relay writer task ended");
+            });
+
+            // Reader task (inline): reads from chunk_rx/control_rx, forwards to bridge.
+            // Never calls relay_chunk_event directly — all outbound I/O is in the writer.
             if let Some(mut control_rx) = control_chunk_rx {
                 loop {
                     // Priority: drain control channel first (non-blocking)
                     while let Ok(session_event) = control_rx.try_recv() {
-                        relay_chunk_event(
-                            &outbound_data_tx,
-                            &outbound_ctrl_tx,
-                            &agent_id_for_relay,
-                            &session_event.session_id,
-                            session_event.event,
-                        )
-                        .await;
+                        if bridge_tx.send(session_event).await.is_err() {
+                            // Writer task died; stop reading
+                            break;
+                        }
                     }
                     // Block-wait on both; biased gives control channel priority
                     tokio::select! {
@@ -97,37 +134,22 @@ pub(crate) async fn phase_c_spawn_subsystems(
                                     // already halted the AgentLoop, so no new
                                     // Deltas will be produced during drain.
                                     while let Ok(data_event) = chunk_rx.try_recv() {
-                                        relay_chunk_event(
-                                            &outbound_data_tx,
-                                            &outbound_ctrl_tx,
-                                            &agent_id_for_relay,
-                                            &data_event.session_id,
-                                            data_event.event,
-                                        )
-                                        .await;
+                                        if bridge_tx.send(data_event).await.is_err() {
+                                            break;
+                                        }
                                     }
                                     // Now send the control event itself
-                                    relay_chunk_event(
-                                        &outbound_data_tx,
-                                        &outbound_ctrl_tx,
-                                        &agent_id_for_relay,
-                                        &ev.session_id,
-                                        ev.event,
-                                    )
-                                    .await;
+                                    if bridge_tx.send(ev).await.is_err() {
+                                        break;
+                                    }
                                 }
                                 None => {
                                     // Control channel closed;
                                     // drain data channel then exit
                                     while let Some(ev) = chunk_rx.recv().await {
-                                        relay_chunk_event(
-                                            &outbound_data_tx,
-                                            &outbound_ctrl_tx,
-                                            &agent_id_for_relay,
-                                            &ev.session_id,
-                                            ev.event,
-                                        )
-                                        .await;
+                                        if bridge_tx.send(ev).await.is_err() {
+                                            break;
+                                        }
                                     }
                                     break;
                                 }
@@ -136,27 +158,17 @@ pub(crate) async fn phase_c_spawn_subsystems(
                         session_event = chunk_rx.recv() => {
                             match session_event {
                                 Some(ev) => {
-                                    relay_chunk_event(
-                                        &outbound_data_tx,
-                                        &outbound_ctrl_tx,
-                                        &agent_id_for_relay,
-                                        &ev.session_id,
-                                        ev.event,
-                                    )
-                                    .await;
+                                    if bridge_tx.send(ev).await.is_err() {
+                                        break;
+                                    }
                                 }
                                 None => {
                                     // Data channel closed;
                                     // drain control channel then exit
                                     while let Some(ev) = control_rx.recv().await {
-                                        relay_chunk_event(
-                                            &outbound_data_tx,
-                                            &outbound_ctrl_tx,
-                                            &agent_id_for_relay,
-                                            &ev.session_id,
-                                            ev.event,
-                                        )
-                                        .await;
+                                        if bridge_tx.send(ev).await.is_err() {
+                                            break;
+                                        }
                                     }
                                     break;
                                 }
@@ -167,16 +179,15 @@ pub(crate) async fn phase_c_spawn_subsystems(
             } else {
                 // No control channel (shouldn't happen in Gateway mode)
                 while let Some(session_event) = chunk_rx.recv().await {
-                    relay_chunk_event(
-                        &outbound_data_tx,
-                        &outbound_ctrl_tx,
-                        &agent_id_for_relay,
-                        &session_event.session_id,
-                        session_event.event,
-                    )
-                    .await;
+                    if bridge_tx.send(session_event).await.is_err() {
+                        break;
+                    }
                 }
             }
+
+            // Reader finished — drop bridge_tx to signal writer, then wait for it
+            drop(bridge_tx);
+            let _ = writer.await;
             tracing::debug!("Chunk relay task ended");
         }))
     } else {

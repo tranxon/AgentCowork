@@ -162,10 +162,10 @@ fn default_bridge_ctrl_capacity() -> usize {
     256
 }
 fn default_grpc_outbound_capacity() -> usize {
-    32
+    256
 }
 fn default_ipc_push_capacity() -> usize {
-    32
+    256
 }
 fn default_capability_broadcast_capacity() -> usize {
     64

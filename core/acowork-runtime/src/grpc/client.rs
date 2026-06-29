@@ -1371,29 +1371,38 @@ async fn merge_outbound_channels(
     mut ctrl_rx: mpsc::Receiver<proto::ClientMessage>,
     merged_tx: mpsc::Sender<proto::ClientMessage>,
 ) {
+    let mut data_closed = false;
+    let mut ctrl_closed = false;
     loop {
+        if data_closed && ctrl_closed {
+            break;
+        }
         tokio::select! {
             biased;
             // Control channel: highest priority
-            msg = ctrl_rx.recv() => {
+            msg = ctrl_rx.recv(), if !ctrl_closed => {
                 match msg {
                     Some(m) => {
                         if merged_tx.send(m).await.is_err() {
                             break; // gRPC stream closed
                         }
                     }
-                    None => break,
+                    None => {
+                        ctrl_closed = true;
+                    }
                 }
             }
             // Data channel: lower priority
-            msg = data_rx.recv() => {
+            msg = data_rx.recv(), if !data_closed => {
                 match msg {
                     Some(m) => {
                         if merged_tx.send(m).await.is_err() {
                             break; // gRPC stream closed
                         }
                     }
-                    None => break,
+                    None => {
+                        data_closed = true;
+                    }
                 }
             }
         }

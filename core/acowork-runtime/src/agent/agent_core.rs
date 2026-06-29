@@ -356,6 +356,9 @@ impl AgentCore {
         // silently dropped. This prevents LLM token floods from inactive
         // sessions from consuming channel bandwidth.
         if !is_control && !self.push_enabled.load(Ordering::Relaxed) {
+            tracing::debug!(
+                "push_enabled=false, dropping data event (session not activated)"
+            );
             return false;
         }
 

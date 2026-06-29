@@ -883,6 +883,17 @@ async fn process_gateway_recv(
                                     send_session_response(grpc_client, &request_id, data).await;
                                 } else {
                                     tracing::info!(new_session_id = %new_session_id, "Created new session via Gateway request");
+
+                                    // P1 (ADR-020): Auto-enable push on create.
+                                    // New sessions start in the foreground; the frontend
+                                    // will switch to them immediately.  EnablePush here
+                                    // removes the race between create and the first
+                                    // chat_message.
+                                    let _ = session_manager.send_to_session(
+                                        &new_session_id,
+                                        SessionMessage::EnablePush,
+                                    );
+
                                     let data = serde_json::json!({ "session_id": new_session_id });
                                     send_session_response(grpc_client, &request_id, data).await;
                                 }
@@ -1015,6 +1026,14 @@ async fn process_gateway_recv(
                             }
                         };
 
+                        // P1 (ADR-020): Auto-disable push before close.
+                        // The session is being closed; stop pushing data events
+                        // to free channel bandwidth immediately.
+                        let _ = session_manager.send_to_session(
+                            &session_id,
+                            SessionMessage::DisablePush,
+                        );
+
                         // Close the session: trigger distillation and free resources (JSONL preserved)
                         if let Err(e) = session_manager.close_session(&session_id).await {
                             tracing::warn!("Failed to close session {}: {}", session_id, e);
@@ -1043,6 +1062,14 @@ async fn process_gateway_recv(
                                 return LoopAction::Continue;
                             }
                         };
+
+                        // P1 (ADR-020): Auto-disable push before delete.
+                        // Same rationale as close_session — stop pushing before
+                        // tearing down the session.
+                        let _ = session_manager.send_to_session(
+                            &session_id,
+                            SessionMessage::DisablePush,
+                        );
 
                         // Close first: trigger distillation and free resources
                         if let Err(e) = session_manager.close_session(&session_id).await {

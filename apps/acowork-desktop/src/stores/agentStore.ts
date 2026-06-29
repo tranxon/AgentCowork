@@ -639,8 +639,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
 
       if (isCurrent) {
         if (newCurrentId) {
-          useChatStore.getState().activateSession(agentId, newCurrentId);
-          get().saveSessionForAgent(agentId, newCurrentId);
+          // Use switchSession for full activate/deactivate lifecycle.
+          // Runtime close already sent DisablePush for the closed session;
+          // switchSession handles the activate for the new one.
+          get().switchSession(newCurrentId, agentId);
         } else {
           useChatStore.getState().clearMessages(agentId);
         }
@@ -682,8 +684,10 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
 
       if (isCurrent) {
         if (newCurrentId) {
-          useChatStore.getState().activateSession(agentId, newCurrentId);
-          get().saveSessionForAgent(agentId, newCurrentId);
+          // Use switchSession for full activate/deactivate lifecycle.
+          // Runtime delete already sent DisablePush for the deleted session;
+          // switchSession handles the activate for the new one.
+          get().switchSession(newCurrentId, agentId);
         } else {
           useChatStore.getState().clearMessages(agentId);
         }

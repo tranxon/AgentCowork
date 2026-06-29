@@ -141,7 +141,7 @@ impl AgentLoop {
                     // so the caller can relay streaming chunks to Gateway
                     if !self.core.try_send_chunk(ChunkEvent::Delta(chunk.clone())) {
                         tracing::debug!(
-                            "on_chunk channel full or closed, dropping delta"
+                            "dropping delta (channel full, closed, or push disabled)"
                         );
                     }
                 }
@@ -155,7 +155,7 @@ impl AgentLoop {
                     // Forward reasoning delta to on_chunk channel for real-time streaming
                     if !self.core.try_send_chunk(ChunkEvent::ReasoningDelta(chunk.clone())) {
                         tracing::debug!(
-                            "on_chunk channel full or closed, dropping reasoning delta"
+                            "dropping reasoning delta (channel full, closed, or push disabled)"
                         );
                     }
                 }
