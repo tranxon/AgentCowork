@@ -104,7 +104,7 @@ pub struct RuntimeConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFlowConfig {
     /// Capacity of the on_chunk mpsc channel (L1 data: Delta, ReasoningDelta).
-    /// Default: 256.
+    /// Default: 1024.
     #[serde(default = "default_on_chunk_capacity")]
     pub on_chunk_capacity: usize,
     /// Capacity of the control_chunk mpsc channel (L3 control events).
@@ -123,7 +123,7 @@ pub struct DataFlowConfig {
 }
 
 fn default_on_chunk_capacity() -> usize {
-    256
+    1024
 }
 fn default_control_chunk_capacity() -> usize {
     64

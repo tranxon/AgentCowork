@@ -585,6 +585,11 @@ fn legacy_data_dir() -> Option<PathBuf> {
 mod tests {
     use super::*;
     use clap::Parser;
+    use std::sync::Mutex;
+
+    /// Serialize tests that mutate `ACOWORK_HOME` to prevent flaky failures
+    /// from parallel env-var races.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -603,6 +608,7 @@ mod tests {
 
     #[test]
     fn test_config_from_cli_defaults() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // Use a temp home directory so no real config file is read.
         let tmp = std::env::temp_dir().join("acowork-test-config-defaults");
         let _ = std::fs::create_dir_all(&tmp);
@@ -649,6 +655,7 @@ mod tests {
 
     #[test]
     fn test_project_root_default_layout() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // Clear override so we exercise the default path.
         // SAFETY: tests in this module run on a single test thread for
         // env-mutating work; concurrent tests don't touch ACOWORK_HOME.
@@ -683,6 +690,7 @@ mod tests {
 
     #[test]
     fn test_project_root_respects_acowork_home() {
+        let _lock = ENV_LOCK.lock().unwrap();
         // SAFETY: see comment in test_project_root_default_layout.
         unsafe {
             std::env::set_var("ACOWORK_HOME", "/tmp/acowork-home-test");

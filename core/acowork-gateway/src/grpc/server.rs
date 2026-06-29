@@ -452,8 +452,73 @@ impl GatewayService for GatewayGrpcService {
         // Spawn handler task for this connection
         tokio::spawn(async move {
             loop {
+                // Biased select: branches are polled in declaration order.
+                // Control messages (CapabilityUpdate, IPC push) take priority
+                // over data messages (inbound LLM streaming chunks) to ensure
+                // Stop/Done/Error and capability changes are never starved by
+                // high-frequency token streaming.
                 tokio::select! {
-                    // Branch 1: Incoming request from Runtime
+                    biased;
+
+                    // Branch 1 (HIGHEST priority): CapabilityUpdate broadcast
+                    cap_msg = cap_rx.recv() => {
+                        match cap_msg {
+                            Ok(msg) => {
+                                tracing::debug!(
+                                    "CapabilityUpdate broadcast to gRPC {}",
+                                    conn_id_clone
+                                );
+                                let server_msg = msg.to_proto(0);
+                                if outbound_tx.send(Ok(server_msg)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                                tracing::warn!(
+                                    "CapabilityUpdate channel lagged for {}: skipped {} messages",
+                                    conn_id_clone, n
+                                );
+                            }
+                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                                tracing::info!(
+                                    "CapabilityUpdate channel closed for {}",
+                                    conn_id_clone
+                                );
+                            }
+                        }
+                    }
+
+                    // Branch 2 (HIGH priority): Server-push message via IPC session channel
+                    // (IntentReceived, ProviderListUpdate, WorkspaceConfigUpdate, etc.)
+                    push_msg = ipc_push_rx.recv() => {
+                        match push_msg {
+                            Some(msg) => {
+                                tracing::debug!(
+                                    "Server-push to gRPC {}: {:?}",
+                                    conn_id_clone,
+                                    std::mem::discriminant(&msg)
+                                );
+                                let server_msg = msg.to_proto(0); // request_id = 0 = push
+                                if outbound_tx.send(Ok(server_msg)).await.is_err() {
+                                    tracing::warn!(
+                                        "gRPC outbound channel closed for {}",
+                                        conn_id_clone
+                                    );
+                                    break;
+                                }
+                            }
+                            None => {
+                                tracing::warn!(
+                                    "IPC push channel closed for {}",
+                                    conn_id_clone
+                                );
+                                break;
+                            }
+                        }
+                    }
+
+                    // Branch 3 (LOWEST priority): Incoming request from Runtime
+                    // (includes high-frequency LLM streaming chunks)
                     msg = inbound.message() => {
                         match msg {
                             Ok(Some(client_msg)) => {
@@ -532,63 +597,6 @@ impl GatewayService for GatewayGrpcService {
                                     e
                                 );
                                 break;
-                            }
-                        }
-                    }
-
-                    // Branch 2: Server-push message via IPC session channel
-                    // (IntentReceived, ProviderListUpdate, WorkspaceConfigUpdate, etc.)
-                    push_msg = ipc_push_rx.recv() => {
-                        match push_msg {
-                            Some(msg) => {
-                                tracing::debug!(
-                                    "Server-push to gRPC {}: {:?}",
-                                    conn_id_clone,
-                                    std::mem::discriminant(&msg)
-                                );
-                                let server_msg = msg.to_proto(0); // request_id = 0 = push
-                                if outbound_tx.send(Ok(server_msg)).await.is_err() {
-                                    tracing::warn!(
-                                        "gRPC outbound channel closed for {}",
-                                        conn_id_clone
-                                    );
-                                    break;
-                                }
-                            }
-                            None => {
-                                tracing::warn!(
-                                    "IPC push channel closed for {}",
-                                    conn_id_clone
-                                );
-                                break;
-                            }
-                        }
-                    }
-
-                    // Branch 3: CapabilityUpdate broadcast
-                    cap_msg = cap_rx.recv() => {
-                        match cap_msg {
-                            Ok(msg) => {
-                                tracing::debug!(
-                                    "CapabilityUpdate broadcast to gRPC {}",
-                                    conn_id_clone
-                                );
-                                let server_msg = msg.to_proto(0);
-                                if outbound_tx.send(Ok(server_msg)).await.is_err() {
-                                    break;
-                                }
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                                tracing::warn!(
-                                    "CapabilityUpdate channel lagged for {}: skipped {} messages",
-                                    conn_id_clone, n
-                                );
-                            }
-                            Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                                tracing::info!(
-                                    "CapabilityUpdate channel closed for {}",
-                                    conn_id_clone
-                                );
                             }
                         }
                     }
