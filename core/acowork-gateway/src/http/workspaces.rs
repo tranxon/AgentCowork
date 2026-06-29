@@ -882,12 +882,18 @@ pub async fn read_file(
     // Read content: binary files (images, etc.) are base64-encoded;
     // text files are read as UTF-8 strings.
     let content = if mime_type.starts_with("image/") {
-        let bytes = std::fs::read(&abs_path)
+        let abs_path_clone = abs_path.clone();
+        let bytes = tokio::task::spawn_blocking(move || std::fs::read(&abs_path_clone))
+            .await
+            .map_err(|e| ApiError::internal(&format!("Join error: {}", e)))?
             .map_err(|e| ApiError::internal(&format!("Failed to read file: {}", e)))?;
         use base64::Engine;
         base64::engine::general_purpose::STANDARD.encode(&bytes)
     } else {
-        std::fs::read_to_string(&abs_path)
+        let abs_path_clone = abs_path.clone();
+        tokio::task::spawn_blocking(move || std::fs::read_to_string(&abs_path_clone))
+            .await
+            .map_err(|e| ApiError::internal(&format!("Join error: {}", e)))?
             .map_err(|e| ApiError::internal(&format!("Failed to read file: {}", e)))?
     };
 
@@ -942,7 +948,10 @@ pub async fn read_raw_file(
     let ext = abs_path.extension().and_then(|e| e.to_str()).unwrap_or("");
     let mime_type = detect_mime(ext).unwrap_or("text/plain").to_string();
 
-    let bytes = std::fs::read(&abs_path)
+    let abs_path_clone = abs_path.clone();
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&abs_path_clone))
+        .await
+        .map_err(|e| ApiError::internal(&format!("Join error: {}", e)))?
         .map_err(|e| ApiError::internal(&format!("Failed to read file: {}", e)))?;
 
     Ok((

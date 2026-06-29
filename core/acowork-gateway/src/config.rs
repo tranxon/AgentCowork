@@ -110,6 +110,66 @@ pub struct GatewayConfig {
     pub hf_mirrors: Vec<String>,
     #[serde(default)]
     pub embedding_model: Option<String>,
+    /// Data flow tuning parameters (ADR-020: channel capacities, thread counts).
+    #[serde(default)]
+    pub data_flow: DataFlowConfig,
+}
+
+/// Data flow tuning configuration (ADR-020).
+///
+/// Controls channel capacities and concurrency limits for the Gateway's
+/// internal data pipelines. These values affect throughput and latency
+/// under load — especially during LLM streaming (thinking mode).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFlowConfig {
+    /// Number of tokio async worker threads for the Gateway runtime.
+    /// Default: 8 (increased from 4 per ADR-020 P0-2).
+    #[serde(default = "default_worker_threads")]
+    pub worker_threads: usize,
+    /// Capacity of the Bridge broadcast channel (LLM chunks → WebSocket).
+    /// Default: 256.
+    #[serde(default = "default_bridge_channel_capacity")]
+    pub bridge_channel_capacity: usize,
+    /// Capacity of the gRPC outbound mpsc channel (per-connection).
+    /// Default: 32.
+    #[serde(default = "default_grpc_outbound_capacity")]
+    pub grpc_outbound_capacity: usize,
+    /// Capacity of the IPC push mpsc channel (per-connection).
+    /// Default: 32.
+    #[serde(default = "default_ipc_push_capacity")]
+    pub ipc_push_capacity: usize,
+    /// Capacity of the capability broadcast channel.
+    /// Default: 64.
+    #[serde(default = "default_capability_broadcast_capacity")]
+    pub capability_broadcast_capacity: usize,
+}
+
+fn default_worker_threads() -> usize {
+    8
+}
+fn default_bridge_channel_capacity() -> usize {
+    256
+}
+fn default_grpc_outbound_capacity() -> usize {
+    32
+}
+fn default_ipc_push_capacity() -> usize {
+    32
+}
+fn default_capability_broadcast_capacity() -> usize {
+    64
+}
+
+impl Default for DataFlowConfig {
+    fn default() -> Self {
+        Self {
+            worker_threads: default_worker_threads(),
+            bridge_channel_capacity: default_bridge_channel_capacity(),
+            grpc_outbound_capacity: default_grpc_outbound_capacity(),
+            ipc_push_capacity: default_ipc_push_capacity(),
+            capability_broadcast_capacity: default_capability_broadcast_capacity(),
+        }
+    }
 }
 
 /// HTTP API configuration
@@ -390,6 +450,10 @@ impl GatewayConfig {
                 .map(|c| c.hf_mirrors.clone())
                 .unwrap_or_default(),
             embedding_model: file_config.as_ref().and_then(|c| c.embedding_model.clone()),
+            data_flow: file_config
+                .as_ref()
+                .map(|c| c.data_flow.clone())
+                .unwrap_or_default(),
         })
     }
 
@@ -479,6 +543,7 @@ impl Default for GatewayConfig {
             max_output_tokens_limit: default_max_output_tokens_limit(),
             hf_mirrors: Vec::new(),
             embedding_model: None,
+            data_flow: DataFlowConfig::default(),
         }
     }
 }
@@ -538,6 +603,12 @@ mod tests {
 
     #[test]
     fn test_config_from_cli_defaults() {
+        // Use a temp home directory so no real config file is read.
+        let tmp = std::env::temp_dir().join("acowork-test-config-defaults");
+        let _ = std::fs::create_dir_all(&tmp);
+        unsafe { std::env::set_var("ACOWORK_HOME", tmp.to_str().unwrap()) };
+        unsafe { std::env::set_var("ACOWORK_GATEWAY_LOG_LEVEL", "info") };
+
         let cli = Cli::parse_from(["acowork-gateway"]);
         let config = GatewayConfig::from_cli(&cli).unwrap();
         assert!(!config.socket_path.is_empty());

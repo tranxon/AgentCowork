@@ -698,7 +698,8 @@ mod tests {
         let mut history = HistoryManager::new(10000);
         history.append(ChatMessage::user("Hello"));
 
-        let builder = ContextBuilder::new("You are a helpful assistant.".to_string());
+        let builder = ContextBuilder::new("You are a helpful assistant.".to_string())
+            .with_override_model("gpt-4".to_string());
         let request = builder.build(&manifest, &history, None, 32_768);
 
         assert_eq!(request.model, "gpt-4");

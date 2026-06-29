@@ -91,6 +91,59 @@ pub struct RuntimeConfig {
     /// Max output tokens for LLM summarization calls (compaction + distillation).
     #[serde(default = "default_distill_max_tokens")]
     pub distill_max_tokens: u32,
+    /// Data flow tuning parameters (ADR-020: channel capacities, flush intervals).
+    #[serde(default)]
+    pub data_flow: DataFlowConfig,
+}
+
+/// Data flow tuning configuration (ADR-020).
+///
+/// Controls channel capacities and flush intervals for the Runtime's
+/// internal data pipelines. These values affect throughput and latency
+/// under load — especially during LLM streaming (thinking mode).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataFlowConfig {
+    /// Capacity of the on_chunk mpsc channel (L1 data: Delta, ReasoningDelta).
+    /// Default: 256.
+    #[serde(default = "default_on_chunk_capacity")]
+    pub on_chunk_capacity: usize,
+    /// Capacity of the control_chunk mpsc channel (L3 control events).
+    /// Default: 64.
+    #[serde(default = "default_control_chunk_capacity")]
+    pub control_chunk_capacity: usize,
+    /// Capacity of the gRPC outbound mpsc channel (Runtime → Gateway).
+    /// Default: 256.
+    #[serde(default = "default_outbound_capacity")]
+    pub outbound_capacity: usize,
+    /// Reasoning token batch flush interval in milliseconds.
+    /// Tokens are accumulated and flushed at this interval to reduce
+    /// channel write frequency during thinking mode. Default: 200.
+    #[serde(default = "default_reasoning_flush_interval_ms")]
+    pub reasoning_flush_interval_ms: u64,
+}
+
+fn default_on_chunk_capacity() -> usize {
+    256
+}
+fn default_control_chunk_capacity() -> usize {
+    64
+}
+fn default_outbound_capacity() -> usize {
+    256
+}
+fn default_reasoning_flush_interval_ms() -> u64 {
+    200
+}
+
+impl Default for DataFlowConfig {
+    fn default() -> Self {
+        Self {
+            on_chunk_capacity: default_on_chunk_capacity(),
+            control_chunk_capacity: default_control_chunk_capacity(),
+            outbound_capacity: default_outbound_capacity(),
+            reasoning_flush_interval_ms: default_reasoning_flush_interval_ms(),
+        }
+    }
 }
 
 fn default_log_level() -> String {
@@ -183,6 +236,7 @@ impl Default for RuntimeConfig {
             session_idle_timeout_secs: default_session_idle_timeout_secs(),
             min_distill_chars: default_min_distill_chars(),
             distill_max_tokens: default_distill_max_tokens(),
+            data_flow: DataFlowConfig::default(),
         }
     }
 }

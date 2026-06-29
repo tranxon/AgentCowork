@@ -275,6 +275,7 @@ pub(crate) async fn connect_gateway_client(
     version: &str,
 
     work_dir: &str,
+    outbound_capacity: usize,
 ) -> Option<(
     crate::grpc::client::GatewayGrpcClient,
     crate::grpc::client::AgentHelloConfig,
@@ -306,6 +307,7 @@ pub(crate) async fn connect_gateway_client(
         cached_user_profile_ver,
         avatar,
         builtin_avatar,
+        outbound_capacity,
     )
     .await
     {
@@ -948,6 +950,13 @@ async fn process_gateway_recv(
                             }
                         }
 
+                        // P1: Enable real-time push for the activated session.
+                        // Control events are always pushed; this enables data events
+                        // (Delta, ReasoningDelta, ToolCall, ToolResult) as well.
+                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::EnablePush) {
+                            tracing::warn!(session_id = %session_id, error = %e, "Failed to enable push for activated session");
+                        }
+
                         // Read session metadata from JSONL to return model/provider/workspace_id
                         // to the frontend in the activation response, so it can populate the UI
                         // immediately without waiting for a WS event.
@@ -969,6 +978,23 @@ async fn process_gateway_recv(
                             "workspace_id": session_workspace_id,
                         });
                         send_session_response(grpc_client, &request_id, data).await;
+                        return LoopAction::Continue;
+                    }
+
+                    if action == "deactivate_session" {
+                        let session_id = match params.get("session_id").and_then(|v| v.as_str()) {
+                            Some(sid) if !sid.is_empty() => sid.to_string(),
+                            _ => {
+                                tracing::warn!("deactivate_session: missing or empty session_id");
+                                return LoopAction::Continue;
+                            }
+                        };
+
+                        // P1: Disable real-time push for the deactivated session.
+                        // Fire-and-forget — no response needed.
+                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::DisablePush) {
+                            tracing::warn!(session_id = %session_id, error = %e, "Failed to disable push for deactivated session");
+                        }
                         return LoopAction::Continue;
                     }
 
@@ -2985,6 +3011,7 @@ mod tests {
         let result = crate::grpc::client::GatewayGrpcClient::connect_with_timeout(
             "unix:///nonexistent/socket/path.sock",
             2, // 2-second max elapsed time — enough to try a few times
+            256, // default outbound capacity
         )
         .await;
         assert!(

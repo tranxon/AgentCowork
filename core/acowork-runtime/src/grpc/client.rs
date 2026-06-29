@@ -90,6 +90,8 @@ pub struct GatewayGrpcClient {
     endpoint: String,
     /// Outbound message sender (feeds the gRPC stream via ReceiverStream)
     outbound_tx: mpsc::Sender<proto::ClientMessage>,
+    /// Capacity used to create outbound_tx (retained for reconnect).
+    outbound_capacity: usize,
     /// Request ID counter (atomic for concurrent access from `&self` methods)
     next_request_id: Arc<AtomicU64>,
     /// Pending request map: request_id → oneshot sender for response
@@ -121,7 +123,7 @@ impl GatewayGrpcClient {
     ///
     /// Prefer [`connect`] for production use — it wraps this with exponential
     /// backoff retry.
-    async fn connect_once(endpoint: &str) -> Result<Self, AcoworkError> {
+    async fn connect_once(endpoint: &str, outbound_capacity: usize) -> Result<Self, AcoworkError> {
         let channel = Channel::from_shared(endpoint.to_string())
             .map_err(|e| AcoworkError::Ipc(format!("Invalid gRPC endpoint: {}", e)))?
             .connect()
@@ -131,7 +133,7 @@ impl GatewayGrpcClient {
         let mut client = proto::gateway_service_client::GatewayServiceClient::new(channel);
 
         // Outbound channel: Runtime → Gateway
-        let (outbound_tx, outbound_rx) = mpsc::channel::<proto::ClientMessage>(256);
+        let (outbound_tx, outbound_rx) = mpsc::channel::<proto::ClientMessage>(outbound_capacity);
         let outbound_stream = ReceiverStream::new(outbound_rx);
 
         // Open bidi-stream RPC
@@ -209,6 +211,7 @@ impl GatewayGrpcClient {
         Ok(Self {
             endpoint: endpoint.to_string(),
             outbound_tx,
+            outbound_capacity,
             next_request_id,
             pending,
             push_rx,
@@ -223,14 +226,15 @@ impl GatewayGrpcClient {
     /// Initial delay 100 ms, max delay 30 s, total timeout controlled by
     /// `max_elapsed_secs` (defaults to 300 s for production).
     /// This is the primary connection method for production use.
-    pub async fn connect(endpoint: &str) -> Result<Self, AcoworkError> {
-        Self::connect_with_timeout(endpoint, 300).await
+    pub async fn connect(endpoint: &str, outbound_capacity: usize) -> Result<Self, AcoworkError> {
+        Self::connect_with_timeout(endpoint, 300, outbound_capacity).await
     }
 
     /// Connect with a custom max elapsed time (useful for tests).
     pub async fn connect_with_timeout(
         endpoint: &str,
         max_elapsed_secs: u64,
+        outbound_capacity: usize,
     ) -> Result<Self, AcoworkError> {
         const INITIAL_DELAY_MS: u64 = 100;
         const MAX_DELAY_MS: u64 = 30_000;
@@ -239,7 +243,7 @@ impl GatewayGrpcClient {
         let mut delay_ms = INITIAL_DELAY_MS;
 
         loop {
-            match Self::connect_once(endpoint).await {
+            match Self::connect_once(endpoint, outbound_capacity).await {
                 Ok(client) => {
                     tracing::info!(
                         endpoint = %endpoint,
@@ -281,6 +285,7 @@ impl GatewayGrpcClient {
         cached_user_profile_version: u64,
         avatar: Option<String>,
         builtin_avatar: Option<String>,
+        outbound_capacity: usize,
     ) -> Result<(Self, AgentHelloConfig), AcoworkError> {
         Self::connect_and_register_with_role(
             endpoint,
@@ -293,6 +298,7 @@ impl GatewayGrpcClient {
             cached_user_profile_version,
             avatar,
             builtin_avatar,
+            outbound_capacity,
         )
         .await
     }
@@ -312,8 +318,9 @@ impl GatewayGrpcClient {
         cached_user_profile_version: u64,
         avatar: Option<String>,
         builtin_avatar: Option<String>,
+        outbound_capacity: usize,
     ) -> Result<(Self, AgentHelloConfig), AcoworkError> {
-        let client = Self::connect(endpoint).await?;
+        let client = Self::connect(endpoint, outbound_capacity).await?;
         let config = client
             .send_agent_hello(
                 agent_id,
@@ -344,7 +351,7 @@ impl GatewayGrpcClient {
             std::mem::take(&mut *guard)
         };
 
-        *self = Self::connect(&self.endpoint).await?;
+        *self = Self::connect(&self.endpoint, self.outbound_capacity).await?;
 
         // Restore pending reports
         {

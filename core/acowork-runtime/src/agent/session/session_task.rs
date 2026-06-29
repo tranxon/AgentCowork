@@ -5,6 +5,7 @@
 //! session's lifetime, ensuring per-session isolation of history,
 //! budget, and loop detection while sharing provider/tools via Arc.
 
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use acowork_core::providers::traits::ChatMessage;
@@ -116,6 +117,12 @@ pub enum SessionMessage {
     /// Used to surface MCP connection failures and other async events
     /// to the LLM context so the Agent can self-heal.
     SystemNotification { content: String },
+    /// Enable real-time data push to Gateway (session switched to foreground).
+    /// Control events (Stopped, Done, Error, etc.) are always pushed regardless.
+    EnablePush,
+    /// Disable real-time data push to Gateway (session switched to background).
+    /// Data events are silently dropped; only control events are pushed.
+    DisablePush,
 }
 
 impl std::fmt::Debug for SessionMessage {
@@ -216,6 +223,8 @@ impl std::fmt::Debug for SessionMessage {
                 .debug_struct("SystemNotification")
                 .field("len", &content.len())
                 .finish(),
+            SessionMessage::EnablePush => f.debug_tuple("EnablePush").finish(),
+            SessionMessage::DisablePush => f.debug_tuple("DisablePush").finish(),
         }
     }
 }
@@ -1409,6 +1418,23 @@ impl SessionTask {
                         .append(ChatMessage::user(format!(
                             "[System Notification] {content}"
                         )));
+                }
+                Some(SessionMessage::EnablePush) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        "SessionTask: enabling real-time push (session activated)"
+                    );
+                    agent_loop.core.push_enabled.store(true, Ordering::Relaxed);
+                    // Immediately emit current session state so the frontend
+                    // can render the latest status, model, provider, etc.
+                    agent_loop.emit_session_state();
+                }
+                Some(SessionMessage::DisablePush) => {
+                    tracing::info!(
+                        session_id = %session_id,
+                        "SessionTask: disabling real-time push (session deactivated)"
+                    );
+                    agent_loop.core.push_enabled.store(false, Ordering::Relaxed);
                 }
                 None => {
                     tracing::info!(

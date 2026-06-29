@@ -162,6 +162,8 @@ impl Cli {
         // messages are captured in both stderr and the rolling log file.
         acowork_core::logging::install_panic_hook();
 
+        // Extract data_flow config before config is moved into Gateway::new
+        let worker_threads = config.data_flow.worker_threads;
         let mut gateway = Gateway::new(config)?;
 
         match self.command {
@@ -212,7 +214,7 @@ impl Cli {
                 if self.daemon {
                     tracing::info!("Starting gateway in daemon mode");
                     let rt = tokio::runtime::Builder::new_multi_thread()
-                        .worker_threads(4)
+                        .worker_threads(worker_threads)
                         .enable_all()
                         .build()
                         .map_err(GatewayError::Io)?;
@@ -422,6 +424,9 @@ mod tests {
 
     #[test]
     fn test_cli_default_log_level() {
+        // Override any env var set in developer's environment so the
+        // clap default_value is used.
+        unsafe { std::env::set_var("ACOWORK_GATEWAY_LOG_LEVEL", "info") };
         let cli = Cli::parse_from(["acowork-gateway"]);
         assert_eq!(cli.log_level, "info");
     }

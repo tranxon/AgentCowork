@@ -45,6 +45,10 @@ pub fn chat_routes() -> Router<AppState> {
             post(activate_session),
         )
         .route(
+            "/api/agents/{id}/sessions/{session_id}/deactivate",
+            post(deactivate_session),
+        )
+        .route(
             "/api/agents/{id}/sessions/{session_id}/title",
             put(update_session_title),
         )
@@ -1425,6 +1429,40 @@ pub async fn activate_session(
     Ok(Json(data))
 }
 
+/// `POST /api/agents/{id}/sessions/{session_id}/deactivate`
+///
+/// Notify Runtime to stop real-time data push for this session.
+/// Fire-and-forget — no response body, just 200 OK on delivery.
+/// Paired with `activate_session`; called by frontend `switchSession`.
+pub async fn deactivate_session(
+    State(state): State<AppState>,
+    Path((agent_id, session_id)): Path<(String, String)>,
+) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
+    // Verify agent exists and is running
+    {
+        let gw = state.gateway_state.read().await;
+        if !gw.is_installed(&agent_id) {
+            return Err(ApiError::not_found(&format!(
+                "Agent not found: {}",
+                agent_id
+            )));
+        }
+        if !gw.is_running(&agent_id) {
+            return Err(ApiError::bad_request(&format!(
+                "Agent {} is not running",
+                agent_id
+            )));
+        }
+    }
+
+    let params = serde_json::json!({
+        "session_id": session_id,
+    });
+
+    forward_session_action(&state, &agent_id, "deactivate_session", params).await?;
+    Ok(StatusCode::OK)
+}
+
 /// `PUT /api/agents/{id}/sessions/{session_id}/title` — update session title (S1.14)
 ///
 /// Persists the session title to the JSONL metadata via Runtime's
@@ -1652,6 +1690,41 @@ async fn forward_session_query(
             ))
         }
     }
+}
+
+/// Push a session action to Runtime without waiting for a response.
+///
+/// Fire-and-forget variant of [`forward_session_query`]. Used for actions
+/// that don't need a response (e.g., `deactivate_session`).
+async fn forward_session_action(
+    state: &AppState,
+    agent_id: &str,
+    action: &str,
+    params: serde_json::Value,
+) -> Result<(), (StatusCode, Json<ApiError>)> {
+    let session_mgr = state
+        .session_mgr
+        .as_ref()
+        .ok_or_else(|| ApiError::internal("Session manager not available"))?;
+
+    let mgr = session_mgr.lock().await;
+    let (_, session) = mgr.find_by_agent_id(agent_id).ok_or_else(|| {
+        ApiError::service_unavailable(&format!("Agent {} is not yet connected", agent_id))
+    })?;
+
+    let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
+        from: "http-api".to_string(),
+        action: action.to_string(),
+        params,
+        command: None,
+    };
+
+    if !session.push_message(intent).await {
+        return Err(ApiError::internal(
+            "Failed to deliver session action to agent",
+        ));
+    }
+    Ok(())
 }
 
 /// Wait for a session response from the pending map.

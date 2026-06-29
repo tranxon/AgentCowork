@@ -642,7 +642,9 @@ impl Gateway {
 
         // Create bridge channel for HTTP ↔ IPC message forwarding
         let (bridge_tx, _) =
-            tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(256);
+            tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(
+                self.config.data_flow.bridge_channel_capacity,
+            );
         let http_bridge_tx = Some(bridge_tx.clone());
 
         // S1.14 / Task #12: Create shared session_pending for HTTP ↔ gRPC bridge.
@@ -824,7 +826,10 @@ impl Gateway {
         let grpc_state = shared_state.clone();
         let grpc_bridge_tx = Some(bridge_tx.clone());
         let (capability_tx, _) =
-            tokio::sync::broadcast::channel::<acowork_core::protocol::GatewayResponse>(64);
+            tokio::sync::broadcast::channel::<acowork_core::protocol::GatewayResponse>(
+                self.config.data_flow.capability_broadcast_capacity,
+            );
+        let grpc_data_flow_config = self.config.data_flow.clone();
         let grpc_handle = tokio::spawn(async move {
             let grpc_addr = crate::grpc::server::default_grpc_addr();
             if let Err(e) = crate::grpc::server::start_grpc_server(
@@ -835,6 +840,7 @@ impl Gateway {
                 capability_tx,
                 grpc_bridge_tx,
                 grpc_session_pending,
+                grpc_data_flow_config,
             )
             .await
             {
@@ -1086,6 +1092,7 @@ mod tests {
             max_output_tokens_limit: 32768,
             embedding_model: None,
             hf_mirrors: Vec::new(),
+            data_flow: crate::config::DataFlowConfig::default(),
         }
     }
 

@@ -519,6 +519,18 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     if (!agentId) return;
     if (sessionId === useChatStore.getState().getActiveSessionId(agentId)) return;
 
+    // P1: Deactivate the old session's real-time push before switching.
+    // Fire-and-forget — don't block the switch on deactivation.
+    const oldSessionId = useChatStore.getState().getActiveSessionId(agentId);
+    if (oldSessionId) {
+      fetch(
+        `${getGatewayUrl()}/api/agents/${agentId}/sessions/${oldSessionId}/deactivate`,
+        { method: "POST" },
+      ).catch(() => {
+        // Silently ignore — deactivation is best-effort
+      });
+    }
+
     useChatStore.getState().activateSession(agentId, sessionId);
     useChatStore.getState().abortSessionLoad();
 

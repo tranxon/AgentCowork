@@ -54,6 +54,7 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
             &loaded.manifest.agent_id,
             &loaded.manifest.version,
             &config.work_dir,
+            config.data_flow.outbound_capacity,
         )
         .await
     {
@@ -393,13 +394,17 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
     // Data channel: high-capacity for streaming deltas (droppable under load)
     // Control channel: smaller, for control events that MUST reach frontend
     let (chunk_tx, chunk_rx) = if grpc_client.is_some() {
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::SessionChunkEvent>(256);
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::SessionChunkEvent>(
+            config.data_flow.on_chunk_capacity,
+        );
         (Some(tx), Some(rx))
     } else {
         (None, None)
     };
     let (control_chunk_tx, control_chunk_rx) = if grpc_client.is_some() {
-        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::SessionChunkEvent>(64);
+        let (tx, rx) = tokio::sync::mpsc::channel::<crate::agent::loop_::SessionChunkEvent>(
+            config.data_flow.control_chunk_capacity,
+        );
         (Some(tx), Some(rx))
     } else {
         (None, None)

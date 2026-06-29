@@ -1086,6 +1086,7 @@ impl AgentLoop {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::Ordering;
     use crate::agent::loop_llm::make_incomplete_marker;
     use crate::agent::loop_tools::execute_single_tool;
     use acowork_core::providers::mock::MockProvider;
@@ -2635,6 +2636,7 @@ mod tests {
         let mut core = AgentCore::new(config, manifest, provider, tools, Some(data_tx));
         core.control_chunk = Some(control_tx);
         core.session_id = Some("test-session".to_string());
+        core.push_enabled.store(true, Ordering::Relaxed);
 
         // 1. Data event (Delta) → should route to on_chunk (data channel)
         assert!(

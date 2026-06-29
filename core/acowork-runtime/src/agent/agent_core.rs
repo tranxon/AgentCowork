@@ -10,6 +10,7 @@
 //! Phase 2: wrapped in Arc for multi-session Actor sharing.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use acowork_core::protocol::{ModelCapabilitiesInfo, ProviderListItem};
@@ -91,6 +92,12 @@ pub struct AgentCore {
     /// backpressure (e.g. a burst of ReasoningDelta chunks filling the
     /// data channel). None in standalone mode.
     pub(crate) control_chunk: Option<mpsc::Sender<crate::agent::loop_::SessionChunkEvent>>,
+    /// Whether this session is allowed to push data events (Delta, ReasoningDelta,
+    /// ToolCall, ToolResult) to Gateway. Control events (Stopped, Done, Error,
+    /// SessionStateChanged, etc.) are always pushed regardless of this flag.
+    /// Defaults to false — set to true by EnablePush message on session activation.
+    /// Uses Arc<AtomicBool> so SessionTask can modify it externally.
+    pub(crate) push_enabled: Arc<AtomicBool>,
     /// Grafeo memory store (shared across all sessions of this agent).
     /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
     /// None if initialization failed (memory features degraded gracefully).
@@ -213,6 +220,7 @@ impl AgentCore {
             session_id: None,
             on_chunk,
             control_chunk: None,
+            push_enabled: Arc::new(AtomicBool::new(false)),
             memory_store: None,
             memory_session: None,
             debug_observer: observer,
@@ -343,6 +351,14 @@ impl AgentCore {
         // on_chunk channel. Falls back to on_chunk when control_chunk is None
         // (standalone mode).
         let is_control = event.is_control();
+
+        // P1: Background sessions only push control events; data events are
+        // silently dropped. This prevents LLM token floods from inactive
+        // sessions from consuming channel bandwidth.
+        if !is_control && !self.push_enabled.load(Ordering::Relaxed) {
+            return false;
+        }
+
         if let Some(wrapped) = self.make_chunk_event(event) {
             if is_control
                 && let Some(tx) = self.control_chunk.as_ref()
@@ -778,6 +794,7 @@ impl AgentCore {
             session_id: Some(session_id),
             on_chunk,
             control_chunk,
+            push_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnablePush
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),
             // Debug observer is NOT cloned — each session gets a fresh
@@ -1015,6 +1032,8 @@ mod tests {
         let provider = Arc::new(MockProvider::single_text("OK"));
         let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
         core.session_id = session_id.map(|s| s.to_string());
+        // Default to push-enabled for existing tests that predate P1 push_enabled.
+        core.push_enabled.store(true, Ordering::Relaxed);
         (core, rx)
     }
 
@@ -1059,6 +1078,7 @@ mod tests {
         let provider = Arc::new(MockProvider::single_text("OK"));
         let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
         core.session_id = Some("s1".to_string());
+        core.push_enabled.store(true, Ordering::Relaxed);
 
         // Fill the channel
         assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::ReasoningStarted));
@@ -1083,5 +1103,97 @@ mod tests {
         let (core, _rx) = make_core_with_channel(None);
         let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::ReasoningStarted);
         assert!(wrapped.is_none());
+    }
+
+    // ── P1: push_enabled filtering ──────────────────────────────────────
+
+    /// Helper: create an AgentCore with push_enabled explicitly set.
+    fn make_core_with_push(
+        push_enabled: bool,
+    ) -> (
+        AgentCore,
+        mpsc::Receiver<crate::agent::loop_::SessionChunkEvent>,
+    ) {
+        let (core, rx) = make_core_with_channel(Some("s1"));
+        core.push_enabled.store(push_enabled, Ordering::Relaxed);
+        (core, rx)
+    }
+
+    #[test]
+    fn test_push_disabled_blocks_data_event() {
+        // push_enabled=false → data events (Delta) are silently dropped
+        let (core, _rx) = make_core_with_push(false);
+        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta(
+            "hello".to_string()
+        )));
+    }
+
+    #[test]
+    fn test_push_disabled_allows_control_event() {
+        // push_enabled=false → control events (Done) still pass through
+        let (core, mut rx) = make_core_with_push(false);
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
+            content: "test".to_string(),
+            message_id: "msg-1".to_string(),
+        }));
+        let evt = rx.try_recv().unwrap();
+        assert!(matches!(
+            evt.event,
+            crate::agent::loop_::ChunkEvent::Done { .. }
+        ));
+    }
+
+    #[test]
+    fn test_push_enabled_allows_data_event() {
+        // push_enabled=true → data events pass through normally
+        let (core, mut rx) = make_core_with_push(true);
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta(
+            "hello".to_string()
+        )));
+        let evt = rx.try_recv().unwrap();
+        assert!(matches!(
+            evt.event,
+            crate::agent::loop_::ChunkEvent::Delta(_)
+        ));
+    }
+
+    #[test]
+    fn test_push_disabled_blocks_reasoning_delta() {
+        // ReasoningDelta is a data event, blocked when push_enabled=false
+        let (core, _rx) = make_core_with_push(false);
+        assert!(!core.try_send_chunk(
+            crate::agent::loop_::ChunkEvent::ReasoningDelta("think".to_string())
+        ));
+    }
+
+    #[test]
+    fn test_push_disabled_allows_stopped() {
+        // Stopped is a control event, always passes
+        let (core, mut rx) = make_core_with_push(false);
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Stopped {
+            content: "user stopped".to_string()
+        }));
+        let evt = rx.try_recv().unwrap();
+        assert!(matches!(
+            evt.event,
+            crate::agent::loop_::ChunkEvent::Stopped { .. }
+        ));
+    }
+
+    #[test]
+    fn test_push_disabled_allows_error() {
+        // Error is a control event, always passes
+        let (core, mut rx) = make_core_with_push(false);
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Error {
+            user_message: "fail".to_string(),
+            detail: "details".to_string(),
+            error_type: "test".to_string(),
+            message_id: "msg-err".to_string(),
+        }));
+        let evt = rx.try_recv().unwrap();
+        assert!(matches!(
+            evt.event,
+            crate::agent::loop_::ChunkEvent::Error { .. }
+        ));
     }
 }

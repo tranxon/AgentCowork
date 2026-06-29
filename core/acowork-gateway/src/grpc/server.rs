@@ -400,6 +400,7 @@ pub struct GatewayGrpcService {
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
     bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
+    data_flow_config: crate::config::DataFlowConfig,
 }
 
 #[async_trait::async_trait]
@@ -414,7 +415,9 @@ impl GatewayService for GatewayGrpcService {
         let mut inbound = request.into_inner();
 
         // Create outbound channel
-        let (outbound_tx, outbound_rx) = mpsc::channel::<Result<proto::ServerMessage, Status>>(32);
+        let (outbound_tx, outbound_rx) = mpsc::channel::<Result<proto::ServerMessage, Status>>(
+            self.data_flow_config.grpc_outbound_capacity,
+        );
 
         // Assign a connection ID
         let conn_id = format!("grpc-{}", CONN_COUNTER.fetch_add(1, Ordering::Relaxed) + 1);
@@ -429,7 +432,9 @@ impl GatewayService for GatewayGrpcService {
 
         // Also register in IPC session manager so intent routing can find us.
         // We create an IPC push channel that bridges to gRPC outbound.
-        let (ipc_push_tx, mut ipc_push_rx) = mpsc::channel::<GatewayResponse>(32);
+        let (ipc_push_tx, mut ipc_push_rx) = mpsc::channel::<GatewayResponse>(
+            self.data_flow_config.ipc_push_capacity,
+        );
         {
             let mut mgr = self.ipc_session_mgr.lock().await;
             mgr.create_session_with_push(&conn_id, ipc_push_tx);
@@ -636,6 +641,7 @@ pub async fn start_grpc_server(
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
     bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
+    data_flow_config: crate::config::DataFlowConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let service = GatewayGrpcService {
         state,
@@ -644,6 +650,7 @@ pub async fn start_grpc_server(
         capability_tx,
         bridge_tx,
         session_pending,
+        data_flow_config,
     };
 
     tracing::info!("gRPC server starting on {}", addr);

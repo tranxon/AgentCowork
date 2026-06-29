@@ -249,11 +249,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_available_port() {
-        // find_available_port returns both the port number and the bound listener
-        let result = find_available_port("127.0.0.1", 19876, 19878).await;
+        // find_available_port returns both the port number and the bound listener.
+        // Use a high port range unlikely to conflict with running services.
+        let result = find_available_port("127.0.0.1", 29876, 29886).await;
         assert!(result.is_ok());
         let (port, listener) = result.unwrap();
-        assert!((19876..=19878).contains(&port));
+        assert!((29876..=29886).contains(&port));
         // Verify the listener is actually bound
         assert!(listener.local_addr().is_ok());
     }
