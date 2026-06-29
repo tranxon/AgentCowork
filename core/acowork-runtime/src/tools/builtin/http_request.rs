@@ -122,7 +122,24 @@ impl HttpRequestTool {
             _ => {
                 // "json" — default
                 if let Some(json_body) = body {
-                    req.json(json_body)
+                    match json_body {
+                        Value::String(s) => {
+                            // Body is a JSON string — parse it first to avoid
+                            // double-encoding (req.json() on a Value::String would
+                            // serialize the string as a JSON string value, adding
+                            // extra quotes and escaping).
+                            match serde_json::from_str::<Value>(s) {
+                                Ok(parsed) => req.json(&parsed),
+                                Err(_) => {
+                                    // Not valid JSON — send as raw string with
+                                    // application/json content type
+                                    req.header("Content-Type", "application/json")
+                                        .body(s.clone())
+                                }
+                            }
+                        }
+                        _ => req.json(json_body),
+                    }
                 } else {
                     req
                 }
