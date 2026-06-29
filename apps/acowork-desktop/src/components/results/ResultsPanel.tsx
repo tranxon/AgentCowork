@@ -511,7 +511,12 @@ export function ResultsPanel({ width, isDebugMode = false, onResizeStart, active
       <div style={{ display: activeTab === "tools" ? "block" : "none" }}><ToolsTab /></div>
 
       {/* ── Workspace tab content ─────────────────────────────────── */}
-      <div style={{ display: activeTab === "workspace" ? "block" : "none" }}><WorkspaceExplorer /></div>
+      <div
+        className="flex min-h-0 flex-1 flex-col overflow-hidden"
+        style={{ display: activeTab === "workspace" ? "flex" : "none" }}
+      >
+        <WorkspaceExplorer />
+      </div>
     </div>
 
   );

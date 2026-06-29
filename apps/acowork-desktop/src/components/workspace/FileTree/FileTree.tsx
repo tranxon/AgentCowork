@@ -146,7 +146,7 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
     return (
         <div
             ref={scrollRef}
-            className="flex-1 overflow-auto"
+            className="flex-1 min-h-0 overflow-auto"
         >
             <div
                 style={{
