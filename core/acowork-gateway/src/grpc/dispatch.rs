@@ -33,7 +33,8 @@ pub async fn dispatch_grpc_request(
     conn_id: &str,
     state: &SharedState,
     session_mgr: &Arc<Mutex<SessionManager>>,
-    bridge_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_data_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: &Option<SessionPendingRequests>,
 ) -> proto::ServerMessage {
     let request_id = client_msg.request_id;
@@ -50,7 +51,7 @@ pub async fn dispatch_grpc_request(
             // C2: Intercept tool_approval_needed from Runtime.
             // Create oneshot, send BridgeEvent to Desktop App, await user decision.
             if req.action == "tool_approval_needed" && req.target == "http-api" {
-                return handle_tool_approval_needed_grpc(&params, bridge_tx).await;
+                return handle_tool_approval_needed_grpc(&params, bridge_ctrl_tx).await;
             }
 
             // C3: Intercept ask_question from Runtime (ask_user_question tool).
@@ -58,7 +59,7 @@ pub async fn dispatch_grpc_request(
             // answer flows back via the HTTP question endpoint + gRPC push
             // (same unified push architecture as tool_approval_needed).
             if req.action == "ask_question" && req.target == "http-api" {
-                return handle_ask_question_grpc(&params, bridge_tx).await;
+                return handle_ask_question_grpc(&params, bridge_ctrl_tx).await;
             }
 
             // Migration complete: update RunningAgentInfo.migration state
@@ -84,7 +85,8 @@ pub async fn dispatch_grpc_request(
                     conn_id,
                     state,
                     session_mgr,
-                    bridge_tx,
+                    bridge_data_tx,
+                    bridge_ctrl_tx,
                 )
                 .await
             }
@@ -141,7 +143,7 @@ pub async fn dispatch_grpc_request(
             };
             let agent_id = req.agent_id;
             let session_id = req.session_id;
-            handle_context_usage_report(&agent_id, &session_id, &context, conn_id, session_mgr, bridge_tx).await
+            handle_context_usage_report(&agent_id, &session_id, &context, conn_id, session_mgr, bridge_ctrl_tx).await
         }
 
         Some(proto::client_message::Payload::AgentHello(req)) => {
@@ -285,7 +287,19 @@ pub async fn dispatch_grpc_request(
                         payload["delta"] = serde_json::Value::String(content.to_string());
                     }
 
-                if let Some(tx) = bridge_tx {
+                // P2 (ADR-020): Route by event type.
+                // L1 data (Chunk, ReasoningStarted) → bridge_data_tx (high capacity, droppable).
+                // L2/L3/L4 control → bridge_ctrl_tx (must deliver).
+                let target_tx: Option<&tokio::sync::broadcast::Sender<BridgeEvent>> =
+                    match event_type {
+                        crate::http::routes::BridgeEventType::Chunk
+                        | crate::http::routes::BridgeEventType::ReasoningStarted => {
+                            bridge_data_tx.as_ref()
+                        }
+                        _ => bridge_ctrl_tx.as_ref(),
+                    };
+
+                if let Some(tx) = target_tx {
                     let event = BridgeEvent {
                         agent_id: agent_id.clone(),
                         message_id: format!("chunk-{}", chrono::Utc::now().timestamp_millis()),
@@ -411,7 +425,7 @@ async fn handle_migration_complete(
 /// No approval_pending map, no oneshot, no blocking — Runtime owns the approval state.
 async fn handle_tool_approval_needed_grpc(
     params: &serde_json::Value,
-    bridge_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
 ) -> proto::ServerMessage {
     let approval_request_id = params
         .get("request_id")
@@ -429,7 +443,7 @@ async fn handle_tool_approval_needed_grpc(
     );
 
     // Send BridgeEvent::ToolApprovalNeeded to Desktop App via WebSocket
-    if let Some(tx_bridge) = bridge_tx {
+    if let Some(tx_bridge) = bridge_ctrl_tx {
         let event = BridgeEvent {
             agent_id: agent_id.to_string(),
             message_id: approval_request_id.to_string(),
@@ -505,7 +519,7 @@ async fn handle_session_response_grpc(
 /// answer is delivered to the Runtime via the push path only.
 async fn handle_ask_question_grpc(
     params: &serde_json::Value,
-    bridge_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
 ) -> proto::ServerMessage {
     let request_id = params
         .get("request_id")
@@ -523,7 +537,7 @@ async fn handle_ask_question_grpc(
     );
 
     // Forward to Desktop App via WebSocket
-    if let Some(tx_bridge) = bridge_tx {
+    if let Some(tx_bridge) = bridge_ctrl_tx {
         let event = BridgeEvent {
             agent_id: agent_id.to_string(),
             message_id: request_id.to_string(),

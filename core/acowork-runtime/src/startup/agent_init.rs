@@ -54,7 +54,8 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
             &loaded.manifest.agent_id,
             &loaded.manifest.version,
             &config.work_dir,
-            config.data_flow.outbound_capacity,
+            config.data_flow.outbound_data_capacity,
+            config.data_flow.outbound_ctrl_capacity,
         )
         .await
     {

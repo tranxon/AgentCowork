@@ -101,6 +101,9 @@ pub struct RuntimeConfig {
 /// Controls channel capacities and flush intervals for the Runtime's
 /// internal data pipelines. These values affect throughput and latency
 /// under load — especially during LLM streaming (thinking mode).
+///
+/// P2 (ADR-020): gRPC outbound split into data (L1: LLM chunks) and
+/// ctrl (L2/L3/L4: tools, control, metadata) for physical isolation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFlowConfig {
     /// Capacity of the on_chunk mpsc channel (L1 data: Delta, ReasoningDelta).
@@ -111,10 +114,15 @@ pub struct DataFlowConfig {
     /// Default: 64.
     #[serde(default = "default_control_chunk_capacity")]
     pub control_chunk_capacity: usize,
-    /// Capacity of the gRPC outbound mpsc channel (Runtime → Gateway).
-    /// Default: 256.
-    #[serde(default = "default_outbound_capacity")]
-    pub outbound_capacity: usize,
+    /// Capacity of the gRPC outbound data mpsc channel (L1: Delta, ReasoningDelta).
+    /// Default: 2048 (large buffer to avoid try_send drops during thinking bursts).
+    #[serde(default = "default_outbound_data_capacity")]
+    pub outbound_data_capacity: usize,
+    /// Capacity of the gRPC outbound control mpsc channel (L2/L3/L4: ToolCall,
+    /// Done, Error, Stopped, SessionStateChanged, etc.).
+    /// Default: 256 (small buffer — control events are low-frequency).
+    #[serde(default = "default_outbound_ctrl_capacity")]
+    pub outbound_ctrl_capacity: usize,
     /// Reasoning token batch flush interval in milliseconds.
     /// Tokens are accumulated and flushed at this interval to reduce
     /// channel write frequency during thinking mode. Default: 200.
@@ -128,7 +136,10 @@ fn default_on_chunk_capacity() -> usize {
 fn default_control_chunk_capacity() -> usize {
     64
 }
-fn default_outbound_capacity() -> usize {
+fn default_outbound_data_capacity() -> usize {
+    2048
+}
+fn default_outbound_ctrl_capacity() -> usize {
     256
 }
 fn default_reasoning_flush_interval_ms() -> u64 {
@@ -140,7 +151,8 @@ impl Default for DataFlowConfig {
         Self {
             on_chunk_capacity: default_on_chunk_capacity(),
             control_chunk_capacity: default_control_chunk_capacity(),
-            outbound_capacity: default_outbound_capacity(),
+            outbound_data_capacity: default_outbound_data_capacity(),
+            outbound_ctrl_capacity: default_outbound_ctrl_capacity(),
             reasoning_flush_interval_ms: default_reasoning_flush_interval_ms(),
         }
     }

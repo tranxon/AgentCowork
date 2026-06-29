@@ -398,7 +398,8 @@ pub struct GatewayGrpcService {
     /// gRPC sessions register here too so that IntentReceived push works.
     ipc_session_mgr: SharedSessionMgr,
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
-    bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
     data_flow_config: crate::config::DataFlowConfig,
 }
@@ -445,7 +446,8 @@ impl GatewayService for GatewayGrpcService {
         let grpc_session_mgr = Arc::clone(&self.grpc_session_mgr);
         let ipc_session_mgr = Arc::clone(&self.ipc_session_mgr);
         let mut cap_rx = self.capability_tx.subscribe();
-        let bridge_tx = self.bridge_tx.clone();
+        let bridge_data_tx = self.bridge_data_tx.clone();
+        let bridge_ctrl_tx = self.bridge_ctrl_tx.clone();
         let session_pending = self.session_pending.clone();
         let conn_id_clone = conn_id.clone();
 
@@ -541,7 +543,8 @@ impl GatewayService for GatewayGrpcService {
                                         &conn_id_clone,
                                         &state,
                                         &ipc_session_mgr,
-                                        &bridge_tx,
+                                        &bridge_data_tx,
+                                        &bridge_ctrl_tx,
                                         &session_pending,
                                     ).await;
                                     continue;
@@ -570,7 +573,8 @@ impl GatewayService for GatewayGrpcService {
                                     &conn_id_clone,
                                     &state,
                                     &ipc_session_mgr,
-                                    &bridge_tx,
+                                    &bridge_data_tx,
+                                    &bridge_ctrl_tx,
                                     &session_pending,
                                 ).await;
 
@@ -647,7 +651,8 @@ pub async fn start_grpc_server(
     grpc_session_mgr: SharedGrpcSessionMgr,
     ipc_session_mgr: SharedSessionMgr,
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
-    bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
     data_flow_config: crate::config::DataFlowConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -656,7 +661,8 @@ pub async fn start_grpc_server(
         grpc_session_mgr,
         ipc_session_mgr,
         capability_tx,
-        bridge_tx,
+        bridge_data_tx,
+        bridge_ctrl_tx,
         session_pending,
         data_flow_config,
     };

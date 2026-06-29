@@ -21,7 +21,7 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::http::routes::{ApiError, AppState};
+use crate::http::routes::{ApiError, AppState, BridgeEvent};
 
 /// Maximum content length for a single message (32 KB)
 const MAX_CONTENT_LENGTH: usize = 32 * 1024;
@@ -488,8 +488,10 @@ pub async fn agent_stream_ws(
 async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
     tracing::info!("WebSocket connected for agent: {}", agent_id);
 
-    // Subscribe to bridge channel for this agent's responses
-    let mut bridge_rx = state.bridge_tx.as_ref().map(|tx| tx.subscribe());
+    // P2 (ADR-020): Subscribe to both bridge channels.
+    // ctrl channel (L2/L3/L4) gets biased-select priority over data (L1).
+    let mut bridge_data_rx = state.bridge_data_tx.as_ref().map(|tx| tx.subscribe());
+    let mut bridge_ctrl_rx = state.bridge_ctrl_tx.as_ref().map(|tx| tx.subscribe());
 
     // Send initial connection acknowledgment
     let welcome = serde_json::json!({
@@ -500,7 +502,58 @@ async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
 
     loop {
         tokio::select! {
-            // Branch 1: Incoming message from client
+            biased;
+
+            // Branch 1 (HIGHEST priority): Control bridge events
+            // L2/L3/L4: ToolCall, Done, Error, Stopped, SessionStateChanged, etc.
+            // These must always be delivered — never starved by L1 chunks.
+            ctrl_event = async {
+                match &mut bridge_ctrl_rx {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match ctrl_event {
+                    Ok(event) => {
+                        if event.agent_id == agent_id {
+                            forward_bridge_event(&mut socket, &event).await;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Bridge ctrl channel lagged for {}: skipped {} events", agent_id, n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Bridge ctrl channel closed for agent: {}", agent_id);
+                        break;
+                    }
+                }
+            }
+
+            // Branch 2: Data bridge events (L1: Delta, ReasoningDelta)
+            // High frequency, droppable — Lagged is acceptable.
+            data_event = async {
+                match &mut bridge_data_rx {
+                    Some(rx) => rx.recv().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                match data_event {
+                    Ok(event) => {
+                        if event.agent_id == agent_id {
+                            forward_bridge_event(&mut socket, &event).await;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                        tracing::warn!("Bridge data channel lagged for {}: skipped {} events", agent_id, n);
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                        tracing::info!("Bridge data channel closed for agent: {}", agent_id);
+                        break;
+                    }
+                }
+            }
+
+            // Branch 3 (LOWEST priority): Incoming message from client
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
@@ -518,45 +571,23 @@ async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
                     }
                 }
             }
-            // Branch 2: Bridge event from Agent (streaming response)
-            bridge_event = async {
-                match &mut bridge_rx {
-                    Some(rx) => rx.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                match bridge_event {
-                    Ok(event) => {
-                        // Only forward events for this agent
-                        if event.agent_id == agent_id {
-                            // Build the WebSocket message matching frontend protocol:
-                            //   { "type": "chunk", "delta": "...", "message_id": "..." }
-                            //   { "type": "done", "content": "...", "message_id": "..." }
-                            //   { "type": "error", "message": "...", "message_id": "..." }
-                            let mut json = serde_json::json!({
-                                "type": event.event_type.as_str(),
-                                "message_id": event.message_id,
-                            });
-                            // Merge payload fields into the top-level JSON
-                            if let serde_json::Value::Object(map) = event.payload {
-                                for (k, v) in map {
-                                    json[&k] = v;
-                                }
-                            }
-                            let _ = socket.send(Message::Text(json.to_string().into())).await;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Bridge channel lagged for {}: skipped {} events", agent_id, n);
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::info!("Bridge channel closed for agent: {}", agent_id);
-                        break;
-                    }
-                }
-            }
         }
     }
+}
+
+/// Forward a BridgeEvent to the WebSocket as a JSON text message.
+async fn forward_bridge_event(socket: &mut WebSocket, event: &BridgeEvent) {
+    let mut json = serde_json::json!({
+        "type": event.event_type.as_str(),
+        "message_id": event.message_id,
+    });
+    // Merge payload fields into the top-level JSON
+    if let serde_json::Value::Object(map) = &event.payload {
+        for (k, v) in map {
+            json[k] = v.clone();
+        }
+    }
+    let _ = socket.send(Message::Text(json.to_string().into())).await;
 }
 
 /// Handle a single text message from the WebSocket client

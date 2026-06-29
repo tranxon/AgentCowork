@@ -120,16 +120,24 @@ pub struct GatewayConfig {
 /// Controls channel capacities and concurrency limits for the Gateway's
 /// internal data pipelines. These values affect throughput and latency
 /// under load — especially during LLM streaming (thinking mode).
+///
+/// P2 (ADR-020): Bridge channel split into data (L1: LLM chunks) and
+/// ctrl (L2/L3/L4: tools, control, metadata) for physical isolation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFlowConfig {
     /// Number of tokio async worker threads for the Gateway runtime.
     /// Default: 8 (increased from 4 per ADR-020 P0-2).
     #[serde(default = "default_worker_threads")]
     pub worker_threads: usize,
-    /// Capacity of the Bridge broadcast channel (LLM chunks → WebSocket).
-    /// Default: 256.
-    #[serde(default = "default_bridge_channel_capacity")]
-    pub bridge_channel_capacity: usize,
+    /// Capacity of the Bridge data broadcast channel (L1: Delta, ReasoningDelta).
+    /// Default: 4096 (large buffer to avoid Lagged during thinking bursts).
+    #[serde(default = "default_bridge_data_capacity")]
+    pub bridge_data_capacity: usize,
+    /// Capacity of the Bridge control broadcast channel (L2/L3/L4: ToolCall,
+    /// Done, Error, Stopped, SessionStateChanged, etc.).
+    /// Default: 256 (small buffer — control events are low-frequency).
+    #[serde(default = "default_bridge_ctrl_capacity")]
+    pub bridge_ctrl_capacity: usize,
     /// Capacity of the gRPC outbound mpsc channel (per-connection).
     /// Default: 32.
     #[serde(default = "default_grpc_outbound_capacity")]
@@ -147,7 +155,10 @@ pub struct DataFlowConfig {
 fn default_worker_threads() -> usize {
     8
 }
-fn default_bridge_channel_capacity() -> usize {
+fn default_bridge_data_capacity() -> usize {
+    4096
+}
+fn default_bridge_ctrl_capacity() -> usize {
     256
 }
 fn default_grpc_outbound_capacity() -> usize {
@@ -164,7 +175,8 @@ impl Default for DataFlowConfig {
     fn default() -> Self {
         Self {
             worker_threads: default_worker_threads(),
-            bridge_channel_capacity: default_bridge_channel_capacity(),
+            bridge_data_capacity: default_bridge_data_capacity(),
+            bridge_ctrl_capacity: default_bridge_ctrl_capacity(),
             grpc_outbound_capacity: default_grpc_outbound_capacity(),
             ipc_push_capacity: default_ipc_push_capacity(),
             capability_broadcast_capacity: default_capability_broadcast_capacity(),

@@ -275,7 +275,8 @@ pub(crate) async fn connect_gateway_client(
     version: &str,
 
     work_dir: &str,
-    outbound_capacity: usize,
+    outbound_data_capacity: usize,
+    outbound_ctrl_capacity: usize,
 ) -> Option<(
     crate::grpc::client::GatewayGrpcClient,
     crate::grpc::client::AgentHelloConfig,
@@ -307,7 +308,8 @@ pub(crate) async fn connect_gateway_client(
         cached_user_profile_ver,
         avatar,
         builtin_avatar,
-        outbound_capacity,
+        outbound_data_capacity,
+        outbound_ctrl_capacity,
     )
     .await
     {
@@ -678,7 +680,7 @@ pub(crate) async fn run_gateway_loop(
                                     request_id,
                                     payload: Some(snapshot),
                                 };
-                                let outbound = grpc_client.outbound_sender();
+                                let outbound = grpc_client.outbound_ctrl_sender();
                                 if let Err(e) = outbound.send(response).await {
                                     tracing::error!("Failed to send ConfigSnapshot: {}", e);
                                 }
@@ -689,7 +691,7 @@ pub(crate) async fn run_gateway_loop(
 
                                 // refresh, etc.). The task holds cloned Arc/Sender handles.
                                 let store_opt = session_manager.memory_store().cloned();
-                                let outbound = grpc_client.outbound_sender();
+                                let outbound = grpc_client.outbound_ctrl_sender();
 
                                 // Handle GetSessionStateQuery inline — the snapshot is
                                 // a cheap RwLock read that never blocks.
@@ -2015,7 +2017,7 @@ async fn process_gateway_recv(
                     session_manager.fire_urgent_stop_all();
 
                     let store = session_manager.memory_store().cloned();
-                    let outbound = grpc_client.outbound_sender();
+                    let outbound = grpc_client.outbound_ctrl_sender();
                     let req_id = request_id.clone();
                     let endpoint = embed_endpoint.clone();
                     let model_id = embed_model_id.clone();
@@ -3011,7 +3013,8 @@ mod tests {
         let result = crate::grpc::client::GatewayGrpcClient::connect_with_timeout(
             "unix:///nonexistent/socket/path.sock",
             2, // 2-second max elapsed time — enough to try a few times
-            256, // default outbound capacity
+            256, // default outbound data capacity
+            256, // default outbound ctrl capacity
         )
         .await;
         assert!(

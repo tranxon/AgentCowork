@@ -179,9 +179,13 @@ pub struct AppState {
     /// Shared session manager for pushing messages to agents
     /// Set by Gateway::run() when the IPC server is initialized
     pub session_mgr: Option<SharedSessionMgr>,
-    /// Bridge channel for forwarding Agent responses to HTTP clients
-    /// The IPC server publishes events; HTTP WebSocket subscribes
-    pub bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    /// P2 (ADR-020): Bridge data channel for L1 events (LLM chunks).
+    /// The IPC/gRPC dispatch publishes L1 events here; WebSocket subscribes.
+    pub bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+    /// P2 (ADR-020): Bridge control channel for L2/L3/L4 events (tools,
+    /// control, metadata). The IPC/gRPC dispatch publishes here; WebSocket
+    /// subscribes with biased-select priority.
+    pub bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     /// Pending session requests for IPC response correlation (S1.14)
     pub session_pending: SessionPendingRequests,
     /// Tracing reload handle for dynamic log level changes
@@ -200,14 +204,16 @@ impl AppState {
         gateway_state: SharedHttpState,
         auth: Arc<HttpAuth>,
         session_mgr: Option<SharedSessionMgr>,
-        bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+        bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+        bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         session_pending: Option<SessionPendingRequests>,
     ) -> Self {
         Self {
             gateway_state,
             auth,
             session_mgr,
-            bridge_tx,
+            bridge_data_tx,
+            bridge_ctrl_tx,
             session_pending: session_pending.unwrap_or_else(|| {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
             }),
@@ -223,7 +229,8 @@ impl AppState {
         gateway_state: SharedHttpState,
         auth: Arc<HttpAuth>,
         session_mgr: Option<SharedSessionMgr>,
-        bridge_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+        bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
+        bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         session_pending: Option<SessionPendingRequests>,
         log_reload_handle: Option<crate::LogReloadHandle>,
     ) -> Self {
@@ -231,7 +238,8 @@ impl AppState {
             gateway_state,
             auth,
             session_mgr,
-            bridge_tx,
+            bridge_data_tx,
+            bridge_ctrl_tx,
             session_pending: session_pending.unwrap_or_else(|| {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
             }),
@@ -642,6 +650,7 @@ mod tests {
         AppState::new(
             Arc::new(RwLock::new(gw_state)),
             Arc::new(HttpAuth::new(false)),
+            None,
             None,
             None,
             None,

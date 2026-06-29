@@ -82,7 +82,8 @@ pub async fn handle_intent_send(
     conn_id: &str,
     state: &SharedState,
     session_mgr: &SharedSessionMgr,
-    bridge_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
+    bridge_data_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
+    bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
 ) -> GatewayResponse {
     let from = {
         let mgr = session_mgr.lock().await;
@@ -122,11 +123,23 @@ pub async fn handle_intent_send(
             message_id
         );
 
-        if let Some(tx) = bridge_tx {
-            // Determine event type based on action
-            let event_type = crate::http::routes::BridgeEventType::from_action(action)
-                .unwrap_or_else(crate::http::routes::BridgeEventType::default_for_unknown);
+        // P2 (ADR-020): Route by event type.
+        // L1 data (Chunk, ReasoningStarted) → bridge_data_tx (high capacity).
+        // L2/L3/L4 control → bridge_ctrl_tx (must deliver).
+        let event_type = crate::http::routes::BridgeEventType::from_action(action)
+            .unwrap_or_else(crate::http::routes::BridgeEventType::default_for_unknown);
 
+        let target_tx: Option<&tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>> =
+            match event_type {
+                crate::http::routes::BridgeEventType::Chunk
+                | crate::http::routes::BridgeEventType::ReasoningStarted => {
+                    bridge_data_tx.as_ref()
+                }
+                _ => bridge_ctrl_tx.as_ref(),
+            };
+
+        if let Some(tx) = target_tx {
+            // Determine event type based on action
             // Transparent passthrough: Gateway is a dumb pipe, not a protocol
             // translator. Only the Chunk event needs a minimal rename (content→delta)
             // to match the frontend's long-established streaming protocol.
@@ -528,18 +541,18 @@ pub async fn handle_context_usage_report(
     context: &acowork_core::protocol::ContextUsageInfo,
     _conn_id: &str,
     _session_mgr: &SharedSessionMgr,
-    bridge_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
+    bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
 ) -> GatewayResponse {
     tracing::info!(
         agent = %agent_id,
         session = %session_id,
         context_window = context.context_window,
         total_tokens = context.total_tokens,
-        has_bridge = bridge_tx.is_some(),
+        has_bridge = bridge_ctrl_tx.is_some(),
         "ContextUsageReport received from Runtime"
     );
     // Broadcast context_usage event to all WebSocket bridge subscribers
-    if let Some(tx) = bridge_tx {
+    if let Some(tx) = bridge_ctrl_tx {
         // Inject session_id into the payload so the frontend can route
         // the event to the correct session (not just the active one).
         let mut payload = serde_json::to_value(context).unwrap_or_default();
@@ -561,7 +574,7 @@ pub async fn handle_context_usage_report(
     } else {
         tracing::warn!(
             agent = %agent_id,
-            "ContextUsage: NO bridge_tx — WS bridge not connected, event dropped"
+            "ContextUsage: NO bridge_ctrl_tx — WS bridge not connected, event dropped"
         );
     }
     GatewayResponse::ContextUsageAck {}
@@ -1137,6 +1150,7 @@ mod tests {
             &state,
             &session_mgr,
             &None,
+            &None,
         )
         .await;
 
@@ -1221,6 +1235,7 @@ mod tests {
             &state,
             &session_mgr,
             &None,
+            &None,
         )
         .await;
 
@@ -1298,6 +1313,7 @@ mod tests {
             "conn-sender",
             &state,
             &session_mgr,
+            &None,
             &None,
         )
         .await;

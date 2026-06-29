@@ -52,20 +52,27 @@ pub(crate) async fn phase_c_spawn_subsystems(
     let chunk_relay = if ctx.chunk_rx.is_some() {
         let chunk_rx = ctx.chunk_rx.take().unwrap();
         let control_chunk_rx = ctx.control_chunk_rx.take();
-        let outbound_tx = ctx
+        // P2 (ADR-020): Split outbound into data (L1) and ctrl (L2/L3/L4).
+        let outbound_data_tx = ctx
             .grpc_client
             .as_ref()
             .expect("grpc_client must be Some in Gateway mode")
-            .outbound_sender();
+            .outbound_data_sender();
+        let outbound_ctrl_tx = ctx
+            .grpc_client
+            .as_ref()
+            .expect("grpc_client must be Some in Gateway mode")
+            .outbound_ctrl_sender();
         Some(tokio::spawn(async move {
-            tracing::info!("Chunk relay started (shared gRPC connection)");
+            tracing::info!("Chunk relay started (shared gRPC connection, dual-channel)");
             let mut chunk_rx = chunk_rx;
             if let Some(mut control_rx) = control_chunk_rx {
                 loop {
                     // Priority: drain control channel first (non-blocking)
                     while let Ok(session_event) = control_rx.try_recv() {
                         relay_chunk_event(
-                            &outbound_tx,
+                            &outbound_data_tx,
+                            &outbound_ctrl_tx,
                             &agent_id_for_relay,
                             &session_event.session_id,
                             session_event.event,
@@ -91,7 +98,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                                     // Deltas will be produced during drain.
                                     while let Ok(data_event) = chunk_rx.try_recv() {
                                         relay_chunk_event(
-                                            &outbound_tx,
+                                            &outbound_data_tx,
+                                            &outbound_ctrl_tx,
                                             &agent_id_for_relay,
                                             &data_event.session_id,
                                             data_event.event,
@@ -100,7 +108,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                                     }
                                     // Now send the control event itself
                                     relay_chunk_event(
-                                        &outbound_tx,
+                                        &outbound_data_tx,
+                                        &outbound_ctrl_tx,
                                         &agent_id_for_relay,
                                         &ev.session_id,
                                         ev.event,
@@ -112,7 +121,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                                     // drain data channel then exit
                                     while let Some(ev) = chunk_rx.recv().await {
                                         relay_chunk_event(
-                                            &outbound_tx,
+                                            &outbound_data_tx,
+                                            &outbound_ctrl_tx,
                                             &agent_id_for_relay,
                                             &ev.session_id,
                                             ev.event,
@@ -127,7 +137,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                             match session_event {
                                 Some(ev) => {
                                     relay_chunk_event(
-                                        &outbound_tx,
+                                        &outbound_data_tx,
+                                        &outbound_ctrl_tx,
                                         &agent_id_for_relay,
                                         &ev.session_id,
                                         ev.event,
@@ -139,7 +150,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                                     // drain control channel then exit
                                     while let Some(ev) = control_rx.recv().await {
                                         relay_chunk_event(
-                                            &outbound_tx,
+                                            &outbound_data_tx,
+                                            &outbound_ctrl_tx,
                                             &agent_id_for_relay,
                                             &ev.session_id,
                                             ev.event,
@@ -156,7 +168,8 @@ pub(crate) async fn phase_c_spawn_subsystems(
                 // No control channel (shouldn't happen in Gateway mode)
                 while let Some(session_event) = chunk_rx.recv().await {
                     relay_chunk_event(
-                        &outbound_tx,
+                        &outbound_data_tx,
+                        &outbound_ctrl_tx,
                         &agent_id_for_relay,
                         &session_event.session_id,
                         session_event.event,
@@ -275,7 +288,7 @@ pub(crate) async fn phase_c_spawn_subsystems(
                 ),
             ),
         };
-        if client.outbound_sender().send(msg).await.is_err() {
+        if client.outbound_ctrl_sender().send(msg).await.is_err() {
             tracing::warn!("Failed to send UpdateWorkspaceConfig snapshot to Gateway");
         } else {
             tracing::info!("Workspace config snapshot sent to Gateway");
@@ -295,9 +308,14 @@ pub(crate) async fn phase_c_spawn_subsystems(
 
 /// Dispatch a single `ChunkEvent` to the Gateway outbound channel.
 ///
+/// P2 (ADR-020): Routes L1 data events (Delta, ReasoningDelta, ReasoningStarted)
+/// to `outbound_data_tx` (non-blocking try_send) and L2/L3/L4 control events
+/// (ToolCall, Done, Error, Stopped, etc.) to `outbound_ctrl_tx` (blocking send).
+///
 /// Extracted from the chunk relay loop to keep the main spawn body readable.
 async fn relay_chunk_event(
-    outbound_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
+    outbound_data_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
+    outbound_ctrl_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     agent_id: &str,
     sid: &str,
     event: crate::agent::loop_::ChunkEvent,
@@ -306,23 +324,27 @@ async fn relay_chunk_event(
     use crate::cli::{relay_intent, relay_stream_chunk, try_relay_stream_chunk};
 
     match event {
+        // ── L1: Data channel (non-blocking, droppable) ──────────────────
+
         ChunkEvent::ReasoningStarted => {
             let params = serde_json::json!({ "session_id": sid });
-            relay_stream_chunk(outbound_tx, "agent_reasoning_started", &params).await;
+            relay_stream_chunk(outbound_data_tx, "agent_reasoning_started", &params).await;
         }
 
         ChunkEvent::Delta(delta) => {
             let params = serde_json::json!({ "content": delta, "session_id": sid });
             // Non-blocking: dropping a single delta is acceptable,
             // but blocking would stall control events in the relay loop.
-            try_relay_stream_chunk(outbound_tx, "agent_chunk", &params);
+            try_relay_stream_chunk(outbound_data_tx, "agent_chunk", &params);
         }
 
         ChunkEvent::ReasoningDelta(delta) => {
             let params = serde_json::json!({ "reasoning_content": delta, "session_id": sid });
             // Non-blocking: same rationale as Delta above.
-            try_relay_stream_chunk(outbound_tx, "agent_chunk", &params);
+            try_relay_stream_chunk(outbound_data_tx, "agent_chunk", &params);
         }
+
+        // ── L2/L3/L4: Control channel (blocking, must deliver) ─────────
 
         ChunkEvent::ContextUsage(ctx_info) => {
             let msg = acowork_core::proto::ClientMessage {
@@ -337,7 +359,7 @@ async fn relay_chunk_event(
                     ),
                 ),
             };
-            if outbound_tx.send(msg).await.is_err() {
+            if outbound_ctrl_tx.send(msg).await.is_err() {
                 tracing::debug!(
                     "Context usage report send failed — main connection may be closed"
                 );
@@ -346,12 +368,12 @@ async fn relay_chunk_event(
 
         ChunkEvent::CompactingStarted => {
             let params = serde_json::json!({ "session_id": sid });
-            relay_intent(outbound_tx, "compacting_started", &params).await;
+            relay_intent(outbound_ctrl_tx, "compacting_started", &params).await;
         }
 
         ChunkEvent::CompactingEnded => {
             let params = serde_json::json!({ "session_id": sid });
-            relay_intent(outbound_tx, "compacting_ended", &params).await;
+            relay_intent(outbound_ctrl_tx, "compacting_ended", &params).await;
         }
 
         ChunkEvent::ToolCall { name, args, id } => {
@@ -361,7 +383,7 @@ async fn relay_chunk_event(
                 "name": name, "params": parsed_args,
                 "tool_call_id": id, "session_id": sid,
             });
-            relay_intent(outbound_tx, "agent_tool_call", &params).await;
+            relay_intent(outbound_ctrl_tx, "agent_tool_call", &params).await;
         }
 
         ChunkEvent::ToolResult { name, result, tool_call_id } => {
@@ -371,7 +393,7 @@ async fn relay_chunk_event(
                 "name": name, "result": parsed_result,
                 "tool_call_id": tool_call_id, "session_id": sid,
             });
-            relay_intent(outbound_tx, "agent_tool_result", &params).await;
+            relay_intent(outbound_ctrl_tx, "agent_tool_result", &params).await;
         }
 
         ChunkEvent::IterationLimitPaused { iteration, max_iterations } => {
@@ -384,7 +406,7 @@ async fn relay_chunk_event(
                 ),
                 "session_id": sid,
             });
-            relay_intent(outbound_tx, "iteration_limit_paused", &params).await;
+            relay_intent(outbound_ctrl_tx, "iteration_limit_paused", &params).await;
         }
 
         ChunkEvent::ToolApprovalNeeded {
@@ -407,14 +429,14 @@ async fn relay_chunk_event(
                 "tool_call_id": tool_call_id,
                 "approval_timeout_secs": approval_timeout_secs,
             });
-            relay_intent(outbound_tx, "tool_approval_needed", &params).await;
+            relay_intent(outbound_ctrl_tx, "tool_approval_needed", &params).await;
         }
 
         ChunkEvent::Done { content, message_id } => {
             let params = serde_json::json!({
                 "content": content, "message_id": message_id, "session_id": sid,
             });
-            relay_intent(outbound_tx, "agent_response", &params).await;
+            relay_intent(outbound_ctrl_tx, "agent_response", &params).await;
         }
 
         ChunkEvent::Error { user_message, detail, error_type, message_id } => {
@@ -425,12 +447,12 @@ async fn relay_chunk_event(
                 "message_id": message_id,
                 "session_id": sid,
             });
-            relay_intent(outbound_tx, "agent_error", &params).await;
+            relay_intent(outbound_ctrl_tx, "agent_error", &params).await;
         }
 
         ChunkEvent::Stopped { content } => {
             let params = serde_json::json!({ "content": content, "session_id": sid });
-            relay_intent(outbound_tx, "agent_stopped", &params).await;
+            relay_intent(outbound_ctrl_tx, "agent_stopped", &params).await;
         }
 
         ChunkEvent::SessionStateChanged {
@@ -461,12 +483,12 @@ async fn relay_chunk_event(
             if let Some(t) = temperature {
                 params["temperature"] = serde_json::json!(t);
             }
-            relay_intent(outbound_tx, "session_state_changed", &params).await;
+            relay_intent(outbound_ctrl_tx, "session_state_changed", &params).await;
         }
 
         ChunkEvent::TodoListUpdated { todos } => {
             let params = serde_json::json!({ "todos": todos, "session_id": sid });
-            relay_intent(outbound_tx, "todo_list_updated", &params).await;
+            relay_intent(outbound_ctrl_tx, "todo_list_updated", &params).await;
         }
 
         ChunkEvent::AskQuestion {
@@ -485,7 +507,7 @@ async fn relay_chunk_event(
                 "agent_id": agent_id,
                 "session_id": sid,
             });
-            relay_intent(outbound_tx, "ask_question", &params).await;
+            relay_intent(outbound_ctrl_tx, "ask_question", &params).await;
         }
     }
 }

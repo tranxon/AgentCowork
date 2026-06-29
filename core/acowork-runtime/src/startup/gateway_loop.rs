@@ -53,7 +53,7 @@ pub(crate) async fn phase_d_run(
             )),
         };
         if client
-            .outbound_sender()
+            .outbound_ctrl_sender()
             .send(agent_ready_msg)
             .await
             .is_err()
