@@ -27,6 +27,191 @@ function isShellTool(name: string): boolean {
   return SHELL_TOOLS.includes(name);
 }
 
+/**
+ * Build the one-line summary that appears right of a tool name in the
+ * ExploreBlock chip, e.g. `file_read  src/foo.rs (L1-L50)`.
+ *
+ * Per-tool rules — derived from the Rust builtin schemas under
+ * `core/acowork-runtime/src/tools/builtin/*.rs`:
+ *  - shell              : command (verbatim, truncated to 60 chars)
+ *  - file_read          : path (L{start_line}–L{end_line})
+ *  - file_write         : path [mode=append]
+ *  - file_edit          : path (N chars)
+ *  - doc_reader         : path [P{a}-{b}]   (pages/sheets/slides)
+ *  - http_request       : METHOD url
+ *  - web_fetch          : url
+ *  - web_search         : query [N results]  (from result)
+ *  - content_search     : pattern [in path]  [(N matches|no matches)]
+ *  - glob_search        : pattern [in path]  [(N files|no matches)]
+ *  - memory_recall      : query (N hits)
+ *  - memory_store       : <content, truncated> (category)
+ *  - rag_query          : query (top_k)
+ *  - intent_send        : target → action
+ *  - ask_user_question  : <question, truncated>
+ *  - todo_write         : N items (M done)
+ *  - mcp_install        : name (transport)
+ *  - mcp_uninstall      : name
+ *  - codebase           : action [language] [file:Lline]
+ *  - other (MCP/external): no special handling — falls through to first field
+ */
+function summarizeToolCall(
+  toolName: string,
+  params: Record<string, unknown>,
+  result?: ChatMessage,
+  isShell = false,
+): string {
+  const asString = (v: unknown): string => (typeof v === "string" ? v : "");
+  const truncate = (s: string, max = 60): string =>
+    s.length > max ? s.slice(0, max - 1) + "…" : s;
+
+  // Helper: extract "Total: N" footer from a tool result.
+  const extractTotal = (re: RegExp, emptyMatch: string): string | null => {
+    if (!result) return null;
+    const m = result.content.match(re);
+    if (m) return m[1];
+    if (/no matches found|no files matched/i.test(result.content)) return emptyMatch;
+    return null;
+  };
+
+  if (isShell) {
+    return truncate(asString(params.command));
+  }
+
+  switch (toolName) {
+    case "file_read": {
+      const path = asString(params.path);
+      const sl = params.start_line as number | undefined;
+      const el = params.end_line as number | undefined;
+      return sl != null || el != null
+        ? `${path} (L${sl ?? "?"}–L${el ?? "?"})`
+        : path;
+    }
+    case "file_write": {
+      const path = asString(params.path);
+      const mode = asString(params.mode);
+      return mode && mode !== "overwrite" ? `${path} [${mode}]` : path;
+    }
+    case "file_edit": {
+      const path = asString(params.path);
+      const newText = asString(params.new_text);
+      const sz = newText.length;
+      return sz > 0 ? `${path} (${sz} chars)` : path;
+    }
+    case "doc_reader": {
+      const path = asString(params.path);
+      const sp = params.start_page as number | undefined;
+      const ep = params.end_page as number | undefined;
+      return sp != null || ep != null
+        ? `${path} [P${sp ?? "?"}–${ep ?? "?"}]`
+        : path;
+    }
+    case "http_request": {
+      const method = asString(params.method) || "GET";
+      const url = asString(params.url);
+      return url ? `${method} ${url}` : "";
+    }
+    case "web_fetch":
+      return asString(params.url);
+    case "web_search": {
+      const q = asString(params.query);
+      const total = extractTotal(/Found\s+(\d+)\s+results?/i, "0 results");
+      return total ? `${q} (${total})` : q;
+    }
+    case "content_search": {
+      let s = asString(params.pattern);
+      const path = asString(params.path);
+      if (path) s += ` in ${path}`;
+      const total = extractTotal(/Total:\s*(\d+)\b/i, "no matches");
+      return total ? `${s} (${total})` : s;
+    }
+    case "glob_search": {
+      let s = asString(params.pattern);
+      const path = asString(params.path);
+      if (path) s += ` in ${path}`;
+      const total = extractTotal(/Total:\s*(\d+)\s*files/i, "no matches");
+      return total ? `${s} (${total})` : s;
+    }
+    case "memory_recall": {
+      const q = asString(params.query);
+      const total = extractTotal(/Found\s+(\d+)|Total:\s*(\d+)/i, "0 hits");
+      // Note: regex may put capture in group 1 OR 2; pick whichever matched.
+      if (total) {
+        const n = (result?.content.match(/Found\s+(\d+)|Total:\s*(\d+)/i) ?? [])[1]
+          || (result?.content.match(/Found\s+(\d+)|Total:\s*(\d+)/i) ?? [])[2];
+        return q ? `${q} (${n || total})` : `(recall) (${n || total})`;
+      }
+      return q || "(recall)";
+    }
+    case "memory_store": {
+      const content = truncate(asString(params.content), 40);
+      const category = asString(params.category);
+      return category ? `${content} (${category})` : content;
+    }
+    case "rag_query": {
+      const q = asString(params.query);
+      const k = params.top_k as number | undefined;
+      return k != null ? `${q} (top ${k})` : q;
+    }
+    case "intent_send": {
+      const target = asString(params.target);
+      const action = asString(params.action);
+      return target && action ? `${target} → ${action}` : target || action;
+    }
+    case "ask_user_question": {
+      const q = truncate(asString(params.question), 50);
+      const opts = Array.isArray(params.options) ? params.options.length : 0;
+      return opts > 0 ? `${q} (${opts} options)` : q;
+    }
+    case "todo_write": {
+      const todos = params.todos;
+      if (Array.isArray(todos)) {
+        const total = todos.length;
+        const completed = todos.filter(
+          (t) => t && typeof t === "object" && (t as { status?: unknown }).status === "completed",
+        ).length;
+        return `${total} ${total === 1 ? "item" : "items"}${completed > 0 ? ` (${completed} done)` : ""}`;
+      }
+      return "";
+    }
+    case "mcp_install": {
+      const name = asString(params.name);
+      const transport = asString(params.transport) || "stdio";
+      return `${name} (${transport})`;
+    }
+    case "mcp_uninstall":
+      return asString(params.name);
+    case "codebase": {
+      const action = asString(params.action) || "?";
+      const file = asString(params.file);
+      const line = params.line as number | undefined;
+      const char = params.character as number | undefined;
+      if (file && line != null) {
+        return `${action} ${file}:${line}${char != null ? `:${char}` : ""}`;
+      }
+      const q = asString(params.query);
+      return q ? `${action} "${truncate(q, 30)}"` : action;
+    }
+    default: {
+      // Fallback: pick the first non-empty string field by name preference.
+      for (const key of ["path", "pattern", "query", "url", "name", "command", "target"]) {
+        const v = asString(params[key]);
+        if (v) return v;
+      }
+      // Last resort: first key + a safe, type-aware value preview.
+      const entries = Object.entries(params);
+      if (entries.length === 0) return "";
+      const [key, value] = entries[0];
+      let preview: string;
+      if (typeof value === "string") preview = value;
+      else if (typeof value === "number" || typeof value === "boolean") preview = String(value);
+      else if (Array.isArray(value)) preview = `[${value.length}]`;
+      else if (value && typeof value === "object") preview = "{…}";
+      else preview = String(value);
+      return `${key}: ${preview.slice(0, 60)}`;
+    }
+  }
+}
+
 /** Check if a specific approval event belongs to the current session.
  *  If session_id is absent (old Runtime), assume it matches (backward compat). */
 function approvalMatchesSession(
@@ -241,6 +426,7 @@ function PairedExploreItem({ item, isStreaming, pendingApproval, currentSessionI
 
 /** Tool call + result paired display: icon + tool name + status indicator + expandable details */
 function ToolCallItem({ call, result, pendingApproval, currentSessionId, onApprove }: { call: ChatMessage; result?: ChatMessage; pendingApproval?: Record<string, ToolApprovalNeededEvent> | null; currentSessionId?: string | null; onApprove?: (action: "allow" | "deny", approval: ToolApprovalNeededEvent) => void }) {
+  const { t } = useTranslation();
   const [showDetails, setShowDetails] = useState(false);
   const toolName = call.toolName ?? "tool";
   const isShell = isShellTool(toolName);
@@ -250,6 +436,14 @@ function ToolCallItem({ call, result, pendingApproval, currentSessionId, onAppro
   const isSuccess = result?.toolStatus === "success";
   const isError = result?.toolStatus === "error";
   const isPendingResult = !result;
+
+  // Localized tool label: e.g. "Reading" while running, "Read" once done.
+  // Falls back to the raw tool name (e.g. "file_read") if no translation is found,
+  // so adding a new builtin tool doesn't immediately break the UI.
+  const toolLabel = t(
+    `tools.${toolName}.${isPendingResult ? "running" : "done"}`,
+    { defaultValue: toolName },
+  );
 
   // Check if this specific tool_call has a pending approval for the current session
   const specificApproval = pendingApproval && call.toolCallId ? pendingApproval[call.toolCallId] : undefined;
@@ -287,61 +481,7 @@ function ToolCallItem({ call, result, pendingApproval, currentSessionId, onAppro
   let summary = "";
   try {
     const params = JSON.parse(call.content || "{}");
-    if (isShell) {
-      summary = (params.command as string) || "";
-    } else if (toolName === "file_read") {
-      // path + line range (L{s}-L{e})
-      let path = (params.path as string) || "";
-      const sl = params.start_line;
-      const el = params.end_line;
-      if (sl != null || el != null) {
-        path += ` (L${sl ?? "?"}–L${el ?? "?"})`;
-      }
-      summary = path;
-    } else if (toolName === "http_request") {
-      // method + url
-      const method = (params.method as string) || "GET";
-      const url = (params.url as string) || "";
-      summary = url ? `${method} ${url}` : "";
-    } else if (toolName === "todo_write") {
-      // N items (M done) — avoid dumping the raw todo array via String()
-      const todos = params.todos;
-      if (Array.isArray(todos)) {
-        const total = todos.length;
-        const completed = todos.filter(
-          (t) => t && typeof t === "object" && (t as { status?: unknown }).status === "completed",
-        ).length;
-        summary = `${total} ${total === 1 ? "item" : "items"}${completed > 0 ? ` (${completed} done)` : ""}`;
-      }
-    } else if (params.path) {
-      summary = params.path as string;
-    } else if (params.pattern) {
-      summary = params.pattern as string;
-    } else if (params.query) {
-      summary = params.query as string;
-    } else if (params.url) {
-      summary = params.url as string;
-    } else {
-      // Generic fallback: show first key + a safe, type-aware value preview.
-      // Avoid String(value) on objects/arrays — it collapses to "[object Object]".
-      const entries = Object.entries(params);
-      if (entries.length > 0) {
-        const [key, value] = entries[0];
-        let valuePreview: string;
-        if (typeof value === "string") {
-          valuePreview = value;
-        } else if (typeof value === "number" || typeof value === "boolean") {
-          valuePreview = String(value);
-        } else if (Array.isArray(value)) {
-          valuePreview = `[${value.length}]`;
-        } else if (value && typeof value === "object") {
-          valuePreview = "{…}";
-        } else {
-          valuePreview = String(value);
-        }
-        summary = `${key}: ${valuePreview.slice(0, 60)}`;
-      }
-    }
+    summary = summarizeToolCall(toolName, params, result, isShell);
   } catch {
     summary = call.content.slice(0, 60);
   }
@@ -354,7 +494,7 @@ function ToolCallItem({ call, result, pendingApproval, currentSessionId, onAppro
       >
         <button className="flex min-w-0 flex-1 items-center gap-2" onClick={() => setShowDetails(!showDetails)}>
           <Icon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-          <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{toolName}</span>
+          <span className="shrink-0 font-medium text-zinc-700 dark:text-zinc-300">{toolLabel}</span>
           {summary && (
             <span className="min-w-0 flex-1 truncate ml-1 text-left text-zinc-500 dark:text-zinc-400">
               {summary}

@@ -1712,8 +1712,13 @@ pub fn read_messages_since(
     line_char_offset: usize,
     streaming_lines: &StreamingStateMap,
     session_id: &str,
+    cached_total_lines: usize,
 ) -> Result<ReadMessagesSinceResult> {
-    let total_lines = count_jsonl_lines(path).unwrap_or(0);
+    let total_lines = if cached_total_lines > 0 {
+        cached_total_lines
+    } else {
+        count_jsonl_lines(path).unwrap_or(0)
+    };
 
     // Clamp line_number to total_lines (defensive against external truncation)
     let line_number = line_number.min(total_lines);
@@ -1741,22 +1746,28 @@ pub fn read_messages_since(
         }
     }
 
-    // Read streaming line delta from StreamingStateMap
-    let streaming = streaming_lines
-        .read()
-        .unwrap()
-        .get(session_id)
-        .map(|sl| {
-            let current_len = sl.accumulated_content.chars().count();
-            let offset = line_char_offset.min(current_len);
-            let delta_content: String = sl.accumulated_content.chars().skip(offset).collect();
-            StreamingLineDelta {
-                line: sl.line_number,
-                role: sl.role.clone(),
-                content: delta_content,
-                char_offset: current_len,
-            }
-        });
+    // Read streaming line delta — clone under read lock, compute delta outside lock
+    // to minimize write-lock contention from concurrent Delta appends.
+    let streaming = {
+        let map = streaming_lines.read().unwrap();
+        map.get(session_id).map(|sl| StreamingLine {
+            line_number: sl.line_number,
+            role: sl.role.clone(),
+            accumulated_content: sl.accumulated_content.clone(),
+            started_at: sl.started_at.clone(),
+        })
+    };
+    let streaming = streaming.map(|sl| {
+        let current_len = sl.accumulated_content.chars().count();
+        let offset = line_char_offset.min(current_len);
+        let delta_content: String = sl.accumulated_content.chars().skip(offset).collect();
+        StreamingLineDelta {
+            line: sl.line_number,
+            role: sl.role,
+            content: delta_content,
+            char_offset: current_len,
+        }
+    });
 
     Ok(ReadMessagesSinceResult {
         messages,

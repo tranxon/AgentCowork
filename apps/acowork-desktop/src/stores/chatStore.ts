@@ -36,7 +36,6 @@ function getUserSenderInfo(): { senderDisplayName?: string } {
 /** State for a single conversation session within an agent. */
 interface SessionChatState {
   messages: ChatMessage[];
-  currentTurnId: string | null;
   tokenUsage: TokenUsage | null;
   contextUsage: ContextUsageInfo | null;
   hasMoreMessages: boolean;
@@ -54,15 +53,8 @@ interface SessionChatState {
   pendingQuestion: AskQuestionEvent | null;
   isLoadingSession: boolean;
   loadError: string | null;
-  /** ADR-014: Session lifecycle status from backend (source of truth) */
+  /** ADR-014/021: Session lifecycle status from backend (sole source of truth for "sending" state) */
   sessionStatus: SessionStatus | null;
-  /** Frontend optimistic flag: true between user clicking Send and backend pushing
-   *  session_state_changed. Cleared when sessionStatus arrives or on done/error/stopped. */
-  pendingSend: boolean;
-  /** Frontend optimistic flag: true between user clicking Stop and backend
-   *  pushing stopped/session_state_changed. When true, `sending` is false —
-   *  the UI immediately exits the "working" state without waiting for backend. */
-  isStopping: boolean;
   /** Last accessed timestamp — used for LRU eviction */
   lastAccessed: number;
   /** Per-session todo list (from todo_write tool) */
@@ -95,13 +87,14 @@ interface SessionChatState {
   pollLineNumber: number;
   /** ADR-021: Polling char offset within the current streaming line */
   pollCharOffset: number;
-  /** ADR-021: Line number of the current streaming line (temporary in-progress message) */
-  streamingLineNumber: number;
+  /** ADR-021: Per-session AbortController for cancelling in-flight loadSessionMessages */
+  abortController: AbortController | null;
+  /** ADR-021: Per-session load sequence number to prevent race conditions */
+  loadSequence: number;
 }
 
 const DEFAULT_SESSION_STATE: SessionChatState = {
   messages: [],
-  currentTurnId: null,
   tokenUsage: null,
   contextUsage: null,
   hasMoreMessages: false,
@@ -113,8 +106,6 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   isLoadingSession: false,
   loadError: null,
   sessionStatus: null,
-  pendingSend: false,
-  isStopping: false,
   lastAccessed: 0,
   todos: [],
   model: null,
@@ -127,7 +118,8 @@ const DEFAULT_SESSION_STATE: SessionChatState = {
   attachedContext: [],
   pollLineNumber: 0,
   pollCharOffset: 0,
-  streamingLineNumber: 0,
+  abortController: null,
+  loadSequence: 0,
 };
 
 // ---------------------------------------------------------------------------
@@ -286,10 +278,6 @@ interface ChatStore {
   availableModels: ModelEntry[];
   /** Whether more messages are being loaded */
   isLoadingMore: boolean;
-  /** Load sequence number to prevent race conditions on fast session switches */
-  loadSequence: number;
-  /** AbortController for cancelling in-flight loadSessionMessages requests */
-  abortController: AbortController | null;
   /** Tracks which session titles have already been persisted to backend */
   persistedTitles: Set<string>;
 
@@ -328,7 +316,7 @@ interface ChatStore {
     /** ADR-021: char offset within the streaming line */
     charOffset?: number,
   ) => Promise<void>;
-  abortSessionLoad: () => void;
+  abortSessionLoad: (agentId: string, sessionId: string) => void;
   loadMoreMessages: (agentId: string, sessionId: string) => Promise<void>;
   /** Activate a session — sets activeSessionId and triggers cleanup */
   activateSession: (agentId: string, sessionId: string) => void;
@@ -424,8 +412,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   wsMap: {},
   availableModels: [],
   isLoadingMore: false,
-  loadSequence: 0,
-  abortController: null,
   persistedTitles: new Set(),
 
   getWs: (agentId: string) => get().wsMap[agentId],
@@ -447,12 +433,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       const session = agent.sessionStates[sessionId];
       if (!session) {
         // Crash restart: create entry with backend status
-        const updatedSessions = { ...agent.sessionStates, [sessionId]: { ...makeInitialSessionState(agent), sessionStatus: status, pendingSend: false, lastAccessed: Date.now() } };
+        const updatedSessions = { ...agent.sessionStates, [sessionId]: { ...makeInitialSessionState(agent), sessionStatus: status, lastAccessed: Date.now() } };
         const updatedAgent = { ...agent, sessionStates: updatedSessions };
         return { agentStates: { ...state.agentStates, [agentId]: updatedAgent } };
       }
-      // Clear pendingSend when backend status arrives
-      return updateSessionState(state, agentId, sessionId, { sessionStatus: status, pendingSend: false });
+      return updateSessionState(state, agentId, sessionId, { sessionStatus: status });
     });
   },
 
@@ -466,15 +451,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       for (const [sessionId, status] of statuses) {
         const session = updatedSessions[sessionId];
         if (session) {
-          // Clear pendingSend when backend status arrives
-          updatedSessions[sessionId] = { ...session, sessionStatus: status, pendingSend: false, lastAccessed: Date.now() };
+          updatedSessions[sessionId] = { ...session, sessionStatus: status, lastAccessed: Date.now() };
         } else {
           // Crash restart: session not cached yet — create entry with backend status
           updatedSessions[sessionId] = {
             ...makeInitialSessionState(agent),
             sessionStatus: status,
-            pendingSend: false,
-            lastAccessed: Date.now(),
+                lastAccessed: Date.now(),
           };
         }
       }
@@ -640,12 +623,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         messageCursor: null,
         iterationLimitPaused: null,
         pendingApproval: {},
-        currentTurnId: null,
-        loadError: null,
-        pendingSend: false,
+              loadError: null,
         pollLineNumber: 0,
         pollCharOffset: 0,
-        streamingLineNumber: 0,
+        abortController: null,
+        loadSequence: 0,
       }),
     }));
   },
@@ -660,12 +642,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         messageCursor: null,
         iterationLimitPaused: null,
         pendingApproval: {},
-        currentTurnId: null,
-        loadError: null,
-        pendingSend: false,
+              loadError: null,
         pollLineNumber: 0,
         pollCharOffset: 0,
-        streamingLineNumber: 0,
+        abortController: null,
+        loadSequence: 0,
       }),
     }));
   },
@@ -743,8 +724,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         const sessionId = agent.activeSessionId;
         const sessionPatch = sessionId
           ? updateSessionState(state, agentId, sessionId, {
-            pendingSend: false,
-          })
+              })
           : {};
         return {
           wsMap: newMap,
@@ -808,10 +788,8 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (sessionId) {
       set((state) => ({
         ...updateSessionState(state, agentId, sessionId, {
-          pendingSend: true,
           messages: [...getSessionState(state, agentId, sessionId).messages, userMsg],
-          currentTurnId: null,
-        }),
+                }),
       }));
 
     }
@@ -892,7 +870,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           ...updateSessionState(state, agentId, sessionId, {
             pollLineNumber: 0,
             pollCharOffset: 0,
-            streamingLineNumber: 0,
           }),
         }));
       }
@@ -944,8 +921,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (sessionId) {
         set((state) => ({
           ...updateSessionState(state, agentId, sessionId, {
-            pendingSend: false,
-            messages: [...getSessionState(state, agentId, sessionId).messages, replyMsg],
+                messages: [...getSessionState(state, agentId, sessionId).messages, replyMsg],
           }),
         }));
       }
@@ -960,8 +936,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (sessionId) {
         set((state) => ({
           ...updateSessionState(state, agentId, sessionId, {
-            pendingSend: false,
-            messages: [...getSessionState(state, agentId, sessionId).messages, errorMsg],
+                messages: [...getSessionState(state, agentId, sessionId).messages, errorMsg],
           }),
         }));
       }
@@ -985,8 +960,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     if (activeSessionId) {
       set((state) => ({
         ...updateSessionState(state, agentId, activeSessionId, {
-          pendingSend: false,
-        }),
+          }),
       }));
     }
   },
@@ -1006,9 +980,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const activeSessionId = getAgentState(get(), agentId).activeSessionId;
     if (activeSessionId) {
       set((state) =>
-        updateSessionState(state, agentId, activeSessionId, {
-          isStopping: true,
-        }),
+        updateSessionState(state, agentId, activeSessionId, {}),
       );
     }
   },
@@ -1033,8 +1005,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           wsMap: newMap,
           ...(sessionId
             ? updateSessionState(state, agentId, sessionId, {
-              pendingSend: false,
-            })
+                  })
             : {}),
         };
       });
@@ -1130,7 +1101,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       if (resp.ok) {
         if (sessionId) {
           set((state) => ({
-            ...updateSessionState(state, agentId, sessionId, { pendingSend: true, iterationLimitPaused: null }),
+            ...updateSessionState(state, agentId, sessionId, { iterationLimitPaused: null }),
           }));
         }
       }
@@ -1202,26 +1173,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     lineNumber?: number,
     charOffset?: number,
   ) => {
-    // ADR-021: Only skip if session is actively sending (pendingSend).
-    // Streaming state is now handled by PollingManager, not by blocking loads.
+    // ADR-021: Per-session abortController + loadSequence (no cross-session interference).
     const sessionState = getSessionState(get(), agentId, sessionId);
-    if (sessionState.pendingSend && !lineNumber) {
-      console.log(`[ChatStore] Skipping loadSessionMessages — session ${sessionId} has pendingSend`);
-      return;
-    }
+    const seq = sessionState.loadSequence + 1;
 
-    const seq = get().loadSequence + 1;
-    set({ loadSequence: seq });
-
-    const oldController = get().abortController;
+    const oldController = sessionState.abortController;
     if (oldController) {
       oldController.abort();
     }
     const controller = new AbortController();
-    set({ abortController: controller });
+    set((state) => ({
+      ...updateSessionState(state, agentId, sessionId, {
+        loadSequence: seq,
+        abortController: controller,
+      }),
+    }));
 
     // Only show loading indicator for initial loads (no cursor, no line_number)
-    const isIncremental = !!(cursor || lineNumber);
+    const isIncremental = !!(cursor || lineNumber != null);
     if (!isIncremental) {
       set((state) => ({
         ...updateSessionState(state, agentId, sessionId, { isLoadingSession: true, loadError: null }),
@@ -1234,48 +1203,42 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       params.set("direction", direction);
       if (cursor) params.set("cursor", cursor);
       // ADR-021: line_number + line_char_offset for incremental polling
-      if (lineNumber) params.set("line_number", String(lineNumber));
-      if (charOffset) params.set("line_char_offset", String(charOffset));
+      // Use != null (not truthy) — 0 is a valid coordinate value.
+      if (lineNumber != null) params.set("line_number", String(lineNumber));
+      if (charOffset != null) params.set("line_char_offset", String(charOffset));
 
       const resp = await fetch(
         `${getGatewayUrl()}/api/agents/${agentId}/sessions/${sessionId}/messages?${params}`,
         { signal: controller.signal },
       );
 
-      if (get().loadSequence !== seq) {
-        console.log(`[ChatStore] Discarding stale loadSessionMessages response (seq ${seq} vs current ${get().loadSequence})`);
+      if (getSessionState(get(), agentId, sessionId).loadSequence !== seq) {
+        console.log(`[ChatStore] Discarding stale loadSessionMessages response (seq ${seq})`);
         return;
       }
 
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
-      const data = (await resp.json()) as PaginatedMessages & {
-        total_lines?: number;
-        streaming?: {
-          line: number;
-          role: string;
-          content: string;
-          char_offset: number;
-        } | null;
-      };
+      const data = (await resp.json()) as PaginatedMessages;
 
-      if (get().loadSequence !== seq) {
-        console.log(`[ChatStore] Discarding stale response after json parse (seq ${seq} vs current ${get().loadSequence})`);
+      if (getSessionState(get(), agentId, sessionId).loadSequence !== seq) {
+        console.log(`[ChatStore] Discarding stale response after json parse (seq ${seq})`);
         return;
       }
 
-      console.log(`[ChatStore] Loaded ${data.messages?.length ?? 0} messages for session ${sessionId}${lineNumber ? ` (incremental from line ${lineNumber})` : ""}`);
+      console.log(`[ChatStore] Loaded ${data.messages?.length ?? 0} messages for session ${sessionId}${lineNumber != null ? ` (incremental from line ${lineNumber})` : ""}`);
 
       const converted = mergeDocumentUploads(data.messages ?? [], agentId);
 
       set((state) => {
-        if (state.loadSequence !== seq) {
+        const ss = getSessionState(state, agentId, sessionId);
+        if (ss.loadSequence !== seq) {
           console.log(`[ChatStore] Discarding state update — sequence changed`);
           return {};
         }
 
         // ADR-021: Incremental poll — append new messages, handle streaming delta
-        if (lineNumber) {
+        if (lineNumber != null) {
           const ss = getSessionState(state, agentId, sessionId);
           const existingIds = new Set(ss.messages.map((m) => m.id));
           const newMessages = converted.filter((m) => !existingIds.has(m.id));
@@ -1283,7 +1246,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // Merge streaming delta into messages
           let messages = [...ss.messages];
           const streaming = data.streaming;
-          const prevStreamingLine = ss.streamingLineNumber;
+          // Local variable — tracks streaming line transitions within this poll cycle.
+          // Not persisted to SessionChatState (ADR-021 §前端状态模型).
+          const prevStreamingLine = ss.pollLineNumber;
           const streamingLineId = `msg-streaming-${sessionId}`;
 
           if (streaming && streaming.content) {
@@ -1309,19 +1274,24 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
           }
 
-          // New complete lines from JSONL arrive — if any match the streaming
-          // line number, replace the temporary streaming message with them.
+          // Remove the temporary streaming message when the backend streaming
+          // line is gone (content has been persisted to JSONL as permanent
+          // entries). Also remove when the streaming line number advanced,
+          // indicating the old line was flushed and a new one created.
+          const hasStreamingMsg = messages.some((m) => m.id === streamingLineId);
+          if (hasStreamingMsg && (!streaming || streaming.line > prevStreamingLine)) {
+            messages = messages.filter((m) => m.id !== streamingLineId);
+          }
+
+          // New complete lines from JSONL arrive — append them
           if (newMessages.length > 0) {
-            // Remove the streaming placeholder if it's been flushed to JSONL
-            const hasStreamingMsg = messages.some((m) => m.id === streamingLineId);
-            if (hasStreamingMsg && (!streaming || streaming.line > prevStreamingLine)) {
-              messages = messages.filter((m) => m.id !== streamingLineId);
-            }
-            // Append new complete messages (dedup by id already done above)
             messages = [...messages, ...newMessages];
           }
 
-          // No new data at all — just update coordinates
+          // No new data and no streaming content — just update coordinates.
+          // NOTE: streaming message removal is handled above (outside this
+          // early-return guard) so that a disappearing streaming line always
+          // cleans up the placeholder, even when no new JSONL lines arrived.
           if (newMessages.length === 0 && (!streaming || !streaming.content)) {
             return {
               ...updateSessionState(state, agentId, sessionId, {
@@ -1329,7 +1299,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
                 loadError: null,
                 pollLineNumber: data.total_lines ?? ss.pollLineNumber,
                 pollCharOffset: streaming?.char_offset ?? ss.pollCharOffset,
-                streamingLineNumber: streaming?.line ?? ss.streamingLineNumber,
               }),
             };
           }
@@ -1343,7 +1312,6 @@ export const useChatStore = create<ChatStore>((set, get) => ({
               loadError: null,
               pollLineNumber: data.total_lines ?? ss.pollLineNumber,
               pollCharOffset: streaming?.char_offset ?? 0,
-              streamingLineNumber: streaming?.line ?? ss.streamingLineNumber,
             }),
             isLoadingMore: false,
           };
@@ -1380,7 +1348,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         };
       });
     } catch (e: unknown) {
-      if (get().loadSequence !== seq) {
+      if (getSessionState(get(), agentId, sessionId).loadSequence !== seq) {
         console.log(`[ChatStore] Discarding stale error response (seq ${seq})`);
         return;
       }
@@ -1404,20 +1372,28 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         isLoadingMore: false,
       }));
     } finally {
-      const currentController = get().abortController;
+      const currentController = getSessionState(get(), agentId, sessionId).abortController;
       if (currentController === controller) {
-        set({ abortController: null });
+        set((state) => ({
+          ...updateSessionState(state, agentId, sessionId, { abortController: null }),
+        }));
       }
     }
   },
 
-  abortSessionLoad: () => {
-    const controller = get().abortController;
+  abortSessionLoad: (agentId: string, sessionId: string) => {
+    const controller = getSessionState(get(), agentId, sessionId).abortController;
     if (controller) {
       controller.abort();
-      set({ abortController: null });
+      set((state) => ({
+        ...updateSessionState(state, agentId, sessionId, { abortController: null }),
+      }));
     }
-    set((state) => ({ loadSequence: state.loadSequence + 1 }));
+    set((state) => ({
+      ...updateSessionState(state, agentId, sessionId, {
+        loadSequence: getSessionState(state, agentId, sessionId).loadSequence + 1,
+      }),
+    }));
   },
 
   loadMoreMessages: async (agentId: string, sessionId: string) => {
@@ -1697,7 +1673,6 @@ function mergeDocumentUploads(entries: ConversationEntry[], agentId: string): Ch
 // ── WebSocket event handler — routes by event.session_id ──────────────
 
 const CONTENT_EVENT_TYPES = new Set([
-  "reasoning_started", "chunk", "tool_call", "tool_result",
   "done", "error", "tool_approval_needed", "ask_question", "iteration_limit_paused",
   "context_usage", "session_state_changed", "stopped", "todo_list_updated",
   "compacting_started", "compacting_ended", "model_confirmed", "reasoning_effort_confirmed",
@@ -1758,24 +1733,17 @@ function handleMessageEvent(
       // processes the interrupt.
       break;
 
-    case "reasoning_started":
-      if (sid) {
-        set((state) => updateSessionState(state, agentId, sid, { isCompacting: false }));
-      }
-      break;
-
     // ADR-021: new_data_available — triggers HTTP poll for incremental message data.
     // Replaces the old chunk/tool_call/tool_result streaming via WebSocket.
     case "new_data_available": {
       if (!sid) break;
       const totalLines = (data.total_lines as number) ?? 0;
-      const streamingLineNum = (data.streaming_line as number) ?? 0;
       console.log(
-        `[ChatStore] new_data_available for ${agentId}/${sid}: total_lines=${totalLines}, streaming_line=${streamingLineNum}`,
+        `[ChatStore] new_data_available for ${agentId}/${sid}: total_lines=${totalLines}`,
       );
       // Import PollingManager dynamically to avoid circular dependency
       import("../lib/polling").then(({ notifyNewData }) => {
-        notifyNewData(agentId, sid!, totalLines, streamingLineNum);
+        notifyNewData(agentId, sid!, totalLines);
       }).catch((e) => {
         console.warn("[ChatStore] Failed to import PollingManager:", e);
       });
@@ -1813,11 +1781,8 @@ function handleMessageEvent(
         return {
           ...updateSessionState(state, agentId, sid!, {
             tokenUsage: usage ?? ss.tokenUsage,
-            currentTurnId: null,
-            isCompacting: false,
-            pendingSend: false,
-            isStopping: false,
-          }),
+                      isCompacting: false,
+                }),
         };
       });
       const doneSessionState = getSessionState(get(), agentId, sid);
@@ -1885,9 +1850,7 @@ function handleMessageEvent(
         ...updateSessionState(state, agentId, sid!, {
           messages: [...getSessionState(state, agentId, sid!).messages, errMsg],
           isCompacting: false,
-          pendingSend: false,
-          isStopping: false,
-        }),
+          }),
       }));
       break;
     }
@@ -1901,9 +1864,7 @@ function handleMessageEvent(
       set((state) => ({
         ...updateSessionState(state, agentId, sid!, {
           isCompacting: false,
-          pendingSend: false,
-          isStopping: false,
-        }),
+          }),
       }));
       break;
     }
@@ -2013,7 +1974,7 @@ function handleMessageEvent(
         const status = data.status as SessionStatus | undefined;
         if (status) {
           set((state) => {
-            const sessionPatch: Partial<SessionChatState> = { sessionStatus: status, pendingSend: false };
+            const sessionPatch: Partial<SessionChatState> = { sessionStatus: status };
 
             // ADR-012: Backend includes per-session model/provider (from JSONL metadata).
             if (typeof data.model === "string") sessionPatch.model = data.model as string;

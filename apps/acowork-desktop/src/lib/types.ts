@@ -652,7 +652,16 @@ export interface PaginatedMessages {
   session_id: string;
   messages: ConversationEntry[];
   cursor: string | null;
-  has_more: boolean;
+  has_more?: boolean;
+  /** ADR-021: Total JSONL line count for incremental polling coordinate tracking */
+  total_lines?: number;
+  /** ADR-021: In-progress streaming line delta */
+  streaming?: {
+    line: number;
+    role: string;
+    content: string;
+    char_offset: number;
+  } | null;
 }
 
 // ── User profile (persisted in localStorage) ──────────────────────────

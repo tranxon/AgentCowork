@@ -162,9 +162,11 @@ impl AgentLoop {
                         reasoning_in_progress = false;
                     }
 
-                    // ADR-021: Flush accumulated assistant content to JSONL
-                    // before tool calls (natural boundary)
-                    self.core.flush_streaming_line(self.session.conversation.as_ref());
+                    // ADR-021: Do NOT flush streaming line on ToolCallStart.
+                    // The thought content is properly persisted with metadata
+                    // via persist_think_to_conversation in prepare_tool_calls().
+                    // Flushing here caused duplicate thought records (one
+                    // without metadata from flush, one with metadata from persist).
 
                     tracing::info!(
                         tool_name = %tc.function.name,

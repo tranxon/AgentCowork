@@ -164,12 +164,10 @@ export function ChatPanel() {
   const loadError = sessionState?.loadError ?? null;
   const todos = sessionState?.todos ?? [];
 
-  // Derive sending from current session: pendingSend (optimistic) OR sessionStatus (backend truth).
-  // This is per-session — no cross-session state leakage.
+  // ADR-021: "sending" is derived purely from sessionStatus (backend source of truth).
+  // No optimistic flags — the backend pushes session_state_changed within ~50ms.
   const sending = sessionState
-    ? !sessionState.isStopping &&
-    (sessionState.pendingSend
-      || sessionState.sessionStatus?.status === "streaming"
+    ? (sessionState.sessionStatus?.status === "streaming"
       || sessionState.sessionStatus?.status === "waiting_approval"
       || sessionState.sessionStatus?.status === "paused")
     : false;
@@ -300,7 +298,16 @@ export function ChatPanel() {
           exploreBuffer.push({ ...msg, type: 'thought' as any, content: thinkContent });
         }
         if (replyContent.trim()) {
-          flushExplore();
+          // Only flush if exploreBuffer already has tool-call/result items
+          // (previous round complete). If thinkContent was just pushed into
+          // an otherwise empty (or thought-only) buffer, keep it — subsequent
+          // tool calls from this round should join the same explore group.
+          const hasToolsInBuffer = exploreBuffer.some(
+            (m) => m.type === 'tool_call' || m.type === 'tool_result'
+          );
+          if (hasToolsInBuffer || !thinkContent) {
+            flushExplore();
+          }
           grouped.push({ ...msg, content: replyContent });
         } else if (!thinkContent) {
           // Empty message (streaming)
@@ -1149,10 +1156,14 @@ export function ChatPanel() {
                       {displayItem.type === 'explore_group' && (() => {
                         const nextItem = displayMessages[virtualRow.index + 1];
                         const hasFollowUpReply = nextItem !== undefined && (nextItem as any).type !== 'explore_group';
+                        // ADR-021: When session is streaming and this is the last explore_group,
+                        // pass isStreaming=true so the block auto-expands and shows live state.
+                        const isLastGroup = virtualRow.index === displayMessages.length - 1;
+                        const isStreamingGroup = sending && isLastGroup;
                         return (
                           <ExploreBlock
                             items={displayItem.items}
-                            isStreaming={false}
+                            isStreaming={isStreamingGroup}
                             pendingApproval={pendingApproval}
                             currentSessionId={currentSessionId}
                             onApprove={(action, approval) => handleToolApprove(action, approval)}
@@ -1162,9 +1173,19 @@ export function ChatPanel() {
                       })()}
 
                       {/* Regular message */}
-                      {displayItem.type !== 'explore_group' && (
-                        <MessageBubble message={item as ChatMessage} isStreaming={false} agentId={selectedAgentId ?? ""} />
-                      )}
+                      {displayItem.type !== 'explore_group' && (() => {
+                        const msg = item as ChatMessage;
+                        // ADR-021: Streaming placeholder messages have id prefix "msg-streaming-".
+                        // When sessionStatus is "streaming" and this is the last message,
+                        // pass isStreaming=true so ThinkBlock shows "Thinking..." and
+                        // assistant bubble shows the pulsing cursor.
+                        const isStreamingMsg = sending
+                          && virtualRow.index === displayMessages.length - 1
+                          && msg.id.startsWith("msg-streaming-");
+                        return (
+                          <MessageBubble message={msg} isStreaming={isStreamingMsg} agentId={selectedAgentId ?? ""} />
+                        );
+                      })()}
                     </div>
                   );
                 })}

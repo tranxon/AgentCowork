@@ -20,13 +20,16 @@
 //!
 //! - Normal: 500ms interval, reset on new data
 //! - Empty response: double interval (max 5s)
-//! - 3 consecutive empty responses → stop polling
+//! - Auto-stop: NEVER — the poller is stopped only by explicit stop()
+//!   calls (done/error/stopped/session switch). LLM thinking phases can
+//!   last 10-30 seconds with no data; auto-stopping on empty polls would
+//!   kill the poller before the first token arrives.
 //!
 //! ## Lifecycle
 //!
 //! - `start()` — begin polling (called when session becomes active/streaming)
 //! - `stop()`  — stop polling (called on done/error/stopped or session switch)
-//! - `notify(totalLines, streamingLineNumber)` — trigger immediate poll
+//! - `notify(totalLines)` — trigger immediate poll
 
 import { useChatStore } from "../stores/chatStore";
 
@@ -36,8 +39,6 @@ const POLL_INITIAL_MS = 500;
 const POLL_MAX_MS = 5000;
 /** Backoff multiplier per empty response */
 const POLL_BACKOFF_MULTIPLIER = 2.0;
-/** Consecutive empty responses before auto-stop */
-const POLL_MAX_EMPTY_RETRIES = 3;
 
 /**
  * Per-session polling manager.
@@ -53,7 +54,6 @@ export class PollingManager {
   private lineNumber: number = 0;
   private charOffset: number = 0;
   private running: boolean = false;
-  private consecutiveEmpty: number = 0;
 
   constructor(
     agentId: string,
@@ -69,7 +69,6 @@ export class PollingManager {
     if (this.running) return;
     this.running = true;
     this.intervalMs = POLL_INITIAL_MS;
-    this.consecutiveEmpty = 0;
     console.log(
       `[PollingManager] Starting poll for ${this.agentId}/${this.sessionId}`,
     );
@@ -90,22 +89,37 @@ export class PollingManager {
    * Called when a `new_data_available` WebSocket event arrives.
    * Updates the line coordinate and triggers an immediate poll.
    *
+   * The Runtime already throttles these notifications to ≤ 2/sec (500ms
+   * cooldown per ADR-021 §难点 1), so this method always fires an immediate
+   * fetch without additional frontend-side rate limiting.
+   *
+   * If the poller was stopped (e.g., by a previous done/error event but
+   * the session was re-activated), it is restarted automatically.
+   *
    * @param totalLines - Total JSONL line count from the backend notification.
-   * @param streamingLineNumber - The line number of the current streaming line.
    */
-  notify(totalLines: number, streamingLineNumber: number): void {
-    if (!this.running) return;
+  notify(totalLines: number): void {
+    if (!this.running) {
+      // Poller was stopped — restart it. This handles the case where
+      // the fallback timer expired during a long thinking phase but
+      // the session is still streaming.
+      this.start();
+    }
 
-    // Update line number from the notification
+    // Update line number from the notification.
+    // NOTE: Do NOT reset charOffset here. The offset tracks how much
+    // of the streaming line content the frontend has already consumed.
+    // Resetting it to 0 on every notification causes the backend to
+    // return the full accumulated content each time, which the frontend
+    // then appends — producing exponential duplication and preventing
+    // incremental display. The offset is correctly maintained by poll
+    // responses (streaming.char_offset).
     if (totalLines > 0) {
       this.lineNumber = totalLines;
     }
-    // streaming_line tells us the current streaming line number;
-    // reset char offset since content is always accumulating
-    this.charOffset = 0;
 
     console.log(
-      `[PollingManager] notify: totalLines=${totalLines}, streamingLine=${streamingLineNumber}`,
+      `[PollingManager] notify: totalLines=${totalLines}`,
     );
 
     // Trigger immediate poll (cancel any pending timer first)
@@ -179,23 +193,17 @@ export class PollingManager {
         this.lineNumber = updated.pollLineNumber;
         this.charOffset = updated.pollCharOffset;
 
-        // Backoff: if no new data this cycle, double interval
+        // Backoff: if no new data this cycle, double interval (max 5s).
+        // Do NOT auto-stop — LLM thinking phases can last 10-30 seconds
+        // with no data. The poller is stopped only by explicit stop()
+        // calls (done/error/stopped/session_state_changed to idle).
         if (this.lineNumber === prevLineNumber && this.charOffset === 0) {
-          this.consecutiveEmpty++;
-          if (this.consecutiveEmpty >= POLL_MAX_EMPTY_RETRIES) {
-            console.log(
-              `[PollingManager] ${POLL_MAX_EMPTY_RETRIES} consecutive empty polls — stopping`,
-            );
-            this.stop();
-            return;
-          }
           this.intervalMs = Math.min(
             this.intervalMs * POLL_BACKOFF_MULTIPLIER,
             POLL_MAX_MS,
           );
         } else {
           // New data — reset backoff
-          this.consecutiveEmpty = 0;
           this.intervalMs = POLL_INITIAL_MS;
         }
       }
@@ -255,22 +263,19 @@ export function stopPolling(agentId: string, sessionId: string): void {
  * Creates a manager if one doesn't exist yet.
  *
  * @param totalLines - Total JSONL line count from backend.
- * @param streamingLineNumber - The line number of the current streaming line.
  */
 export function notifyNewData(
   agentId: string,
   sessionId: string,
   totalLines: number,
-  streamingLineNumber: number,
 ): void {
   const key = managerKey(agentId, sessionId);
   let mgr = managers.get(key);
   if (!mgr) {
     mgr = new PollingManager(agentId, sessionId);
     managers.set(key, mgr);
-    mgr.start();
   }
-  mgr.notify(totalLines, streamingLineNumber);
+  mgr.notify(totalLines);
 }
 
 /**

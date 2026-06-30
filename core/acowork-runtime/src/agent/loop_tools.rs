@@ -625,6 +625,13 @@ impl AgentLoop {
         // Persist think block to JSONL (D2 dedup)
         if let Some(ref conversation) = self.session.conversation {
             crate::agent::loop_session::persist_think_to_conversation(conversation, response);
+            // Bypasses flush_streaming_line — increment cached total_lines.
+            let thought_written =
+                response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
+                || crate::agent::loop_session::extract_think_block(&response.content).is_some();
+            if thought_written {
+                self.core.increment_total_lines(1);
+            }
         }
 
         // Has tool calls — process them
@@ -655,6 +662,10 @@ impl AgentLoop {
                     "tool_call_id": tc.id,
                 });
                 conversation.append_message("tool_call", &tc.function.arguments, Some(metadata));
+            }
+            // Bypasses flush_streaming_line — increment cached total_lines.
+            if !deduped_calls.is_empty() {
+                self.core.increment_total_lines(deduped_calls.len());
             }
         }
 
@@ -804,6 +815,10 @@ impl AgentLoop {
                     "tool_call_id": tc.id,
                 });
                 conversation.append_message("tool_result", result_content, Some(metadata));
+            }
+            // Bypasses flush_streaming_line — increment cached total_lines.
+            if !tool_results.is_empty() {
+                self.core.increment_total_lines(tool_results.len());
             }
         }
     }

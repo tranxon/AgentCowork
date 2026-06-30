@@ -1107,6 +1107,12 @@ pub struct SessionMessagesQuery {
     /// Pagination direction: "forward" or "backward" (default: "backward")
     #[serde(default = "default_direction")]
     pub direction: String,
+    /// ADR-021: JSONL line coordinate for incremental polling
+    #[serde(default)]
+    pub line_number: Option<usize>,
+    /// ADR-021: Character offset within streaming line for delta computation
+    #[serde(default)]
+    pub line_char_offset: Option<usize>,
 }
 
 fn default_limit() -> u32 {
@@ -1160,9 +1166,30 @@ pub struct SessionMessagesResponse {
     /// Messages in the current page
     pub messages: Vec<MessageEntryResponse>,
     /// Cursor for the next page
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub cursor: Option<String>,
     /// Whether more messages exist
-    pub has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_more: Option<bool>,
+    /// ADR-021: Total JSONL line count for incremental polling coordinate tracking
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_lines: Option<usize>,
+    /// ADR-021: In-progress streaming line delta, if any
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub streaming: Option<StreamingDeltaResponse>,
+}
+
+/// ADR-021: Streaming line delta carried in session-messages response
+#[derive(Serialize)]
+pub struct StreamingDeltaResponse {
+    /// JSONL line index of the in-progress streaming line
+    pub line: usize,
+    /// Role of the streaming content ("assistant" or "thought")
+    pub role: String,
+    /// Delta content — only new characters since the requested char_offset
+    pub content: String,
+    /// Total character count of the streaming line (used as next line_char_offset)
+    pub char_offset: usize,
 }
 
 /// Single message in the session messages response
@@ -1287,12 +1314,20 @@ pub async fn get_session_messages(
         }
     }
 
-    let params = serde_json::json!({
+    let mut params = serde_json::json!({
         "session_id": session_id,
         "cursor": query.cursor,
         "limit": query.limit,
         "direction": query.direction,
     });
+
+    // ADR-021: Forward line coordinate params for incremental polling
+    if let Some(ln) = query.line_number {
+        params["line_number"] = serde_json::json!(ln);
+    }
+    if let Some(co) = query.line_char_offset {
+        params["line_char_offset"] = serde_json::json!(co);
+    }
 
     let data = forward_session_query(&state, &agent_id, "get_session_messages", params).await?;
 
@@ -1325,13 +1360,31 @@ pub async fn get_session_messages(
         .map(|s| s.to_string());
     let has_more = data
         .get("has_more")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .and_then(|v| v.as_bool());
+
+    // ADR-021: Extract total_lines and streaming delta from Runtime response
+    let total_lines = data
+        .get("total_lines")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+    let streaming = data.get("streaming").and_then(|v| {
+        if v.is_null() {
+            return None;
+        }
+        Some(StreamingDeltaResponse {
+            line: v.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize,
+            role: v.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string(),
+            content: v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+            char_offset: v.get("char_offset").and_then(|c| c.as_u64()).unwrap_or(0) as usize,
+        })
+    });
 
     Ok(Json(SessionMessagesResponse {
         messages,
         cursor,
         has_more,
+        total_lines,
+        streaming,
     }))
 }
 

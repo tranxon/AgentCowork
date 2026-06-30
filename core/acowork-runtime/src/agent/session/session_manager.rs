@@ -1146,6 +1146,13 @@ After installation, ask the user to re-enable the MCP server.",
         self.core.streaming_lines.clone()
     }
 
+    /// ADR-021: Get the cached total JSONL line count for a session.
+    /// Returns 0 if not yet initialized (cold start — `read_messages_since`
+    /// will scan the file as fallback when passed 0).
+    pub fn total_lines(&self) -> usize {
+        self.core.total_lines.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     /// Get the name of the first available provider from the global cache.
     /// Used for budget queries in the Gateway loop and ConfigSnapshot.
     /// Returns an empty string if no providers are configured.

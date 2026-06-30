@@ -60,3 +60,37 @@ impl AppState {
         }
     }
 }
+
+/// Last-resort cleanup: kill the local Gateway process tree when AppState is
+/// dropped (e.g. on Ctrl+C termination, OS shutdown, or forced exit).
+///
+/// This is a safety net — the tray "quit" handler and `RunEvent::Exit` handler
+/// in lib.rs normally kill the Gateway before Drop fires in normal shutdown.
+/// But on abrupt termination (Ctrl+C in dev mode, `taskkill` of the Tauri
+/// process), Rust's stack unwind will run this Drop and prevent orphaned
+/// Gateway / Runtime / Embed processes from lingering.
+impl Drop for AppState {
+    fn drop(&mut self) {
+        // Only try to lock if the mutex isn't poisoned. During unwind from
+        // a panic, the mutex may be poisoned.
+        if let Ok(mut proc) = self.gateway_process.try_lock() {
+            if let Some(mut child) = proc.take() {
+                let pid = child.id();
+                tracing::info!(pid = pid, "AppState dropped, killing Gateway process tree");
+                #[cfg(target_os = "windows")]
+                {
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/PID", &pid.to_string(), "/T", "/F"])
+                        .output();
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let _ = std::process::Command::new("kill")
+                        .args(["-INT", &pid.to_string()])
+                        .output();
+                }
+                let _ = child.wait();
+            }
+        }
+    }
+}

@@ -126,13 +126,12 @@ export function SessionPanel({ agentId }: SessionPanelProps) {
             {sessions.map((session) => {
               const isActive = session.session_id === currentSessionId;
               const isDeleting = confirmDelete === session.session_id;
-              // ADR-014: Derive streaming status from sessionStatus + pendingSend (source of truth)
+              // ADR-021: Derive streaming status purely from sessionStatus (backend source of truth)
               const isStreaming = (() => {
                 const agent = useChatStore.getState().agentStates[agentId];
                 const sessionState = agent?.sessionStates[session.session_id];
                 if (!sessionState) return false;
-                return sessionState.pendingSend
-                  || sessionState.sessionStatus?.status === "streaming"
+                return sessionState.sessionStatus?.status === "streaming"
                   || sessionState.sessionStatus?.status === "waiting_approval"
                   || sessionState.sessionStatus?.status === "paused";
               })();

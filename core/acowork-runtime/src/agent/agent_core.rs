@@ -10,7 +10,7 @@
 //! Phase 2: wrapped in Arc for multi-session Actor sharing.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use acowork_core::protocol::{ModelCapabilitiesInfo, ProviderListItem};
@@ -90,6 +90,13 @@ pub struct AgentCore {
     /// Defaults to false — set to true by EnableNotify message on session activation.
     /// Uses Arc<AtomicBool> so SessionTask can modify it externally.
     pub(crate) notify_enabled: Arc<AtomicBool>,
+    /// Unix timestamp (milliseconds) of the last `NewDataAvailable` notification.
+    /// Used for 500ms throttle — ADR-021 §难点 1.
+    pub(crate) last_notify_ts: Arc<AtomicI64>,
+    /// ADR-021: Cached total JSONL line count (including metadata line 0).
+    /// Updated atomically on each flush_streaming_line. Eliminates O(N) file
+    /// scans in notify_new_data_available() and ensure_streaming_line().
+    pub(crate) total_lines: Arc<AtomicUsize>,
     /// Grafeo memory store (shared across all sessions of this agent).
     /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
     /// None if initialization failed (memory features degraded gracefully).
@@ -218,6 +225,8 @@ impl AgentCore {
             session_id: None,
             chunk_tx,
             notify_enabled: Arc::new(AtomicBool::new(false)),
+            last_notify_ts: Arc::new(AtomicI64::new(0)),
+            total_lines: Arc::new(AtomicUsize::new(0)),
             memory_store: None,
             memory_session: None,
             debug_observer: observer,
@@ -370,26 +379,31 @@ impl AgentCore {
     ///
     /// The `line_number` is set to the current JSONL total line count so the
     /// frontend knows which line this will become after flush.
+    ///
+    /// If a streaming line already exists for this session but with a different
+    /// role, the role is updated to reflect the current content type. This
+    /// prevents `flush_streaming_line` from writing content under a stale role
+    /// (e.g., writing assistant reply content as "thought" because reasoning
+    /// arrived first and created the streaming line).
     fn ensure_streaming_line(&self, role: &str) {
         let sid = match &self.session_id {
             Some(s) => s.clone(),
             None => return,
         };
         let mut map = self.streaming_lines.write().unwrap();
-        if map.contains_key(&sid) {
+        if let Some(existing) = map.get_mut(&sid) {
+            // Role transition: update to current role so flush_streaming_line
+            // writes with the correct role. The accumulated content may contain
+            // a mix of both roles' output, but the final persistence
+            // (persist_think_to_conversation + handle_text_response) writes
+            // clean separated entries that supersede this temporary line.
+            if existing.role != role {
+                existing.role = role.to_string();
+            }
             return;
         }
-        // Determine line_number from JSONL file
-        let line_number = self
-            .current_work_dir
-            .as_ref()
-            .map(|wd| {
-                let jsonl_path = std::path::PathBuf::from(wd)
-                    .join("conversations")
-                    .join(format!("{}.jsonl", sid));
-                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
-            })
-            .unwrap_or(0);
+        // Use cached total_lines; initialize from file on first access.
+        let line_number = self.get_total_lines(&sid);
         map.insert(
             sid,
             crate::conversation::StreamingLine {
@@ -443,6 +457,8 @@ impl AgentCore {
             && let Some(conv) = conversation
         {
             conv.append_message(&sl.role, &content, None);
+            // Increment cached line count — one new line written to JSONL.
+            self.total_lines.fetch_add(1, Ordering::Relaxed);
         }
         Some(content)
     }
@@ -459,33 +475,54 @@ impl AgentCore {
         self.streaming_lines.write().unwrap().remove(&sid);
     }
 
+    /// Increment the cached total JSONL line count.
+    ///
+    /// Must be called after each direct `conversation.append_message()` that
+    /// bypasses `flush_streaming_line()`, so that `read_messages_since` sees
+    /// the updated line count and returns newly written entries to the frontend.
+    pub(crate) fn increment_total_lines(&self, count: usize) {
+        self.total_lines.fetch_add(count, Ordering::Relaxed);
+    }
+
     /// Send a `NewDataAvailable` notification via the control channel.
     ///
     /// ADR-021: This notifies the frontend that new data is available for
     /// polling. The frontend should trigger an HTTP poll to fetch the latest
     /// messages and streaming line delta.
     ///
-    /// Only sends if `notify_enabled` is true (session is activated).
+    /// Only sends if `notify_enabled` is true (session is activated) and
+    /// at least 500ms have elapsed since the last notification (ADR-021 §难点 1).
     pub(crate) fn notify_new_data_available(&self) {
         if !self.notify_enabled.load(Ordering::Relaxed) {
             return;
         }
+
+        // ADR-021 §难点 1: Throttle to max ~2 notifications/sec.
+        // LLM streaming produces deltas at 50-200Hz; sending a WS event
+        // per delta would flood the frontend PollingManager and cause
+        // endless abort cycles. 500ms is the same as the PollingManager's
+        // initial backoff → maximum one poll per notification.
+        let now = Utc::now().timestamp_millis();
+        let last = self.last_notify_ts.load(Ordering::Relaxed);
+        if now - last < 500 {
+            return;
+        }
+        // CAS prevents races — only one concurrent delta wins the send.
+        if self
+            .last_notify_ts
+            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+        {
+            return;
+        }
+
         let sid = match &self.session_id {
             Some(s) => s.clone(),
             None => return,
         };
 
-        // Read actual total_lines from the JSONL file, not from streaming_line
-        let total_lines = self
-            .current_work_dir
-            .as_ref()
-            .map(|wd| {
-                let jsonl_path = std::path::PathBuf::from(wd)
-                    .join("conversations")
-                    .join(format!("{}.jsonl", sid));
-                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
-            })
-            .unwrap_or(0);
+        // Use cached total_lines — O(1) atomic read, no file I/O.
+        let total_lines = self.get_total_lines(&sid);
 
         let map = self.streaming_lines.read().unwrap();
         let streaming_line = map.get(&sid).map(|sl| sl.line_number).unwrap_or(0);
@@ -496,6 +533,31 @@ impl AgentCore {
             total_lines,
             streaming_line,
         });
+    }
+
+    /// Get the cached total JSONL line count, initializing from file on first access.
+    ///
+    /// After the first call, subsequent reads are O(1) atomic loads.
+    /// The counter is incremented in `flush_streaming_line` after each
+    /// `append_message`, staying in sync with the JSONL file.
+    fn get_total_lines(&self, session_id: &str) -> usize {
+        let cached = self.total_lines.load(Ordering::Relaxed);
+        if cached > 0 {
+            return cached;
+        }
+        // Cold start: scan file once to initialize.
+        let count = self
+            .current_work_dir
+            .as_ref()
+            .map(|wd| {
+                let jsonl_path = std::path::PathBuf::from(wd)
+                    .join("conversations")
+                    .join(format!("{}.jsonl", session_id));
+                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        self.total_lines.store(count, Ordering::Relaxed);
+        count
     }
 
     /// Update the embedding provider at runtime (hot-push from Gateway
@@ -902,6 +964,8 @@ impl AgentCore {
             session_id: Some(session_id),
             chunk_tx,
             notify_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnableNotify
+            last_notify_ts: Arc::new(AtomicI64::new(0)),    // per-session throttle, restarts at 0
+            total_lines: Arc::new(AtomicUsize::new(0)),     // per-session, initialized on first use
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),
             // Debug observer is NOT cloned — each session gets a fresh
@@ -1150,12 +1214,12 @@ mod tests {
     #[test]
     fn test_try_send_chunk_normal() {
         let (core, mut rx) = make_core_with_channel(Some("s1"));
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::ReasoningStarted));
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
         let evt = rx.try_recv().unwrap();
         assert_eq!(evt.session_id, "s1");
         assert!(matches!(
             evt.event,
-            crate::agent::loop_::ChunkEvent::ReasoningStarted
+            crate::agent::loop_::ChunkEvent::CompactingStarted
         ));
     }
 
@@ -1163,7 +1227,7 @@ mod tests {
     fn test_try_send_chunk_no_session_id() {
         let (core, _rx) = make_core_with_channel(None);
         // session_id is None — make_chunk_event returns None, try_send_chunk returns false
-        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::ReasoningStarted));
+        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
     }
 
     #[test]
@@ -1191,19 +1255,25 @@ mod tests {
         core.notify_enabled.store(true, Ordering::Relaxed);
 
         // Fill the channel
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::ReasoningStarted));
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
         // Second send should fail (channel full)
-        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta("x".to_string())));
+        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
+            content: "x".to_string(),
+            message_id: "m1".to_string(),
+        }));
 
         // Drain and retry should work
         let _ = rx.try_recv().unwrap();
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta("y".to_string())));
+        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
+            content: "y".to_string(),
+            message_id: "m2".to_string(),
+        }));
     }
 
     #[test]
     fn test_make_chunk_event_with_session_id() {
         let (core, _rx) = make_core_with_channel(Some("abc"));
-        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::ReasoningStarted);
+        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::CompactingStarted);
         assert!(wrapped.is_some());
         assert_eq!(wrapped.unwrap().session_id, "abc");
     }
@@ -1211,7 +1281,7 @@ mod tests {
     #[test]
     fn test_make_chunk_event_without_session_id() {
         let (core, _rx) = make_core_with_channel(None);
-        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::ReasoningStarted);
+        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::CompactingStarted);
         assert!(wrapped.is_none());
     }
 

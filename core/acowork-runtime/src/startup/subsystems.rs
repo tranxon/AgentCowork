@@ -211,21 +211,6 @@ async fn relay_chunk_event(
     use crate::cli::relay_intent;
 
     match event {
-        // ── Data events: no longer sent via channel (frontend polls HTTP) ─
-
-        ChunkEvent::ReasoningStarted
-        | ChunkEvent::Delta(_)
-        | ChunkEvent::ReasoningDelta(_)
-        | ChunkEvent::ToolCall { .. }
-        | ChunkEvent::ToolResult { .. } => {
-            // These are no longer sent via channel after ADR-021 Phase 4.
-            // If they arrive here, it's a bug — log and drop.
-            tracing::warn!(
-                event = ?event,
-                "Data event received in relay_chunk_event (should not happen after ADR-021 Phase 4)"
-            );
-        }
-
         // ── Control events (blocking, must deliver) ─────────────────────
 
         ChunkEvent::ContextUsage(ctx_info) => {

@@ -53,14 +53,9 @@ pub struct SessionChunkEvent {
 /// SPDX-License-Identifier: MIT OR Apache-2.0
 #[derive(Debug, Clone)]
 pub enum ChunkEvent {
-    /// LLM reasoning phase started — the provider.stream() call has been
-    /// initiated and tokens will arrive shortly. The frontend should show
-    /// a pulsing "..." indicator until the first content delta arrives.
-    ReasoningStarted,
-    /// Content delta to append to the streaming message
-    Delta(String),
-    /// Reasoning/thinking content delta (e.g. DeepSeek thinking mode)
-    ReasoningDelta(String),
+    // ── ADR-021: Data events (Delta, ReasoningDelta, ReasoningStarted, ToolCall,
+    //    ToolResult) removed — frontend polls via HTTP. Only control events remain. ──
+
     /// Context usage report (after each LLM call)
     ContextUsage(acowork_core::protocol::ContextUsageInfo),
     /// Context compaction started (emitted before auto/manual compact triggers),
@@ -69,18 +64,6 @@ pub enum ChunkEvent {
     /// Context compaction finished (emitted after compaction completes or fails),
     /// so the frontend can clear the "compacting..." indicator.
     CompactingEnded,
-    /// Tool call event (routed through chunk channel for ordering guarantee)
-    ToolCall {
-        name: String,
-        args: String,
-        id: String,
-    },
-    /// Tool result event (routed through chunk channel for ordering guarantee)
-    ToolResult {
-        name: String,
-        result: String,
-        tool_call_id: String,
-    },
     /// Iteration limit reached — agent loop paused
     IterationLimitPaused { iteration: u32, max_iterations: u32 },
     /// Tool execution requires user approval (shell command risk check).

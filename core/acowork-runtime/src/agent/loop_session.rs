@@ -292,7 +292,19 @@ impl super::loop_::AgentLoop {
         if let Some(ref conversation) = self.session.conversation {
             super::loop_session::persist_think_to_conversation(conversation, response);
             let assistant_text = strip_think_block(&content);
-            conversation.append_message("assistant", &assistant_text, None);
+            if !assistant_text.is_empty() {
+                conversation.append_message("assistant", &assistant_text, None);
+            }
+            // Update cached total_lines: persist_think_to_conversation writes
+            // 0 or 1 entry (thought), plus 1 for assistant. These bypass
+            // flush_streaming_line(), so we must increment manually.
+            let thought_written =
+                response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
+                || extract_think_block(&content).is_some();
+            let assistant_written = !assistant_text.is_empty();
+            let entries_written =
+                (if thought_written { 1 } else { 0 }) + (if assistant_written { 1 } else { 0 });
+            self.core.increment_total_lines(entries_written);
         }
 
         // ADR-021: Remove streaming line after final persistence

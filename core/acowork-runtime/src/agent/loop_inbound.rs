@@ -314,7 +314,11 @@ impl AgentLoop {
         // Persist assistant message to JSONL conversation
         if let Some(ref conversation) = self.session.conversation {
             let assistant_text = strip_think_block(content);
-            conversation.append_message("assistant", &assistant_text, None);
+            if !assistant_text.is_empty() {
+                conversation.append_message("assistant", &assistant_text, None);
+                // Bypasses flush_streaming_line — increment cached total_lines.
+                self.core.increment_total_lines(1);
+            }
         }
 
         // ADR-021: Remove streaming line after stop persistence

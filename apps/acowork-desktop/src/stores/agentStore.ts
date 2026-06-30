@@ -532,7 +532,7 @@ export const useAgentStore = create<AgentStoreState>((set, get) => ({
     }
 
     useChatStore.getState().activateSession(agentId, sessionId);
-    useChatStore.getState().abortSessionLoad();
+    useChatStore.getState().abortSessionLoad(agentId, sessionId);
 
     try {
       const resp = await fetch(

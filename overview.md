@@ -1,78 +1,40 @@
-# Memory Phase 2: P3 可观测性 — 实施完成
+# Fix: Frontend Session Polling Real-Time Display
 
-## 概述
+## Problem 1: 10s batch display
+用户消息发出去后，thinking 和 tool calls 延迟约 10 秒才批量出现，前端不是实时流式显示。
 
-Phase 2 Memory 系统的 P3（可观测性）子阶段已全部实现。记忆系统现在"看得见"——检索质量被追踪、告警被记录、LLM Judge 采样评估、模糊冲突自动注入确认提示，LongMemEval 使用真实 Grafeo store 操作。
+### Root Cause — Three Cascading Bugs
 
-## 变更摘要
+**Bug 1: Gateway 丢弃了 `total_lines` 和 `streaming` 字段**
+`SessionMessagesResponse` 结构体只有 `messages/cursor/has_more`，Runtime 返回的 `total_lines` 和 `streaming` delta 被 Gateway 丢弃。前端 `pollLineNumber` 永远为 0，增量轮询路径从未激活。
 
-### P3-1: MetricsAggregator 接线 — ✅ 完成
+**Bug 2: 前端使用 truthy 检查 (`if (lineNumber)`)**
+`line_number=0` 和 `line_char_offset=0` 是合法的轮询坐标值，但被当作 falsy 跳过。导致 `line_number` 参数从不上送 HTTP 请求，Runtime 每次走全量 cursor 分页路径（重载 50 条消息）。
 
-| 组件 | 变更 |
-|------|------|
-| `AgentCore` | 新增 `metrics_aggregator: Mutex<MetricsAggregator>` 字段 |
-| `loop_memory.rs` | `retrieve_and_inject_memories()` 中：RetrievalMetrics → OnlineRetrievalMetrics 类型转换 → `record_retrieval()` |
-| `retrieval_metrics.rs` | 新增 `max_possible_score()`, `set_max_possible_score()` 访问器 |
+**Bug 3: Runtime 要求两个参数必须同时存在**
+`if let (Some(ln), Some(co)) = (line_number, line_char_offset)` — 因为前端不传 `line_char_offset`（0 falsy），解构失败，回退到 cursor 分页。
 
-### P3-2: NRR/Abstention 告警日志 — ✅ 完成
+**最终效果**: 前端每 500ms 做一次完整的 50 条消息重载，从不接收 streaming delta。tool call/thinking 只有在被 flush 到 JSONL 后才被下一次全量重载发现，形成 10s+ 的批量刷新。
 
-| 告警类型 | 日志级别 | 含义 |
-|----------|---------|------|
-| `LowNrr` | warn | NRR 持续低于阈值 — 检查 embedding 模型或索引 |
-| `HighAbstentionRate` | warn | 弃用率过高 — 考虑降低 min_score |
-| `LowAbstentionRate` | warn | 弃用率过低 — min_score 可能太低 |
-| `LowConflictAccuracy` | warn | 冲突解决准确率低于阈值 |
-| `HighDegradationRate` | warn | 检索降级频率过高 |
+### Fixes
 
-### P3-3: LLM Judge 实际实现 — ✅ 完成
-
-| 组件 | 变更 |
-|------|------|
-| `judge_llm.rs` (新增) | `evaluate_retrieval_llm()`: 用 Provider 做 LLM 评估，单轮 prompt，返回 1-5 分 |
-| `loop_memory.rs` | 确定性采样 10%，`tokio::spawn` 后台评估，不阻塞检索管线 |
-| 6 个 parse 测试 | 数字/文本前缀/越界钳位/乱码回退 |
-
-### P3-4: Ambiguous 确认流程接线 — ✅ 完成
-
-| 组件 | 变更 |
-|------|------|
-| `ContextBuilder` | 新增 `ambiguous_confirmation_hint: Option<String>` 字段 |
-| `loop_memory.rs` | `should_trigger_confirmation()` → `generate_confirmation_hint()` → `set_ambiguous_confirmation_hint()` |
-| `context.rs build()` | Section 2.5b: 注入 `## Memory Conflicts Needing Confirmation` |
-
-### P3-5: LongMemEval IE+Abs 真实评测 — ✅ 完成
-
-| 维度 | 之前 | 之后 |
+| 层级 | 文件 | 修改 |
 |------|------|------|
-| IE (Information Extraction) | 硬编码 70.0 | 真实 Grafeo store: 5 测试用例 (4 正面 + 1 负面) |
-| Abs (Abstraction) | 硬编码 65.0 | 真实 Grafeo store: 3 测试用例 (dedup/procedural/autobiographical) |
-| MR/TR/KU | 硬编码 | 保持 placeholder (Phase 3) |
+| Gateway | `core/acowork-gateway/src/http/chat.rs` | `SessionMessagesResponse` 新增 `total_lines`/`streaming` 字段；`SessionMessagesQuery` 新增 `line_number`/`line_char_offset`；handler 透传参数和响应字段 |
+| Runtime | `core/acowork-runtime/src/cli.rs:2864` | 解构改为 `if let Some(ln) = line_number`，`co` 默认 0 |
+| Frontend | `apps/acowork-desktop/src/stores/chatStore.ts` | `if (lineNumber)` → `if (lineNumber != null)`；同样修复 `charOffset` 和 `isIncremental` |
+| Frontend Types | `apps/acowork-desktop/src/lib/types.ts` | `PaginatedMessages` 新增 `total_lines`/`streaming` 字段 |
 
-## 关键修改文件
+## Problem 2: Thinking 与 Explore block 分离
+thinking 内容显示在 explore 块外面，和上面的 assistant 文本一起显示。
 
-### runtime crate
-- `agent/agent_core.rs`: `metrics_aggregator` 字段 + 构造函数 + `clone_for_session()`
-- `agent/loop_memory.rs`: P3-1 (MetricsAggregator), P3-2 (告警日志), P3-3 (LLM Judge spawn), P3-4 (Ambiguous hint)
-- `agent/context.rs`: `ambiguous_confirmation_hint` 字段 + setter + build() 注入
-- `memory/judge_llm.rs`: 新文件 — LLM Judge 实现 + 6 测试
-- `memory/mod.rs`: 注册 `judge_llm` 模块
+### Root Cause
+`displayMessages` useMemo 中，当 assistant 消息同时包含 `<thinking>` 和 reply 内容时，`flushExplore()` 立刻把 thinking 打入独立的 ExploreBlock，后续 tool_call 又形成另一个 ExploreBlock，导致 thinking 与 tools 分离。
 
-### grafeo crate
-- `retrieval_metrics.rs`: `max_possible_score()`, `set_max_possible_score()` 访问器
-- `eval.rs`: `eval_information_extraction()`, `eval_abstraction()` 真实实现
+### Fix
+`ChatPanel.tsx` — assistant reply 的 flush 条件改为：只有 exploreBuffer 中已有 tool_call/tool_result 时才 flush。如果 buffer 中只有 thought（当前 assistant 刚推入的 thinking），延迟 flush，让后续 tool calls 加入同一个 explore group。
 
-## 测试结果
-- acowork-grafeo: **263 tests pass** (含 IE/Abs 评测)
-- acowork-runtime: **32 memory tests pass** + **6 judge_llm tests pass**
-
-## 验收状态
-
-| # | 验收项 | 状态 |
-|---|--------|------|
-| 8 | NRR 告警触发 | ✅ tracing::warn 输出 |
-| 9 | Ambiguous 确认注入 | ✅ ≥3 冲突 → System Prompt 包含提示 |
-
-## 已知后续事项
-1. MetricsAggregator 当前按 session 独立，跨 session 聚合需 Desktop App 日志订阅
-2. LLM Judge 评估结果尚未反馈到 MetricsAggregator（需 record_retrieval 后额外 record_judge）
-3. MR/TR/KU 三个维度仍为 placeholder，需 Phase 3 离线巩固数据
+## Verified
+- ✅ `cargo check` — gateway + runtime 编译通过
+- ✅ `cargo test` — 22 个 conversation 单元测试全绿
+- ✅ `tsc --noEmit` — TypeScript 编译通过

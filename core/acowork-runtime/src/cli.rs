@@ -2861,13 +2861,16 @@ async fn handle_get_session_messages(
 
     // ADR-021: When line_number is provided, use incremental read_messages_since.
     // Otherwise fall back to the existing cursor-based pagination.
-    if let (Some(ln), Some(co)) = (line_number, line_char_offset) {
+    // line_char_offset defaults to 0 when omitted (first poll after session start).
+    if let Some(ln) = line_number {
+        let co = line_char_offset.unwrap_or(0);
         match crate::conversation::read_messages_since(
             &file_path,
             ln,
             co,
             &session_manager.streaming_lines(),
             &session_id,
+            session_manager.total_lines(),
         ) {
             Ok(result) => {
                 let message_dtos: Vec<acowork_core::protocol::ConversationEntryDto> = result
@@ -2914,10 +2917,16 @@ async fn handle_get_session_messages(
                     kind: m.kind,
                 })
                 .collect();
+            // ADR-021: Include total_lines so the frontend PollingManager can
+            // initialize its line coordinate on the first full load. Without this,
+            // pollLineNumber stays at 0 and the backoff logic kills the poller
+            // after 3 "empty" cycles (lineNumber === prevLineNumber === 0).
+            let total_lines = session_manager.total_lines();
             let data = serde_json::json!({
                 "messages": message_dtos,
                 "cursor": paginated.cursor,
                 "has_more": paginated.has_more,
+                "total_lines": total_lines,
             });
             send_session_response(grpc_client, &request_id, data).await;
         }

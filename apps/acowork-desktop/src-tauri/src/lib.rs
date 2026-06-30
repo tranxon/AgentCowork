@@ -368,6 +368,43 @@ pub fn run() {
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {
+        // ── Cleanup: Kill local Gateway process tree on exit ──────────
+        // Covers Ctrl+C (dev mode), window close, tray quit, and OS shutdown.
+        // On Windows, uses taskkill /T /F to kill Gateway + all children
+        // (Runtime, Embed) in one shot. On Unix, sends SIGINT for clean
+        // shutdown via Gateway's own signal handler.
+        if matches!(
+            event,
+            tauri::RunEvent::Exit
+                | tauri::RunEvent::ExitRequested { .. }
+        ) {
+            let state = app_handle.state::<AppState>();
+            let gateway_handle = state.gateway_process.clone();
+            // try_lock: if the mutex is held by an inflight init_local_gateway,
+            // that command will store the child and this handler won't see it,
+            // but the next exit attempt will catch it. This is non-blocking
+            // because RunEvent::Exit fires in the main thread context.
+            if let Ok(mut proc) = gateway_handle.try_lock() {
+                if let Some(mut child) = proc.take() {
+                    let pid = child.id();
+                    tracing::info!(pid = pid, "App exiting, killing Gateway process tree");
+                    #[cfg(target_os = "windows")]
+                    {
+                        let _ = std::process::Command::new("taskkill")
+                            .args(["/PID", &pid.to_string(), "/T", "/F"])
+                            .output();
+                    }
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        let _ = std::process::Command::new("kill")
+                            .args(["-INT", &pid.to_string()])
+                            .output();
+                    }
+                    let _ = child.wait();
+                }
+            }
+        }
+
         // Handle dock icon click on macOS.
         //
         // When the window is hidden to tray, clicking the dock icon fires
