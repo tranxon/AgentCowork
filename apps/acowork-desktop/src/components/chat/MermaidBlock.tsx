@@ -136,6 +136,28 @@ function isPlausibleMermaid(code: string): boolean {
   return true;
 }
 
+// Module-level height cache backed by sessionStorage so cached heights
+// survive page refreshes within the same browser tab. sessionStorage is
+// cleared when the tab closes, so there is no unbounded accumulation.
+const heightCache = {
+  prefix: "mermaid-h:",
+  get(key: string): number | undefined {
+    try {
+      const v = sessionStorage.getItem(`${this.prefix}${key}`);
+      return v ? Number(v) : undefined;
+    } catch {
+      return undefined;
+    }
+  },
+  set(key: string, h: number) {
+    try {
+      sessionStorage.setItem(`${this.prefix}${key}`, String(h));
+    } catch {
+      // sessionStorage full or unavailable — silently ignore
+    }
+  },
+};
+
 interface MermaidBlockProps {
   chart: string;
 }
@@ -145,6 +167,10 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
   const [svgContent, setSvgContent] = useState<string | null>(null);
   const [renderFailed, setRenderFailed] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Stable cache key derived from chart content
+  const cacheKey = `h-${hashStr(chart)}`;
+  const cachedHeight = heightCache.get(cacheKey);
 
   useEffect(() => {
     // Debounce: wait 200ms for the stream to settle before attempting render.
@@ -182,67 +208,61 @@ export function MermaidBlock({ chart }: MermaidBlockProps) {
     };
   }, [chart]);
 
-  // After SVG is injected, measure and lock the height so the virtualizer
-  // doesn't see further re-layouts on subsequent renders.
+  // After any state transition (loading → success, loading → error, or
+  // remount with cached height), measure the container and lock its height.
+  // Only final states (svgContent or renderFailed) are written to the cache
+  // so that remounts skip the loading placeholder height.
   useLayoutEffect(() => {
-    if (svgContent && containerRef.current) {
-      const el = containerRef.current;
-      // Wait a microtask for the SVG to render, then measure
-      requestAnimationFrame(() => {
-        if (el) {
-          const h = el.offsetHeight;
-          if (h > 0) {
-            el.style.minHeight = `${h}px`;
-          }
+    const el = containerRef.current;
+    if (!el) return;
+
+    requestAnimationFrame(() => {
+      if (!el) return;
+      const h = el.offsetHeight;
+      if (h > 0) {
+        el.style.minHeight = `${h}px`;
+        if (svgContent || renderFailed) {
+          heightCache.set(cacheKey, h);
         }
-      });
-    }
-  }, [svgContent]);
+      }
+    });
+  }, [svgContent, renderFailed, cacheKey]);
 
-  if (renderFailed) {
-    return (
-      <div className={`${wrapperClass} p-3`}>
-        <pre className="m-0 whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-          {chart}
-        </pre>
-      </div>
-    );
-  }
-
-  // Loading state: show a placeholder with visible min-height so the
-  // virtualizer has a stable measure, avoiding scroll jank when the
-  // async mermaid.render() finally injects the SVG.
-  if (!svgContent) {
-    return (
-      <div
-        ref={containerRef}
-        className={`${wrapperClass} min-h-[140px] flex items-center justify-center p-3`}
-      >
-        <div className="flex items-center gap-2 text-zinc-300 dark:text-zinc-500 select-none">
-          <svg
-            className="h-4 w-4 animate-spin"
-            xmlns="http://www.w3.org/2000/svg"
-            fill="none"
-            viewBox="0 0 24 24"
-          >
-            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-            <path
-              className="opacity-75"
-              fill="currentColor"
-              d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-            />
-          </svg>
-          <span className="text-xs">Rendering diagram...</span>
-        </div>
-      </div>
-    );
-  }
-
+  // Unified container — same div, same ref across all three states.
+  // The virtualizer's ResizeObserver stays bound to this single element,
+  // and the cached minHeight (when available) prevents any initial jump.
   return (
     <div
       ref={containerRef}
-      className={`${wrapperClass} ${svgContainerClass} [&_.label]:text-zinc-600 p-3`}
-      dangerouslySetInnerHTML={{ __html: svgContent }}
-    />
+      className={`${wrapperClass} ${svgContent ? `${svgContainerClass} [&_.label]:text-zinc-600` : ""} p-3`}
+      style={cachedHeight ? { minHeight: `${cachedHeight}px` } : undefined}
+    >
+      {svgContent ? (
+        <div dangerouslySetInnerHTML={{ __html: svgContent }} />
+      ) : renderFailed ? (
+        <pre className="m-0 whitespace-pre-wrap font-mono text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          {chart}
+        </pre>
+      ) : (
+        <div className="min-h-[140px] flex items-center justify-center">
+          <div className="flex items-center gap-2 text-zinc-300 dark:text-zinc-500 select-none">
+            <svg
+              className="h-4 w-4 animate-spin"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+            >
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path
+                className="opacity-75"
+                fill="currentColor"
+                d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+              />
+            </svg>
+            <span className="text-xs">Rendering diagram...</span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
