@@ -1,4 +1,4 @@
-# Acowork Brand Logo Assets
+# ACowork Brand Logo Assets
 
 Generated on 2026-06-24 with the `agnes-image-2.0-flash` model.
 All assets are flat 2D vector-style raster PNGs, 1024×1024, white background, no 3D / shadows / gradients.
@@ -7,7 +7,7 @@ All assets are flat 2D vector-style raster PNGs, 1024×1024, white background, n
 
 | File | Variant | Color | Use case |
 |---|---|---|---|
-| `acowork-logo-v1.png` | Wordmark with embedded node network (A counter) | Google Blue `#1A73E8` | Default brand mark, "Acowork" hero use |
+| `acowork-logo-v1.png` | Wordmark with embedded node network (A counter) | Google Blue `#1A73E8` | Default brand mark, "ACowork" hero use |
 | `acowork-logo-v2-wordmark-blue.png` | Pure wordmark, no icons | Google Blue `#1A73E8` | App icon, favicon, clean wordmark, document header |
 | `acowork-logo-v3-app-icon.png` | Square blue tile + 3-node network mark | Google Blue `#1A73E8` tile, white mark | App launcher icon, tab icon, splash screen |
 | `acowork-logo-v4-lockup.png` | Mark + wordmark horizontal lockup | Google Blue `#1A73E8` | Website header, product splash, slide deck |
@@ -38,8 +38,8 @@ Use any local image resizer (e.g. `magick`, `sips`, or the `sharp` Node lib alre
 
 | Location | Recommended asset | Note |
 |---|---|---|
-| `apps/acowork-desktop/src/components/layout/SplashScreen.tsx` | v3 app icon | Currently shows "Acowork" text only |
-| `apps/acowork-desktop/src/components/layout/TitleBar.tsx` | v4 lockup or v2 wordmark | Currently shows text "Acowork" |
+| `apps/acowork-desktop/src/components/layout/SplashScreen.tsx` | v3 app icon | Currently shows "ACowork" text only |
+| `apps/acowork-desktop/src/components/layout/TitleBar.tsx` | v4 lockup or v2 wordmark | Currently shows text "ACowork" |
 | `apps/acowork-desktop/src-tauri/icons/` (if present) | v3 resized set | Tauri build needs multi-size icon set |
 | `apps/acowork-desktop/package.json` `description` | n/a | Could embed v2 as OG image |
 | `assets/architecture.svg` | n/a | Could add a small v2 mark to the system agent box |

@@ -1,7 +1,7 @@
-<h1 align="center">Acowork.AI — Collaborate with your AI Colleagues</h1>
+<h1 align="center">ACowork.AI — Collaborate with your AI Colleagues</h1>
 
 <p align="center">
-  <img src="assets/brand-mark.svg" alt="Acowork" width="360">
+  <img src="assets/brand-mark.svg" alt="ACowork" width="360">
 </p>
 
 <p align="center">
@@ -43,17 +43,17 @@
 
 ---
 
-Acowork.AI is a **decentralized, high-security, scalable AI Agent runtime platform** modeled after Android. Instead of just building tools, Acowork lets you create **AI colleagues** — autonomous digital beings with their own memory, workspace, and personality, each specialized in different domains, collaborating with you and each other.
+ACowork.AI is a **decentralized, high-security, scalable AI Agent runtime platform** modeled after Android. Instead of just building tools, ACowork lets you create **AI colleagues** — autonomous digital beings with their own memory, workspace, and personality, each specialized in different domains, collaborating with you and each other.
 
 Every Agent is an independent **"digital being"**: its own runtime process, private memory, workspace, and configuration — fully independent personalized cognition. Like having a team of AI specialists working alongside you — a QA analyst, a project manager, a senior engineer — each with their own expertise and memory, communicating and coordinating through the platform's Intent mechanism.
 
-Acowork **serves two types of users**: developers build agents declaratively by tuning three dimensions — **prompt, tools, and memory** — while end-users install agents from a repository. An agent's true intelligence comes from the interplay of its system prompt, available tools, and the experience accumulated in its private memory over time. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"tune prompt, tools, and memory = build an AI colleague"** a reality.
+ACowork **serves two types of users**: developers build agents declaratively by tuning three dimensions — **prompt, tools, and memory** — while end-users install agents from a repository. An agent's true intelligence comes from the interplay of its system prompt, available tools, and the experience accumulated in its private memory over time. The signing toolchain + DevMode + publishing wizard form a complete developer toolkit — making **"tune prompt, tools, and memory = build an AI colleague"** a reality.
 
 Agents can be freely shared between users — Personal/Sensitive data is automatically stripped during packaging, taking only the agent's capabilities away, leaving user's private memories behind.
 
 ### 🏪 Agent as APP — Like Android for AI
 
-Acowork treats every Agent like an **app on your phone**. Each `.agent` package is a complete, self-contained application — just like an APK. The universal Agent Runtime is the "operating system," and the Gateway manages installations, lifecycle, and permissions — just like an app store. This means anyone can build, distribute, and run AI agents with the same ease as smartphone apps.
+ACowork treats every Agent like an **app on your phone**. Each `.agent` package is a complete, self-contained application — just like an APK. The universal Agent Runtime is the "operating system," and the Gateway manages installations, lifecycle, and permissions — just like an app store. This means anyone can build, distribute, and run AI agents with the same ease as smartphone apps.
 
 ---
 
@@ -61,7 +61,7 @@ Acowork treats every Agent like an **app on your phone**. Each `.agent` package 
 
 ### Android Analogy
 
-| Android         | Acowork         | Role                                                               |
+| Android         | ACowork         | Role                                                               |
 | --------------- | ------------------- | ------------------------------------------------------------------ |
 | ART             | Agent Runtime       | Universal execution engine (single binary)                         |
 | APK             | `.agent` package    | Declarative bundle (config + prompts + skills, no executable code) |
@@ -74,14 +74,14 @@ Acowork treats every Agent like an **app on your phone**. Each `.agent` package 
 ### System Architecture
 
 <p align="center">
-  <img src="./assets/architecture.svg" alt="Acowork.AI System Architecture" width="100%" />
+  <img src="./assets/architecture.svg" alt="ACowork.AI System Architecture" width="100%" />
 </p>
 
 ---
 
-## 🔥 Why Acowork?
+## 🔥 Why ACowork?
 
-| Dimension           | LangChain / CrewAI                         | OpenCode / OpenClaw                                | Acowork.AI                                                             |
+| Dimension           | LangChain / CrewAI                         | OpenCode / OpenClaw                                | ACowork.AI                                                             |
 | ------------------- | ------------------------------------------ | -------------------------------------------------- | -------------------------------------------------------------------------- |
 | **Architecture**    | Library/Framework: your code calls its API | Coding Agent (TUI/CLI): single-agent, task-focused | **Agent Platform**: declarative `.agent` package, universal Runtime binary |
 | **Agent Model**     | Code-defined agents (Python/TS)            | Built-in agents (build/plan), skill-based          | **Declarative agents**: config + prompt + SKILL.md, zero coding            |
@@ -376,7 +376,7 @@ Developers build agents by **tuning declarative configurations** — crafting sy
 
 ### Core Crate Architecture
 
-Acowork adopts a **7-crate Rust workspace** architecture:
+ACowork adopts a **7-crate Rust workspace** architecture:
 
 | Crate                                          | Responsibility                                                    | Status        |
 | ---------------------------------------------- | ----------------------------------------------------------------- | ------------- |
@@ -433,7 +433,7 @@ Acowork adopts a **7-crate Rust workspace** architecture:
 
 ## 🧪 References & Acknowledgments
 
-Acowork.AI's design is deeply inspired by the following open-source projects:
+ACowork.AI's design is deeply inspired by the following open-source projects:
 
 | Project                                                 | Domain           | Inspiration                                                             |
 | ------------------------------------------------------- | ---------------- | ----------------------------------------------------------------------- |
@@ -444,7 +444,7 @@ Acowork.AI's design is deeply inspired by the following open-source projects:
 | [LightMem](https://github.com/zjunlp/LightMem)          | Memory Framework | Lightweight memory compression, structured memory management            |
 | [OpenCode](https://github.com/anomalyco/opencode)       | Coding Agent     | Multi-agent collaboration, provider-agnostic design                     |
 
-> ZeroClaw is a reference implementation (`ref-repo/zeroclaw/`), not the Source of Truth for Acowork.AI design. Code reuse follows MIT / Apache-2.0 license requirements.
+> ZeroClaw is a reference implementation (`ref-repo/zeroclaw/`), not the Source of Truth for ACowork.AI design. Code reuse follows MIT / Apache-2.0 license requirements.
 
 ---
 
@@ -465,6 +465,6 @@ Apache-2.0 — see [LICENSE](./LICENSE) for details.
 ---
 
 <p align="center">
-  <b>Acowork.AI — Collaborate with your AI Colleagues</b><br>
+  <b>ACowork.AI — Collaborate with your AI Colleagues</b><br>
   <i>Build and collaborate with AI agents like team members.</i>
 </p>

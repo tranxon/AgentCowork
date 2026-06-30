@@ -237,7 +237,7 @@ export function SplashScreen({ onReady }: SplashScreenProps) {
                 className={`relative z-10 flex flex-col items-center gap-10 transition-all duration-700 ${fadeIn ? "translate-y-0 opacity-100" : "translate-y-4 opacity-0"
                     }`}
             >
-                {/* Title — Acowork brand mark (shared SVG with README) */}
+                {/* Title — ACowork brand mark (shared SVG with README) */}
                 <div className="flex flex-col items-center gap-5">
                     <h1 className="leading-none">
                         <img src={brandMark} alt={t("splashScreen.altLogo")} width="360" />
