@@ -66,10 +66,8 @@ impl AgentLoop {
             messages_count = chat_request.messages.len(),
             "Sending LLM request"
         );
-        // Notify frontend that the LLM request has been dispatched and we are
-        // waiting for the first token. The frontend shows a pulsing "..."
-        // indicator until the first content / reasoning / tool_call chunk arrives.
-        let _ = self.core.try_send_chunk(ChunkEvent::ReasoningStarted);
+        // ADR-021: Frontend polls via HTTP — ReasoningStarted is no longer
+        // sent via channel. The frontend detects streaming state via poll.
         let stream = self.core.provider.chat_stream(chat_request.clone()).await?;
         let mut stream = Box::into_pin(stream);
         let mut accumulated_content = String::new();
@@ -107,6 +105,8 @@ impl AgentLoop {
                             match self.poll_control() {
                                 ControlDecision::Stop => {
                                     tracing::info!("LLM stream stopped by user — aborting");
+                                    // ADR-021: Flush partial content to JSONL before stopping
+                                    self.core.flush_streaming_line(self.session.conversation.as_ref());
                                     let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                                         content: accumulated_content.clone(),
                                     });
@@ -118,6 +118,8 @@ impl AgentLoop {
                                 ControlDecision::Pause => {
                                     tracing::info!("LLM stream paused by debug — aborting");
                                     self.pending_interrupt = Some(ControlDecision::Pause);
+                                    // ADR-021: Flush partial content to JSONL before pausing
+                                    self.core.flush_streaming_line(self.session.conversation.as_ref());
                                     let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                                         content: accumulated_content.clone(),
                                     });
@@ -137,13 +139,9 @@ impl AgentLoop {
                     }
                     accumulated_content.push_str(&chunk);
 
-                    // Forward delta to on_chunk channel (like ZeroClaw's on_delta)
-                    // so the caller can relay streaming chunks to Gateway
-                    if !self.core.try_send_chunk(ChunkEvent::Delta(chunk.clone())) {
-                        tracing::debug!(
-                            "dropping delta (channel full, closed, or push disabled)"
-                        );
-                    }
+                    // ADR-021: Update StreamingStateMap for incremental polling
+                    self.core.append_streaming_delta("assistant", &chunk);
+                    self.core.notify_new_data_available();
                 }
                 StreamEvent::ReasoningContent(chunk) => {
                     // Record start of reasoning on first chunk
@@ -152,12 +150,10 @@ impl AgentLoop {
                     }
                     reasoning_in_progress = true;
                     accumulated_reasoning_content.push_str(&chunk);
-                    // Forward reasoning delta to on_chunk channel for real-time streaming
-                    if !self.core.try_send_chunk(ChunkEvent::ReasoningDelta(chunk.clone())) {
-                        tracing::debug!(
-                            "dropping reasoning delta (channel full, closed, or push disabled)"
-                        );
-                    }
+
+                    // ADR-021: Update StreamingStateMap for incremental polling
+                    self.core.append_streaming_delta("thought", &chunk);
+                    self.core.notify_new_data_available();
                 }
                 StreamEvent::ToolCallStart(tc) => {
                     // Mark reasoning finished when tool calls start after reasoning
@@ -165,6 +161,11 @@ impl AgentLoop {
                         reasoning_finished_at = Some(Utc::now().timestamp_millis());
                         reasoning_in_progress = false;
                     }
+
+                    // ADR-021: Flush accumulated assistant content to JSONL
+                    // before tool calls (natural boundary)
+                    self.core.flush_streaming_line(self.session.conversation.as_ref());
+
                     tracing::info!(
                         tool_name = %tc.function.name,
                         tool_id = %tc.id,
@@ -254,6 +255,10 @@ impl AgentLoop {
                     break;
                 }
                 StreamEvent::Error(e) => {
+                    // ADR-021: Flush partial content to JSONL on error
+                    // so the user can see what the AI was trying to say
+                    self.core.flush_streaming_line(self.session.conversation.as_ref());
+
                     // Check for context overflow and attempt recovery.
                     // Use structured error_type instead of string matching.
                     if retry_on_overflow
@@ -317,6 +322,8 @@ impl AgentLoop {
                         }
                         ControlDecision::Continue => {}
                     }
+                    // ADR-021: Flush partial content to JSONL before stopping
+                    self.core.flush_streaming_line(self.session.conversation.as_ref());
                     let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                         content: accumulated_content.clone(),
                     });
@@ -335,6 +342,8 @@ impl AgentLoop {
                             tracing::info!(
                                 "LLM stream stopped by user during idle period — aborting"
                             );
+                            // ADR-021: Flush partial content to JSONL before stopping
+                            self.core.flush_streaming_line(self.session.conversation.as_ref());
                             let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                                 content: accumulated_content.clone(),
                             });
@@ -346,6 +355,8 @@ impl AgentLoop {
                         ControlDecision::Pause => {
                             tracing::info!("LLM stream paused during idle period — aborting");
                             self.pending_interrupt = Some(ControlDecision::Pause);
+                            // ADR-021: Flush partial content to JSONL before pausing
+                            self.core.flush_streaming_line(self.session.conversation.as_ref());
                             let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
                                 content: accumulated_content.clone(),
                             });

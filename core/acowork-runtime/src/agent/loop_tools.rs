@@ -27,7 +27,7 @@ use crate::security::approval_gate::{ApprovalGate, ApprovalRequest};
 use crate::security::shell_risk::{self, ShellRisk};
 use acowork_core::ShellApprovalThreshold;
 
-use super::loop_::{AgentLoop, ChunkEvent, ControlDecision};
+use super::loop_::{AgentLoop, ControlDecision};
 use super::loop_approval::ApprovalHandle;
 
 impl AgentLoop {
@@ -658,17 +658,6 @@ impl AgentLoop {
             }
         }
 
-        // Emit ToolCall events via chunk channel (ensures ordering with content chunks)
-        for tc in &deduped_calls {
-            if !self.core.try_send_chunk(ChunkEvent::ToolCall {
-                name: tc.function.name.clone(),
-                args: tc.function.arguments.clone(),
-                id: tc.id.clone(),
-            }) {
-                tracing::debug!("on_chunk channel full or closed, dropping ToolCall event");
-            }
-        }
-
         deduped_calls
     }
 
@@ -815,17 +804,6 @@ impl AgentLoop {
                     "tool_call_id": tc.id,
                 });
                 conversation.append_message("tool_result", result_content, Some(metadata));
-            }
-        }
-
-        // Emit ToolResult events via chunk channel
-        for (tc, result_content) in deduped_calls.iter().zip(tool_results.iter()) {
-            if !self.core.try_send_chunk(ChunkEvent::ToolResult {
-                name: tc.function.name.clone(),
-                result: result_content.clone(),
-                tool_call_id: tc.id.clone(),
-            }) {
-                tracing::debug!("on_chunk channel full or closed, dropping ToolResult event");
             }
         }
     }

@@ -250,7 +250,7 @@ impl Tool for AskUserQuestionTool {
         // 1. AgentLoop detects tool_call with name "ask_user_question"
         // 2. AgentLoop validates params (same as validate_params)
         // 3. AgentLoop sets status → WaitingApproval
-        // 4. AgentLoop emits ChunkEvent::AskQuestion via on_chunk
+        // 4. AgentLoop emits ChunkEvent::AskQuestion via chunk channel
         // 5. AgentLoop awaits InboundMessage::QuestionAnswer
         // 6. Answer is returned as the ToolResult
         //

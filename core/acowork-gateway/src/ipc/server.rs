@@ -82,7 +82,6 @@ pub async fn handle_intent_send(
     conn_id: &str,
     state: &SharedState,
     session_mgr: &SharedSessionMgr,
-    bridge_data_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
     bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>>,
 ) -> GatewayResponse {
     let from = {
@@ -123,22 +122,12 @@ pub async fn handle_intent_send(
             message_id
         );
 
-        // P2 (ADR-020): Route by event type.
-        // L1 data (Chunk, ReasoningStarted) → bridge_data_tx (high capacity).
-        // L2/L3/L4 control → bridge_ctrl_tx (must deliver).
+        // ADR-021 Phase 2: All events go through the single ctrl channel.
+        // Data channel removed — frontend polls via HTTP for message data.
         let event_type = crate::http::routes::BridgeEventType::from_action(action)
             .unwrap_or_else(crate::http::routes::BridgeEventType::default_for_unknown);
 
-        let target_tx: Option<&tokio::sync::broadcast::Sender<crate::http::routes::BridgeEvent>> =
-            match event_type {
-                crate::http::routes::BridgeEventType::Chunk
-                | crate::http::routes::BridgeEventType::ReasoningStarted => {
-                    bridge_data_tx.as_ref()
-                }
-                _ => bridge_ctrl_tx.as_ref(),
-            };
-
-        if let Some(tx) = target_tx {
+        if let Some(tx) = bridge_ctrl_tx.as_ref() {
             // Determine event type based on action
             // Transparent passthrough: Gateway is a dumb pipe, not a protocol
             // translator. Only the Chunk event needs a minimal rename (content→delta)
@@ -1150,7 +1139,6 @@ mod tests {
             &state,
             &session_mgr,
             &None,
-            &None,
         )
         .await;
 
@@ -1235,7 +1223,6 @@ mod tests {
             &state,
             &session_mgr,
             &None,
-            &None,
         )
         .await;
 
@@ -1313,7 +1300,6 @@ mod tests {
             "conn-sender",
             &state,
             &session_mgr,
-            &None,
             &None,
         )
         .await;

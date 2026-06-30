@@ -129,13 +129,10 @@ pub struct DataFlowConfig {
     /// Default: 8 (increased from 4 per ADR-020 P0-2).
     #[serde(default = "default_worker_threads")]
     pub worker_threads: usize,
-    /// Capacity of the Bridge data broadcast channel (L1: Delta, ReasoningDelta).
-    /// Default: 4096 (large buffer to avoid Lagged during thinking bursts).
-    #[serde(default = "default_bridge_data_capacity")]
-    pub bridge_data_capacity: usize,
-    /// Capacity of the Bridge control broadcast channel (L2/L3/L4: ToolCall,
-    /// Done, Error, Stopped, SessionStateChanged, etc.).
-    /// Default: 256 (small buffer — control events are low-frequency).
+    /// Capacity of the Bridge control broadcast channel (all events:
+    /// ToolCall, Done, Error, Stopped, SessionStateChanged, NewDataAvailable, etc.).
+    /// ADR-021 Phase 2: data channel removed — single channel for all events.
+    /// Default: 256 (control events are low-frequency; data events now via HTTP poll).
     #[serde(default = "default_bridge_ctrl_capacity")]
     pub bridge_ctrl_capacity: usize,
     /// Capacity of the gRPC outbound mpsc channel (per-connection).
@@ -155,9 +152,6 @@ pub struct DataFlowConfig {
 fn default_worker_threads() -> usize {
     8
 }
-fn default_bridge_data_capacity() -> usize {
-    4096
-}
 fn default_bridge_ctrl_capacity() -> usize {
     256
 }
@@ -175,7 +169,6 @@ impl Default for DataFlowConfig {
     fn default() -> Self {
         Self {
             worker_threads: default_worker_threads(),
-            bridge_data_capacity: default_bridge_data_capacity(),
             bridge_ctrl_capacity: default_bridge_ctrl_capacity(),
             grpc_outbound_capacity: default_grpc_outbound_capacity(),
             ipc_push_capacity: default_ipc_push_capacity(),

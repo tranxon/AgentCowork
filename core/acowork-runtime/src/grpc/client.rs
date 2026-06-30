@@ -87,19 +87,14 @@ const MAX_PENDING_REPORTS: usize = 100;
 /// See module-level documentation for design rationale.
 ///
 /// P2 (ADR-020): Outbound split into data (L1: LLM chunks) and ctrl
-/// (L2/L3/L4: tools, control, metadata). A merge task reads from both
-/// with biased select (ctrl priority) and feeds the gRPC stream.
+/// ADR-021: Single outbound control channel. Data events are no longer
+/// sent via gRPC — the frontend polls them via HTTP.
 pub struct GatewayGrpcClient {
     /// The endpoint URI (retained for reconnect)
     endpoint: String,
-    /// Outbound data sender (L1: Delta, ReasoningDelta) — exposed via
-    /// `outbound_data_sender()` for the chunk relay subsystem.
-    outbound_data_tx: mpsc::Sender<proto::ClientMessage>,
-    /// Outbound control sender (L2/L3/L4: ToolCall, Done, Error, etc.) —
-    /// exposed via `outbound_ctrl_sender()` for the chunk relay subsystem.
+    /// Outbound control sender — exposed via `outbound_ctrl_sender()`
+    /// for the chunk relay subsystem.
     outbound_ctrl_tx: mpsc::Sender<proto::ClientMessage>,
-    /// Capacity used to create outbound_data_tx (retained for reconnect).
-    outbound_data_capacity: usize,
     /// Capacity used to create outbound_ctrl_tx (retained for reconnect).
     outbound_ctrl_capacity: usize,
     /// Request ID counter (atomic for concurrent access from `&self` methods)
@@ -135,7 +130,6 @@ impl GatewayGrpcClient {
     /// backoff retry.
     async fn connect_once(
         endpoint: &str,
-        outbound_data_capacity: usize,
         outbound_ctrl_capacity: usize,
     ) -> Result<Self, AcoworkError> {
         let channel = Channel::from_shared(endpoint.to_string())
@@ -146,25 +140,11 @@ impl GatewayGrpcClient {
 
         let mut client = proto::gateway_service_client::GatewayServiceClient::new(channel);
 
-        // P2: Split outbound into data (L1) and ctrl (L2/L3/L4) channels.
-        // A merge task reads from both with biased select (ctrl priority)
-        // and feeds the single gRPC stream via ReceiverStream.
-        let (outbound_data_tx, outbound_data_rx) =
-            mpsc::channel::<proto::ClientMessage>(outbound_data_capacity);
+        // ADR-021: Single outbound channel for control events.
         let (outbound_ctrl_tx, outbound_ctrl_rx) =
             mpsc::channel::<proto::ClientMessage>(outbound_ctrl_capacity);
 
-        // Merge channel: ctrl priority over data
-        let (merged_tx, merged_rx) = mpsc::channel::<proto::ClientMessage>(
-            outbound_data_capacity + outbound_ctrl_capacity,
-        );
-        tokio::spawn(merge_outbound_channels(
-            outbound_data_rx,
-            outbound_ctrl_rx,
-            merged_tx,
-        ));
-
-        let outbound_stream = ReceiverStream::new(merged_rx);
+        let outbound_stream = ReceiverStream::new(outbound_ctrl_rx);
 
         // Open bidi-stream RPC
         let response = client
@@ -240,9 +220,7 @@ impl GatewayGrpcClient {
 
         Ok(Self {
             endpoint: endpoint.to_string(),
-            outbound_data_tx,
             outbound_ctrl_tx,
-            outbound_data_capacity,
             outbound_ctrl_capacity,
             next_request_id,
             pending,
@@ -260,17 +238,15 @@ impl GatewayGrpcClient {
     /// This is the primary connection method for production use.
     pub async fn connect(
         endpoint: &str,
-        outbound_data_capacity: usize,
         outbound_ctrl_capacity: usize,
     ) -> Result<Self, AcoworkError> {
-        Self::connect_with_timeout(endpoint, 300, outbound_data_capacity, outbound_ctrl_capacity).await
+        Self::connect_with_timeout(endpoint, 300, outbound_ctrl_capacity).await
     }
 
     /// Connect with a custom max elapsed time (useful for tests).
     pub async fn connect_with_timeout(
         endpoint: &str,
         max_elapsed_secs: u64,
-        outbound_data_capacity: usize,
         outbound_ctrl_capacity: usize,
     ) -> Result<Self, AcoworkError> {
         const INITIAL_DELAY_MS: u64 = 100;
@@ -280,7 +256,7 @@ impl GatewayGrpcClient {
         let mut delay_ms = INITIAL_DELAY_MS;
 
         loop {
-            match Self::connect_once(endpoint, outbound_data_capacity, outbound_ctrl_capacity).await {
+            match Self::connect_once(endpoint, outbound_ctrl_capacity).await {
                 Ok(client) => {
                     tracing::info!(
                         endpoint = %endpoint,
@@ -322,7 +298,6 @@ impl GatewayGrpcClient {
         cached_user_profile_version: u64,
         avatar: Option<String>,
         builtin_avatar: Option<String>,
-        outbound_data_capacity: usize,
         outbound_ctrl_capacity: usize,
     ) -> Result<(Self, AgentHelloConfig), AcoworkError> {
         Self::connect_and_register_with_role(
@@ -336,7 +311,6 @@ impl GatewayGrpcClient {
             cached_user_profile_version,
             avatar,
             builtin_avatar,
-            outbound_data_capacity,
             outbound_ctrl_capacity,
         )
         .await
@@ -357,10 +331,9 @@ impl GatewayGrpcClient {
         cached_user_profile_version: u64,
         avatar: Option<String>,
         builtin_avatar: Option<String>,
-        outbound_data_capacity: usize,
         outbound_ctrl_capacity: usize,
     ) -> Result<(Self, AgentHelloConfig), AcoworkError> {
-        let client = Self::connect(endpoint, outbound_data_capacity, outbound_ctrl_capacity).await?;
+        let client = Self::connect(endpoint, outbound_ctrl_capacity).await?;
         let config = client
             .send_agent_hello(
                 agent_id,
@@ -393,7 +366,6 @@ impl GatewayGrpcClient {
 
         *self = Self::connect(
             &self.endpoint,
-            self.outbound_data_capacity,
             self.outbound_ctrl_capacity,
         )
         .await?;
@@ -416,20 +388,11 @@ impl GatewayGrpcClient {
         Ok(())
     }
 
-    /// Get a clone of the outbound data message sender (L1: LLM chunks).
+    /// Get a clone of the outbound control message sender.
     ///
-    /// Used by the chunk relay subsystem for Delta, ReasoningDelta, and
-    /// ReasoningStarted events. These are non-blocking `try_send` — drops
-    /// are acceptable under backpressure.
-    pub fn outbound_data_sender(&self) -> mpsc::Sender<proto::ClientMessage> {
-        self.outbound_data_tx.clone()
-    }
-
-    /// Get a clone of the outbound control message sender (L2/L3/L4).
-    ///
-    /// Used by the chunk relay subsystem for ToolCall, Done, Error, Stopped,
-    /// SessionStateChanged, and other control events. These use blocking
-    /// `send().await` — they must never be dropped.
+    /// ADR-021: Single channel for all control events.
+    /// Used by the chunk relay subsystem for Done, Error, Stopped,
+    /// SessionStateChanged, and other control events.
     pub fn outbound_ctrl_sender(&self) -> mpsc::Sender<proto::ClientMessage> {
         self.outbound_ctrl_tx.clone()
     }
@@ -1364,51 +1327,6 @@ fn is_gateway_query_payload(msg: &proto::ServerMessage) -> bool {
 /// for the gRPC bidi connection.
 ///
 /// Uses biased select: control messages (L2/L3/L4) always take priority
-/// over data messages (L1: LLM chunks). This ensures Stop/Done/Error and
-/// tool events are never starved by high-frequency token streaming.
-async fn merge_outbound_channels(
-    mut data_rx: mpsc::Receiver<proto::ClientMessage>,
-    mut ctrl_rx: mpsc::Receiver<proto::ClientMessage>,
-    merged_tx: mpsc::Sender<proto::ClientMessage>,
-) {
-    let mut data_closed = false;
-    let mut ctrl_closed = false;
-    loop {
-        if data_closed && ctrl_closed {
-            break;
-        }
-        tokio::select! {
-            biased;
-            // Control channel: highest priority
-            msg = ctrl_rx.recv(), if !ctrl_closed => {
-                match msg {
-                    Some(m) => {
-                        if merged_tx.send(m).await.is_err() {
-                            break; // gRPC stream closed
-                        }
-                    }
-                    None => {
-                        ctrl_closed = true;
-                    }
-                }
-            }
-            // Data channel: lower priority
-            msg = data_rx.recv(), if !data_closed => {
-                match msg {
-                    Some(m) => {
-                        if merged_tx.send(m).await.is_err() {
-                            break; // gRPC stream closed
-                        }
-                    }
-                    None => {
-                        data_closed = true;
-                    }
-                }
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

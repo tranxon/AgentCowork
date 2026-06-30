@@ -157,12 +157,9 @@ export function ChatPanel() {
     return agent.sessionStates[agent.activeSessionId] ?? null;
   });
   const messages = sessionState?.messages ?? [];
-  const streamingMessageId = sessionState?.streamingMessageId ?? null;
-  const thinkingMessageId = sessionState?.thinkingMessageId ?? null;
   const iterationLimitPaused = sessionState?.iterationLimitPaused ?? null;
   const pendingApproval = sessionState?.pendingApproval ?? {};
   const pendingQuestion = sessionState?.pendingQuestion ?? null;
-  const isReasoning = sessionState?.isReasoning ?? false;
   const isLoadingSession = sessionState?.isLoadingSession ?? false;
   const loadError = sessionState?.loadError ?? null;
   const todos = sessionState?.todos ?? [];
@@ -296,18 +293,7 @@ export function ChatPanel() {
         flushExplore();
         grouped.push(msg);
       } else if (msg.type === 'assistant') {
-        // Streaming: if content starts with a think tag but no closing tag yet,
-        // treat entire content as thinking
-        if (msg.id === streamingMessageId) {
-          const trimmed = msg.content.trimStart();
-          if (trimmed.startsWith('<think>') && !trimmed.includes('</think>')) {
-            const thinkContent = trimmed.slice(7);
-            if (thinkContent) {
-              exploreBuffer.push({ ...msg, type: 'thought' as any, content: thinkContent });
-            }
-            continue;
-          }
-        }
+        // ADR-021: Messages arrive complete via HTTP poll — no streaming state.
 
         const { thinkContent, replyContent } = parseThinkContent(msg.content);
         if (thinkContent) {
@@ -330,16 +316,15 @@ export function ChatPanel() {
 
     flushExplore();
     return grouped;
-  }, [messages, streamingMessageId]);
+  }, [messages]);
 
-  // Show thinking indicator below virtualized message list when waiting for first token
-  const showThinkingItem = isReasoning && !streamingMessageId && !thinkingMessageId;
+  // ADR-021: No more streaming indicators — messages arrive complete via HTTP poll.
   // Show compacting indicator below messages when compaction is in progress
   const isCompacting = sessionState?.isCompacting ?? false;
-  const showCompactingItem = isCompacting && !streamingMessageId && !thinkingMessageId && !isReasoning;
+  const showCompactingItem = isCompacting;
 
   // Virtual scrolling: only render visible items (messages + optional thinking/compacting indicator)
-  const virtualCount = displayMessages.length + (showThinkingItem ? 1 : 0) + (showCompactingItem ? 1 : 0);
+  const virtualCount = displayMessages.length + (showCompactingItem ? 1 : 0);
   const virtualizer = useVirtualizer({
     count: virtualCount,
     getScrollElement: () => messagesContainerRef.current,
@@ -548,26 +533,11 @@ export function ChatPanel() {
       .agents[selectedAgentId]?.sessions.find((s) => s.session_id === currentSessionId);
     if (!session) return;
 
-    // If this session was already loaded (e.g. returning from Settings navigation
-    // while WebSocket was still streaming), skip reload to avoid overwriting
-    // in-flight messages.
+    // If this session was already loaded, skip reload
     if (currentSessionId === lastLoadedSessionId) return;
 
-    // CRITICAL: If the session already has messages AND the session is actively streaming
-    // (streamingMessageId is set, or sessionStatus is streaming/waiting_approval/paused),
-    // skip loadSessionMessages. Loading from the backend would overwrite in-memory
-    // streaming messages with only-persisted messages, causing thinking/chat bubbles to disappear.
-    const agent = useChatStore.getState().agentStates[selectedAgentId];
-    const sessState = agent?.sessionStates[currentSessionId];
-    const isSessionStreaming = sessState?.streamingMessageId != null
-      || sessState?.sessionStatus?.status === "streaming"
-      || sessState?.sessionStatus?.status === "waiting_approval"
-      || sessState?.sessionStatus?.status === "paused";
-    if (sessState && sessState.messages.length > 0 && isSessionStreaming) {
-      lastLoadedSessionId = currentSessionId;
-      return;
-    }
-
+    // ADR-021: No more streaming guard needed — messages come via HTTP poll.
+    // Session switching always triggers a fresh load.
     lastLoadedSessionId = currentSessionId;
 
     // Mark as initial load to trigger scroll-to-bottom after messages are loaded
@@ -622,9 +592,8 @@ export function ChatPanel() {
           userJustSentRef.current = false;
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
           pinnedToBottomRef.current = true;
-        } else if (!thinkingWasShowingRef.current && showThinkingItem) {
-          // Thinking block first appeared in this turn — jump to bottom so
-          // the expanded content is visible without manual scrolling.
+        } else if (!thinkingWasShowingRef.current && false) {
+          // ADR-021: No more streaming thinking indicator
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
           pinnedToBottomRef.current = true;
         } else {
@@ -635,8 +604,8 @@ export function ChatPanel() {
     }
 
     prevDisplayCountRef.current = virtualCount;
-    thinkingWasShowingRef.current = showThinkingItem;
-  }, [messages, virtualCount, virtualizer, selectedAgentId, currentSessionId, showThinkingItem]);
+    thinkingWasShowingRef.current = false;
+  }, [messages, virtualCount, virtualizer, selectedAgentId, currentSessionId]);
 
   // Sticky-bottom: when the virtualizer re-measures a bottom item (e.g.
   // thinking block content streams in), the scroll position drifts above
@@ -1156,28 +1125,7 @@ export function ChatPanel() {
                     );
                   }
 
-                  // --- Thinking indicator (extra virtual item below messages / compacting) ---
-                  if (showThinkingItem && virtualRow.index === displayMessages.length + (showCompactingItem ? 1 : 0)) {
-                    return (
-                      <div
-                        key={virtualRow.key}
-                        ref={virtualizer.measureElement}
-                        data-index={virtualRow.index}
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          left: 0,
-                          width: '100%',
-                          transform: `translateY(${virtualRow.start}px)`,
-                        }}
-                      >
-                        <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
-                          <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
-                          <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>{t("chatPanel.working")}</span>
-                        </div>
-                      </div>
-                    );
-                  }
+                  // ADR-021: No more thinking indicator — messages arrive complete via HTTP poll.
 
                   // --- Regular message item ---
                   const item = displayMessages[virtualRow.index];
@@ -1204,9 +1152,7 @@ export function ChatPanel() {
                         return (
                           <ExploreBlock
                             items={displayItem.items}
-                            isStreaming={displayItem.items.some(
-                              (m: ChatMessage) => m.id === streamingMessageId || m.id === thinkingMessageId
-                            )}
+                            isStreaming={false}
                             pendingApproval={pendingApproval}
                             currentSessionId={currentSessionId}
                             onApprove={(action, approval) => handleToolApprove(action, approval)}
@@ -1217,7 +1163,7 @@ export function ChatPanel() {
 
                       {/* Regular message */}
                       {displayItem.type !== 'explore_group' && (
-                        <MessageBubble message={item as ChatMessage} isStreaming={(item as ChatMessage).id === streamingMessageId} agentId={selectedAgentId ?? ""} />
+                        <MessageBubble message={item as ChatMessage} isStreaming={false} agentId={selectedAgentId ?? ""} />
                       )}
                     </div>
                   );

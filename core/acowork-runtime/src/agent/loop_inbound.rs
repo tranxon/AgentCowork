@@ -317,6 +317,9 @@ impl AgentLoop {
             conversation.append_message("assistant", &assistant_text, None);
         }
 
+        // ADR-021: Remove streaming line after stop persistence
+        self.core.remove_streaming_line();
+
         // Notify frontend via chunk channel
         let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
             content: content.to_string(),

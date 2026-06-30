@@ -69,6 +69,9 @@ pub enum BridgeEventType {
     TodoListUpdated,
     /// Embedding migration progress (Gateway → frontend, shows migration queue)
     EmbeddingMigrationProgress,
+    /// New data available notification (ADR-021): Runtime → frontend,
+    /// triggers HTTP poll for incremental message data.
+    NewDataAvailable,
     /// Unknown/unrecognized action — payload is forwarded as-is so the
     /// frontend can decide what to do. This avoids silently treating new
     /// Runtime event types as "done" (which would break streaming state).
@@ -98,6 +101,7 @@ impl BridgeEventType {
             "compacting_started" => Some(Self::CompactingStarted),
             "compacting_ended" => Some(Self::CompactingEnded),
             "embedding_migration_progress" => Some(Self::EmbeddingMigrationProgress),
+            "new_data_available" => Some(Self::NewDataAvailable),
             _ => None,
         }
     }
@@ -131,6 +135,7 @@ impl BridgeEventType {
             Self::CompactingStarted => "compacting_started",
             Self::CompactingEnded => "compacting_ended",
             Self::EmbeddingMigrationProgress => "embedding_migration_progress",
+            Self::NewDataAvailable => "new_data_available",
             Self::Unknown => "unknown",
         }
     }
@@ -179,12 +184,10 @@ pub struct AppState {
     /// Shared session manager for pushing messages to agents
     /// Set by Gateway::run() when the IPC server is initialized
     pub session_mgr: Option<SharedSessionMgr>,
-    /// P2 (ADR-020): Bridge data channel for L1 events (LLM chunks).
-    /// The IPC/gRPC dispatch publishes L1 events here; WebSocket subscribes.
-    pub bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
-    /// P2 (ADR-020): Bridge control channel for L2/L3/L4 events (tools,
+    /// P2 (ADR-020): Bridge control channel for all events (tools,
     /// control, metadata). The IPC/gRPC dispatch publishes here; WebSocket
-    /// subscribes with biased-select priority.
+    /// subscribes. ADR-021 Phase 2: data channel removed — all events
+    /// now flow through this single control channel.
     pub bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     /// Pending session requests for IPC response correlation (S1.14)
     pub session_pending: SessionPendingRequests,
@@ -204,7 +207,6 @@ impl AppState {
         gateway_state: SharedHttpState,
         auth: Arc<HttpAuth>,
         session_mgr: Option<SharedSessionMgr>,
-        bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         session_pending: Option<SessionPendingRequests>,
     ) -> Self {
@@ -212,7 +214,6 @@ impl AppState {
             gateway_state,
             auth,
             session_mgr,
-            bridge_data_tx,
             bridge_ctrl_tx,
             session_pending: session_pending.unwrap_or_else(|| {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
@@ -229,7 +230,6 @@ impl AppState {
         gateway_state: SharedHttpState,
         auth: Arc<HttpAuth>,
         session_mgr: Option<SharedSessionMgr>,
-        bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
         session_pending: Option<SessionPendingRequests>,
         log_reload_handle: Option<crate::LogReloadHandle>,
@@ -238,7 +238,6 @@ impl AppState {
             gateway_state,
             auth,
             session_mgr,
-            bridge_data_tx,
             bridge_ctrl_tx,
             session_pending: session_pending.unwrap_or_else(|| {
                 Arc::new(tokio::sync::Mutex::new(std::collections::HashMap::new()))
@@ -650,7 +649,6 @@ mod tests {
         AppState::new(
             Arc::new(RwLock::new(gw_state)),
             Arc::new(HttpAuth::new(false)),
-            None,
             None,
             None,
             None,

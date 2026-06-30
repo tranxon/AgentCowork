@@ -275,7 +275,6 @@ pub(crate) async fn connect_gateway_client(
     version: &str,
 
     work_dir: &str,
-    outbound_data_capacity: usize,
     outbound_ctrl_capacity: usize,
 ) -> Option<(
     crate::grpc::client::GatewayGrpcClient,
@@ -308,7 +307,6 @@ pub(crate) async fn connect_gateway_client(
         cached_user_profile_ver,
         avatar,
         builtin_avatar,
-        outbound_data_capacity,
         outbound_ctrl_capacity,
     )
     .await
@@ -845,7 +843,7 @@ async fn process_gateway_recv(
                     }
 
                     if action == "get_session_messages" {
-                        handle_get_session_messages(work_dir, grpc_client, &params).await;
+                        handle_get_session_messages(work_dir, grpc_client, &params, session_manager).await;
                         return LoopAction::Continue;
                     }
 
@@ -886,12 +884,12 @@ async fn process_gateway_recv(
 
                                     // P1 (ADR-020): Auto-enable push on create.
                                     // New sessions start in the foreground; the frontend
-                                    // will switch to them immediately.  EnablePush here
+                                    // will switch to them immediately.  EnableNotify here
                                     // removes the race between create and the first
                                     // chat_message.
                                     let _ = session_manager.send_to_session(
                                         &new_session_id,
-                                        SessionMessage::EnablePush,
+                                        SessionMessage::EnableNotify,
                                     );
 
                                     let data = serde_json::json!({ "session_id": new_session_id });
@@ -966,8 +964,8 @@ async fn process_gateway_recv(
                         // P1: Enable real-time push for the activated session.
                         // Control events are always pushed; this enables data events
                         // (Delta, ReasoningDelta, ToolCall, ToolResult) as well.
-                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::EnablePush) {
-                            tracing::warn!(session_id = %session_id, error = %e, "Failed to enable push for activated session");
+                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::EnableNotify) {
+                            tracing::warn!(session_id = %session_id, error = %e, "Failed to enable notify for activated session");
                         }
 
                         // Read session metadata from JSONL to return model/provider/workspace_id
@@ -1003,10 +1001,10 @@ async fn process_gateway_recv(
                             }
                         };
 
-                        // P1: Disable real-time push for the deactivated session.
+                        // P1: Disable NewDataAvailable notifications for the deactivated session.
                         // Fire-and-forget — no response needed.
-                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::DisablePush) {
-                            tracing::warn!(session_id = %session_id, error = %e, "Failed to disable push for deactivated session");
+                        if let Err(e) = session_manager.send_to_session(&session_id, SessionMessage::DisableNotify) {
+                            tracing::warn!(session_id = %session_id, error = %e, "Failed to disable notify for deactivated session");
                         }
                         return LoopAction::Continue;
                     }
@@ -1026,12 +1024,11 @@ async fn process_gateway_recv(
                             }
                         };
 
-                        // P1 (ADR-020): Auto-disable push before close.
-                        // The session is being closed; stop pushing data events
-                        // to free channel bandwidth immediately.
+                        // P1 (ADR-020): Auto-disable notify before close.
+                        // The session is being closed; stop NewDataAvailable notifications.
                         let _ = session_manager.send_to_session(
                             &session_id,
-                            SessionMessage::DisablePush,
+                            SessionMessage::DisableNotify,
                         );
 
                         // Close the session: trigger distillation and free resources (JSONL preserved)
@@ -1063,12 +1060,12 @@ async fn process_gateway_recv(
                             }
                         };
 
-                        // P1 (ADR-020): Auto-disable push before delete.
-                        // Same rationale as close_session — stop pushing before
+                        // P1 (ADR-020): Auto-disable notify before delete.
+                        // Same rationale as close_session — stop notifications before
                         // tearing down the session.
                         let _ = session_manager.send_to_session(
                             &session_id,
-                            SessionMessage::DisablePush,
+                            SessionMessage::DisableNotify,
                         );
 
                         // Close first: trigger distillation and free resources
@@ -2810,6 +2807,7 @@ async fn handle_get_session_messages(
     work_dir: &str,
     grpc_client: &mut crate::grpc::client::GatewayGrpcClient,
     params: &serde_json::Value,
+    session_manager: &SessionManager,
 ) {
     let request_id = params
         .get("request_id")
@@ -2831,6 +2829,17 @@ async fn handle_get_session_messages(
         .and_then(|v| v.as_str())
         .unwrap_or("backward")
         .to_string();
+
+    // ADR-021: line-number coordinate parameters for incremental polling
+    let line_number: Option<usize> = params
+        .get("line_number")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+    let line_char_offset: Option<usize> = params
+        .get("line_char_offset")
+        .and_then(|v| v.as_u64())
+        .map(|n| n as usize);
+
     if session_id.is_empty() {
         let data = serde_json::json!({
             "error": "session_id is required",
@@ -2847,6 +2856,47 @@ async fn handle_get_session_messages(
             "error": format!("Session {} not found", session_id),
         });
         send_session_response(grpc_client, &request_id, data).await;
+        return;
+    }
+
+    // ADR-021: When line_number is provided, use incremental read_messages_since.
+    // Otherwise fall back to the existing cursor-based pagination.
+    if let (Some(ln), Some(co)) = (line_number, line_char_offset) {
+        match crate::conversation::read_messages_since(
+            &file_path,
+            ln,
+            co,
+            &session_manager.streaming_lines(),
+            &session_id,
+        ) {
+            Ok(result) => {
+                let message_dtos: Vec<acowork_core::protocol::ConversationEntryDto> = result
+                    .messages
+                    .into_iter()
+                    .map(|m| acowork_core::protocol::ConversationEntryDto {
+                        id: m.id,
+                        ts: m.ts,
+                        role: m.role,
+                        content: m.content,
+                        metadata: m.metadata,
+                        kind: m.kind,
+                    })
+                    .collect();
+                let data = serde_json::json!({
+                    "messages": message_dtos,
+                    "streaming": result.streaming,
+                    "total_lines": result.total_lines,
+                });
+                send_session_response(grpc_client, &request_id, data).await;
+            }
+            Err(e) => {
+                tracing::error!("Failed to read session messages (incremental): {}", e);
+                let data = serde_json::json!({
+                    "error": format!("Failed to read messages: {}", e),
+                });
+                send_session_response(grpc_client, &request_id, data).await;
+            }
+        }
         return;
     }
 
@@ -2891,6 +2941,7 @@ async fn handle_get_session_messages(
 /// StreamChunk is the lightweight path for real-time streaming deltas
 /// (agent_reasoning_started, agent_chunk). These go directly to the
 /// WebSocket bridge without requiring an IntentSend round-trip.
+#[allow(dead_code)]
 pub(crate) async fn relay_stream_chunk(
     outbound_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     action: &str,
@@ -2923,6 +2974,7 @@ pub(crate) async fn relay_stream_chunk(
 /// This is acceptable for data events — dropping a single delta only causes
 /// a minor display glitch, whereas blocking would stall control events
 /// (Stopped, SessionStateChanged) that share the relay loop.
+#[allow(dead_code)]
 pub(crate) fn try_relay_stream_chunk(
     outbound_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     action: &str,
@@ -3040,7 +3092,6 @@ mod tests {
         let result = crate::grpc::client::GatewayGrpcClient::connect_with_timeout(
             "unix:///nonexistent/socket/path.sock",
             2, // 2-second max elapsed time — enough to try a few times
-            256, // default outbound data capacity
             256, // default outbound ctrl capacity
         )
         .await;

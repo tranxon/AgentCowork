@@ -3,9 +3,11 @@
 //! Provides `ConversationSession` for managing a single session's JSONL file
 //! and `ConversationWriter` for channel-based single-writer thread architecture.
 
+use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -947,6 +949,59 @@ pub struct PaginatedMessages {
     pub has_more: bool,
 }
 
+// ── ADR-021: StreamingStateMap types ───────────────────────────────────────
+
+/// An incomplete line: a message currently being streamed by the LLM
+/// but not yet flushed to the JSONL file.
+///
+/// The frontend reads this via `read_messages_since()` to get the
+/// in-progress content without waiting for a natural flush boundary.
+#[derive(Debug, Clone)]
+pub struct StreamingLine {
+    /// The line number this will become in JSONL (0-based; 0 = metadata).
+    pub line_number: usize,
+    /// Role: "assistant" | "thought".
+    pub role: String,
+    /// Current accumulated content (grows with each Delta).
+    pub accumulated_content: String,
+    /// ISO 8601 timestamp when streaming started.
+    pub started_at: String,
+}
+
+/// Delta portion of a streaming line returned to the frontend.
+///
+/// Only carries the *new* content since `char_offset`, not the full
+/// accumulated content. This keeps poll responses small.
+#[derive(Debug, Clone, Serialize)]
+pub struct StreamingLineDelta {
+    /// The line number this streaming line will become in JSONL.
+    pub line: usize,
+    /// Role: "assistant" | "thought".
+    pub role: String,
+    /// Only the new content since the requested `char_offset`.
+    pub content: String,
+    /// Current total character length of the accumulated content.
+    /// The frontend uses this as the next `line_char_offset`.
+    pub char_offset: usize,
+}
+
+/// Result of `read_messages_since()`.
+#[derive(Debug, Clone)]
+pub struct ReadMessagesSinceResult {
+    /// New complete lines from JSONL (after `line_number`).
+    pub messages: Vec<ConversationEntry>,
+    /// Incomplete streaming line delta, if one exists for this session.
+    pub streaming: Option<StreamingLineDelta>,
+    /// Total lines in the JSONL file (including metadata line 0).
+    pub total_lines: usize,
+}
+
+/// Shared map from SessionId to the current incomplete streaming line.
+///
+/// Written by AgentLoop on each Delta, read by the HTTP handler on poll.
+/// Wrapped in `Arc<RwLock>` for concurrent access across tokio tasks.
+pub type StreamingStateMap = Arc<RwLock<HashMap<String, StreamingLine>>>;
+
 /// Chunk size for backward reading (8 KB).
 const BACKWARD_READ_CHUNK: usize = 8 * 1024;
 
@@ -1605,6 +1660,108 @@ fn read_messages_forward(
             None
         },
         has_more,
+    })
+}
+
+// ── ADR-021: Incremental read with line-number coordinates ─────────────────
+
+/// Count the total number of lines in a JSONL file.
+///
+/// Line 0 is the metadata header. Returns 0 for empty/non-existent files.
+pub fn count_jsonl_lines(path: &Path) -> std::io::Result<usize> {
+    let file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e),
+    };
+    let reader = BufReader::new(file);
+    let mut count = 0usize;
+    for line in reader.lines() {
+        if line.is_ok() {
+            count += 1;
+        }
+    }
+    Ok(count)
+}
+
+/// Read messages from a JSONL file since a given line-number coordinate.
+///
+/// ADR-021: This is the Runtime-side handler for incremental poll requests.
+/// It returns:
+/// - `messages`: new complete lines from JSONL after `line_number`
+/// - `streaming`: delta of the in-progress streaming line (if any)
+/// - `total_lines`: current total line count in the JSONL file
+///
+/// # Arguments
+/// - `path`: Path to the session JSONL file.
+/// - `line_number`: Number of complete lines already read by the frontend
+///   (0-based; 0 = metadata). The function returns lines with index > line_number.
+/// - `line_char_offset`: Number of characters already read from the streaming
+///   line. The function returns only new characters after this offset.
+/// - `streaming_lines`: Shared StreamingStateMap for in-progress lines.
+/// - `session_id`: Session ID to look up in `streaming_lines`.
+///
+/// # Clamping
+/// If `line_number` exceeds `total_lines` (e.g., JSONL was externally
+/// truncated), it is clamped to `total_lines`. Similarly, if the streaming
+/// line's `char_offset` is less than the requested `line_char_offset`
+/// (should not happen in normal operation), the full content is returned.
+pub fn read_messages_since(
+    path: &Path,
+    line_number: usize,
+    line_char_offset: usize,
+    streaming_lines: &StreamingStateMap,
+    session_id: &str,
+) -> Result<ReadMessagesSinceResult> {
+    let total_lines = count_jsonl_lines(path).unwrap_or(0);
+
+    // Clamp line_number to total_lines (defensive against external truncation)
+    let line_number = line_number.min(total_lines);
+
+    // Read new complete lines from JSONL (lines with index > line_number)
+    let mut messages: Vec<ConversationEntry> = Vec::new();
+    if line_number < total_lines
+        && let Ok(file) = std::fs::File::open(path)
+    {
+        let reader = BufReader::new(file);
+        for (idx, line) in reader.lines().enumerate() {
+            // Line 0 is metadata, skip it
+            if idx == 0 {
+                continue;
+            }
+            // Only include lines after the frontend's last known line
+            if idx <= line_number {
+                continue;
+            }
+            if let Ok(content) = line
+                && let Ok(entry) = serde_json::from_str::<ConversationEntry>(&content)
+            {
+                messages.push(entry);
+            }
+        }
+    }
+
+    // Read streaming line delta from StreamingStateMap
+    let streaming = streaming_lines
+        .read()
+        .unwrap()
+        .get(session_id)
+        .map(|sl| {
+            let current_len = sl.accumulated_content.chars().count();
+            let offset = line_char_offset.min(current_len);
+            let delta_content: String = sl.accumulated_content.chars().skip(offset).collect();
+            StreamingLineDelta {
+                line: sl.line_number,
+                role: sl.role.clone(),
+                content: delta_content,
+                char_offset: current_len,
+            }
+        });
+
+    Ok(ReadMessagesSinceResult {
+        messages,
+        streaming,
+        total_lines,
     })
 }
 

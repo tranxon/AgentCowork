@@ -117,12 +117,12 @@ pub enum SessionMessage {
     /// Used to surface MCP connection failures and other async events
     /// to the LLM context so the Agent can self-heal.
     SystemNotification { content: String },
-    /// Enable real-time data push to Gateway (session switched to foreground).
+    /// Enable NewDataAvailable notifications (session switched to foreground).
     /// Control events (Stopped, Done, Error, etc.) are always pushed regardless.
-    EnablePush,
-    /// Disable real-time data push to Gateway (session switched to background).
-    /// Data events are silently dropped; only control events are pushed.
-    DisablePush,
+    EnableNotify,
+    /// Disable NewDataAvailable notifications (session switched to background).
+    /// Control events are still pushed; only NewDataAvailable is suppressed.
+    DisableNotify,
 }
 
 impl std::fmt::Debug for SessionMessage {
@@ -223,8 +223,8 @@ impl std::fmt::Debug for SessionMessage {
                 .debug_struct("SystemNotification")
                 .field("len", &content.len())
                 .finish(),
-            SessionMessage::EnablePush => f.debug_tuple("EnablePush").finish(),
-            SessionMessage::DisablePush => f.debug_tuple("DisablePush").finish(),
+            SessionMessage::EnableNotify => f.debug_tuple("EnableNotify").finish(),
+            SessionMessage::DisableNotify => f.debug_tuple("DisableNotify").finish(),
         }
     }
 }
@@ -249,12 +249,8 @@ pub(crate) struct SessionTask {
     inbound_rx: mpsc::Receiver<SessionMessage>,
     /// System prompt for context building
     system_prompt: String,
-    /// Optional streaming chunk sender for forwarding responses to Gateway
+    /// ADR-021: Single chunk sender for control events.
     chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
-    /// Dedicated control-event sender for Done/Error/Stopped events.
-    /// Separated from `chunk_tx` to guarantee control events are never
-    /// blocked by data-event backpressure.
-    control_chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
     /// Unique session identifier (used for logging and chunk tagging)
     session_id: String,
     /// Complete tool definitions (with input_schema) for ContextBuilder
@@ -391,7 +387,6 @@ impl SessionTask {
         inbound_rx: mpsc::Receiver<SessionMessage>,
         system_prompt: String,
         chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
-        control_chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
         session_id: String,
         tool_definitions: Vec<serde_json::Value>,
         identity_context: Option<String>,
@@ -410,7 +405,7 @@ impl SessionTask {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
         let mut core_for_session =
-            core.clone_for_session(chunk_tx.clone(), control_chunk_tx.clone(), session_id.clone());
+            core.clone_for_session(chunk_tx.clone(), session_id.clone());
         // Set MCP tools and rebuild the merged dispatch list
         core_for_session.mcp_tools = mcp_tools;
         core_for_session.rebuild_all_tools();
@@ -469,7 +464,7 @@ impl SessionTask {
                 // Wire up UX if shared state is available
                 if let Some(status) = &core_for_session.retry_session_status
                     && let Some(handle) = &core_for_session.retry_wait_handle
-                    && let Some(tx) = &core_for_session.on_chunk
+                    && let Some(tx) = &core_for_session.chunk_tx
                     && let Some(sid) = &core_for_session.session_id
                 {
                     reliable = reliable.with_retry_ux(
@@ -518,7 +513,6 @@ impl SessionTask {
             inbound_rx,
             system_prompt,
             chunk_tx,
-            control_chunk_tx,
             session_id,
             tool_definitions,
             identity_context,
@@ -563,7 +557,6 @@ impl SessionTask {
             agent_inbound_tx,
             session_id,
             chunk_tx,
-            control_chunk_tx,
             mut inbound_rx,
             system_prompt,
             tool_definitions,
@@ -697,7 +690,7 @@ impl SessionTask {
                                             response_len = response.len(),
                                             "SessionTask processed chat message (replay)"
                                         );
-                                        if let Some(ref tx) = control_chunk_tx {
+                                        if let Some(ref tx) = chunk_tx {
                                             let event = SessionChunkEvent {
                                                 session_id: session_id.clone(),
                                                 event: ChunkEvent::Done {
@@ -719,7 +712,7 @@ impl SessionTask {
                                             error = %e,
                                             "SessionTask agent loop error (replay)"
                                         );
-                                        if let Some(ref tx) = control_chunk_tx {
+                                        if let Some(ref tx) = chunk_tx {
                                             let (user_message, detail, error_type) = e.error_info();
                                             let event = SessionChunkEvent {
                                                 session_id: session_id.clone(),
@@ -1002,7 +995,7 @@ impl SessionTask {
                                 response_len = response.len(),
                                 "SessionTask processed chat message"
                             );
-                            if let Some(ref tx) = control_chunk_tx {
+                            if let Some(ref tx) = chunk_tx {
                                 let event = SessionChunkEvent {
                                     session_id: session_id.clone(),
                                     event: ChunkEvent::Done {
@@ -1024,7 +1017,7 @@ impl SessionTask {
                                 error = %e,
                                 "SessionTask agent loop error"
                             );
-                            if let Some(ref tx) = control_chunk_tx {
+                            if let Some(ref tx) = chunk_tx {
                                 let (user_message, detail, error_type) = e.error_info();
                                 let event = SessionChunkEvent {
                                     session_id: session_id.clone(),
@@ -1419,22 +1412,22 @@ impl SessionTask {
                             "[System Notification] {content}"
                         )));
                 }
-                Some(SessionMessage::EnablePush) => {
+                Some(SessionMessage::EnableNotify) => {
                     tracing::info!(
                         session_id = %session_id,
-                        "SessionTask: enabling real-time push (session activated)"
+                        "SessionTask: enabling NewDataAvailable notifications (session activated)"
                     );
-                    agent_loop.core.push_enabled.store(true, Ordering::Relaxed);
+                    agent_loop.core.notify_enabled.store(true, Ordering::Relaxed);
                     // Immediately emit current session state so the frontend
                     // can render the latest status, model, provider, etc.
                     agent_loop.emit_session_state();
                 }
-                Some(SessionMessage::DisablePush) => {
+                Some(SessionMessage::DisableNotify) => {
                     tracing::info!(
                         session_id = %session_id,
-                        "SessionTask: disabling real-time push (session deactivated)"
+                        "SessionTask: disabling NewDataAvailable notifications (session deactivated)"
                     );
-                    agent_loop.core.push_enabled.store(false, Ordering::Relaxed);
+                    agent_loop.core.notify_enabled.store(false, Ordering::Relaxed);
                 }
                 None => {
                     tracing::info!(

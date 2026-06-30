@@ -640,18 +640,12 @@ impl Gateway {
             crate::cron::run_cron_scheduler(cron_scheduler, cron_session_mgr, cron_gw_state).await;
         });
 
-        // P2 (ADR-020): Split Bridge broadcast channel into data (L1: LLM chunks,
-        // high capacity, droppable) and ctrl (L2/L3/L4: tools, control, metadata,
-        // must deliver). Capacities from DataFlowConfig.
-        let (bridge_data_tx, _) =
-            tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(
-                self.config.data_flow.bridge_data_capacity,
-            );
+        // ADR-021 Phase 2: Single Bridge control channel for all events.
+        // Data channel (L1 chunks) removed — frontend now polls via HTTP.
         let (bridge_ctrl_tx, _) =
             tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(
                 self.config.data_flow.bridge_ctrl_capacity,
             );
-        let http_bridge_data_tx = Some(bridge_data_tx.clone());
         let http_bridge_ctrl_tx = Some(bridge_ctrl_tx.clone());
 
         // S1.14 / Task #12: Create shared session_pending for HTTP ↔ gRPC bridge.
@@ -816,7 +810,6 @@ impl Gateway {
                 &data_dir_path,
                 http_session_mgr,
                 http_grpc_session_mgr,
-                http_bridge_data_tx,
                 http_bridge_ctrl_tx,
                 http_session_pending,
                 log_reload_handle,
@@ -832,7 +825,6 @@ impl Gateway {
         // The gRPC server registers each connection in ipc_session_mgr,
         // so HTTP handlers find gRPC-connected agents via the same path.
         let grpc_state = shared_state.clone();
-        let grpc_bridge_data_tx = Some(bridge_data_tx.clone());
         let grpc_bridge_ctrl_tx = Some(bridge_ctrl_tx);
         let (capability_tx, _) =
             tokio::sync::broadcast::channel::<acowork_core::protocol::GatewayResponse>(
@@ -847,7 +839,6 @@ impl Gateway {
                 grpc_session_mgr,
                 session_mgr,
                 capability_tx,
-                grpc_bridge_data_tx,
                 grpc_bridge_ctrl_tx,
                 grpc_session_pending,
                 grpc_data_flow_config,

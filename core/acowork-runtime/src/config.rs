@@ -102,25 +102,16 @@ pub struct RuntimeConfig {
 /// internal data pipelines. These values affect throughput and latency
 /// under load — especially during LLM streaming (thinking mode).
 ///
-/// P2 (ADR-020): gRPC outbound split into data (L1: LLM chunks) and
-/// ctrl (L2/L3/L4: tools, control, metadata) for physical isolation.
+/// ADR-021: Data channel removed; only control channel remains.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataFlowConfig {
-    /// Capacity of the on_chunk mpsc channel (L1 data: Delta, ReasoningDelta).
-    /// Default: 1024.
-    #[serde(default = "default_on_chunk_capacity")]
-    pub on_chunk_capacity: usize,
-    /// Capacity of the control_chunk mpsc channel (L3 control events).
+    /// Capacity of the chunk mpsc channel (control events).
     /// Default: 64.
-    #[serde(default = "default_control_chunk_capacity")]
-    pub control_chunk_capacity: usize,
-    /// Capacity of the gRPC outbound data mpsc channel (L1: Delta, ReasoningDelta).
-    /// Default: 2048 (large buffer to avoid try_send drops during thinking bursts).
-    #[serde(default = "default_outbound_data_capacity")]
-    pub outbound_data_capacity: usize,
-    /// Capacity of the gRPC outbound control mpsc channel (L2/L3/L4: ToolCall,
-    /// Done, Error, Stopped, SessionStateChanged, etc.).
-    /// Default: 256 (small buffer — control events are low-frequency).
+    #[serde(default = "default_chunk_capacity")]
+    pub chunk_capacity: usize,
+    /// Capacity of the gRPC outbound control mpsc channel (Done, Error,
+    /// Stopped, SessionStateChanged, etc.).
+    /// Default: 256.
     #[serde(default = "default_outbound_ctrl_capacity")]
     pub outbound_ctrl_capacity: usize,
     /// Reasoning token batch flush interval in milliseconds.
@@ -130,14 +121,8 @@ pub struct DataFlowConfig {
     pub reasoning_flush_interval_ms: u64,
 }
 
-fn default_on_chunk_capacity() -> usize {
-    1024
-}
-fn default_control_chunk_capacity() -> usize {
+fn default_chunk_capacity() -> usize {
     64
-}
-fn default_outbound_data_capacity() -> usize {
-    2048
 }
 fn default_outbound_ctrl_capacity() -> usize {
     256
@@ -149,9 +134,7 @@ fn default_reasoning_flush_interval_ms() -> u64 {
 impl Default for DataFlowConfig {
     fn default() -> Self {
         Self {
-            on_chunk_capacity: default_on_chunk_capacity(),
-            control_chunk_capacity: default_control_chunk_capacity(),
-            outbound_data_capacity: default_outbound_data_capacity(),
+            chunk_capacity: default_chunk_capacity(),
             outbound_ctrl_capacity: default_outbound_ctrl_capacity(),
             reasoning_flush_interval_ms: default_reasoning_flush_interval_ms(),
         }

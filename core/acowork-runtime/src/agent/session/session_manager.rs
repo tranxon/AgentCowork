@@ -43,14 +43,10 @@ pub struct SessionManagerConfig {
     pub per_session_budget: Budget,
     /// History max tokens per session
     pub history_max_tokens: u64,
-    /// Optional streaming chunk sender shared across all sessions.
-    /// When set, each session's AgentLoop forwards ChunkEvents here
+    /// ADR-021: Single chunk sender for control events.
+    /// When set, each session's AgentLoop forwards control events here
     /// so the caller can relay them to Gateway.
     pub chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
-    /// Dedicated control-event channel (Stopped, SessionStateChanged, Done,
-    /// Error, etc.). Separated from `chunk_tx` to prevent data-event
-    /// backpressure from blocking control events.
-    pub control_chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
     /// Complete tool definitions (with input_schema) for ContextBuilder.
     /// SessionTask uses these instead of building simplified ones from manifest.
     pub tool_definitions: Vec<serde_json::Value>,
@@ -78,7 +74,6 @@ impl Default for SessionManagerConfig {
             },
             history_max_tokens: 128_000,
             chunk_tx: None,
-            control_chunk_tx: None,
             tool_definitions: Vec::new(),
             full_tool_specs: Vec::new(),
             identity_context: None,
@@ -348,7 +343,6 @@ impl SessionManager {
             inbound_rx,
             self.config.system_prompt.clone(),
             self.config.chunk_tx.clone(),
-            self.config.control_chunk_tx.clone(),
             session_id.clone(),
             self.config.tool_definitions.clone(),
             self.config.identity_context.clone(),
@@ -1142,6 +1136,14 @@ After installation, ask the user to re-enable the MCP server.",
     /// Access the shared core's manifest (ADR-012: for per-session model defaults).
     pub fn manifest(&self) -> &acowork_core::AgentManifest {
         self.core.manifest()
+    }
+
+    /// ADR-021: Access the shared StreamingStateMap for incremental poll reads.
+    ///
+    /// Returns a reference to the `Arc<RwLock<HashMap<SessionId, StreamingLine>>>`
+    /// so the CLI HTTP handler can call `read_messages_since()`.
+    pub fn streaming_lines(&self) -> crate::conversation::StreamingStateMap {
+        self.core.streaming_lines.clone()
     }
 
     /// Get the name of the first available provider from the global cache.

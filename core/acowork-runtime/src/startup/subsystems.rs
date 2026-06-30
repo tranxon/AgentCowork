@@ -10,7 +10,6 @@
 use crate::config::RuntimeConfig;
 use crate::error::Result;
 use crate::startup::context::{AgentBootContext, SessionBootContext};
-use crate::agent::loop_::SessionChunkEvent;
 
 /// Resources produced by Phase C, needed by Phase D.
 pub(crate) struct SubsystemHandles {
@@ -43,151 +42,31 @@ pub(crate) async fn phase_c_spawn_subsystems(
     // This must run before AgentReady is sent so the chunk channel is
     // already being drained when the Gateway loop starts.
     //
-    // Two channels are consumed:
-    //   - chunk_rx: data events (Delta, ReasoningDelta, ToolCall, ...)
-    //   - control_chunk_rx: control events (Stopped, SessionStateChanged,
-    //     Done, Error, ...) — consumed with priority via biased select!
-    // This separation ensures control events are never blocked by
-    // data-event backpressure.
+    // ADR-021: Single channel for control events only.
+    // Data events (Delta, ReasoningDelta, ToolCall, ToolResult) are no
+    // longer sent via channel — the frontend polls them via HTTP.
     let agent_id_for_relay = ctx.agent_id.clone();
-    // Bridge capacity matches on_chunk_capacity so the Reader never becomes
-    // a narrower bottleneck than the AgentLoop's data channel.
-    let bridge_capacity = config.data_flow.on_chunk_capacity;
     let chunk_relay = if ctx.chunk_rx.is_some() {
         let chunk_rx = ctx.chunk_rx.take().unwrap();
-        let control_chunk_rx = ctx.control_chunk_rx.take();
-        // P2 (ADR-020): Split outbound into data (L1) and ctrl (L2/L3/L4).
-        let outbound_data_tx = ctx
-            .grpc_client
-            .as_ref()
-            .expect("grpc_client must be Some in Gateway mode")
-            .outbound_data_sender();
         let outbound_ctrl_tx = ctx
             .grpc_client
             .as_ref()
             .expect("grpc_client must be Some in Gateway mode")
             .outbound_ctrl_sender();
         Some(tokio::spawn(async move {
-            tracing::info!(
-                "Chunk relay started (shared gRPC connection, dual-channel, read-write split)"
-            );
+            tracing::info!("Chunk relay started (single channel)");
             let mut chunk_rx = chunk_rx;
 
-            // P2 (ADR-020 fix #2): Split read and write into separate tasks
-            // connected by an internal bridge channel. This prevents downstream
-            // backpressure (e.g. outbound_ctrl full → send().await blocks) from
-            // starving the upstream read loop.
-            //
-            // Bridge capacity matches on_chunk_capacity (default 1024) so the
-            // Reader can buffer as many events as the AgentLoop can produce
-            // before feeling backpressure. If the Writer stalls long enough to
-            // fill the bridge, the backpressure correctly propagates upward.
-            let (bridge_tx, mut bridge_rx) =
-                tokio::sync::mpsc::channel::<SessionChunkEvent>(bridge_capacity);
-
-            // Writer task: reads from bridge, writes to outbound channels.
-            // This is the only place where send().await can block; it does not
-            // affect the reader's ability to drain chunk_rx/control_rx.
-            let writer_agent_id = agent_id_for_relay.clone();
-            let writer_data_tx = outbound_data_tx.clone();
-            let writer_ctrl_tx = outbound_ctrl_tx.clone();
-            let writer = tokio::spawn(async move {
-                while let Some(event) = bridge_rx.recv().await {
-                    relay_chunk_event(
-                        &writer_data_tx,
-                        &writer_ctrl_tx,
-                        &writer_agent_id,
-                        &event.session_id,
-                        event.event,
-                    )
-                    .await;
-                }
-                tracing::debug!("Chunk relay writer task ended");
-            });
-
-            // Reader task (inline): reads from chunk_rx/control_rx, forwards to bridge.
-            // Never calls relay_chunk_event directly — all outbound I/O is in the writer.
-            if let Some(mut control_rx) = control_chunk_rx {
-                loop {
-                    // Priority: drain control channel first (non-blocking)
-                    while let Ok(session_event) = control_rx.try_recv() {
-                        if bridge_tx.send(session_event).await.is_err() {
-                            // Writer task died; stop reading
-                            break;
-                        }
-                    }
-                    // Block-wait on both; biased gives control channel priority
-                    tokio::select! {
-                        biased;
-                        session_event = control_rx.recv() => {
-                            match session_event {
-                                Some(ev) => {
-                                    // Drain pending data events before sending
-                                    // the control event. This preserves FIFO
-                                    // ordering: all Deltas produced before the
-                                    // Stopped/Done/Error are relayed first, then
-                                    // the control event follows.
-                                    //
-                                    // try_recv is non-blocking — drains only
-                                    // already-queued events without waiting.
-                                    // This is safe because urgent_stop has
-                                    // already halted the AgentLoop, so no new
-                                    // Deltas will be produced during drain.
-                                    while let Ok(data_event) = chunk_rx.try_recv() {
-                                        if bridge_tx.send(data_event).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    // Now send the control event itself
-                                    if bridge_tx.send(ev).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                None => {
-                                    // Control channel closed;
-                                    // drain data channel then exit
-                                    while let Some(ev) = chunk_rx.recv().await {
-                                        if bridge_tx.send(ev).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                        session_event = chunk_rx.recv() => {
-                            match session_event {
-                                Some(ev) => {
-                                    if bridge_tx.send(ev).await.is_err() {
-                                        break;
-                                    }
-                                }
-                                None => {
-                                    // Data channel closed;
-                                    // drain control channel then exit
-                                    while let Some(ev) = control_rx.recv().await {
-                                        if bridge_tx.send(ev).await.is_err() {
-                                            break;
-                                        }
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            } else {
-                // No control channel (shouldn't happen in Gateway mode)
-                while let Some(session_event) = chunk_rx.recv().await {
-                    if bridge_tx.send(session_event).await.is_err() {
-                        break;
-                    }
-                }
+            // Simple relay: read from chunk_rx, forward to gRPC outbound.
+            while let Some(session_event) = chunk_rx.recv().await {
+                relay_chunk_event(
+                    &outbound_ctrl_tx,
+                    &agent_id_for_relay,
+                    &session_event.session_id,
+                    session_event.event,
+                )
+                .await;
             }
-
-            // Reader finished — drop bridge_tx to signal writer, then wait for it
-            drop(bridge_tx);
-            let _ = writer.await;
             tracing::debug!("Chunk relay task ended");
         }))
     } else {
@@ -317,45 +196,37 @@ pub(crate) async fn phase_c_spawn_subsystems(
     })
 }
 
-/// Dispatch a single `ChunkEvent` to the Gateway outbound channel.
+/// Dispatch a single `ChunkEvent` to the Gateway outbound control channel.
 ///
-/// P2 (ADR-020): Routes L1 data events (Delta, ReasoningDelta, ReasoningStarted)
-/// to `outbound_data_tx` (non-blocking try_send) and L2/L3/L4 control events
-/// (ToolCall, Done, Error, Stopped, etc.) to `outbound_ctrl_tx` (blocking send).
-///
-/// Extracted from the chunk relay loop to keep the main spawn body readable.
+/// ADR-021: All events go through the single outbound control channel.
+/// Data events (Delta, ReasoningDelta, ReasoningStarted, ToolCall, ToolResult)
+/// are no longer sent via channel — the frontend polls them via HTTP.
 async fn relay_chunk_event(
-    outbound_data_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     outbound_ctrl_tx: &tokio::sync::mpsc::Sender<acowork_core::proto::ClientMessage>,
     agent_id: &str,
     sid: &str,
     event: crate::agent::loop_::ChunkEvent,
 ) {
     use crate::agent::loop_::ChunkEvent;
-    use crate::cli::{relay_intent, relay_stream_chunk, try_relay_stream_chunk};
+    use crate::cli::relay_intent;
 
     match event {
-        // ── L1: Data channel (non-blocking, droppable) ──────────────────
+        // ── Data events: no longer sent via channel (frontend polls HTTP) ─
 
-        ChunkEvent::ReasoningStarted => {
-            let params = serde_json::json!({ "session_id": sid });
-            relay_stream_chunk(outbound_data_tx, "agent_reasoning_started", &params).await;
+        ChunkEvent::ReasoningStarted
+        | ChunkEvent::Delta(_)
+        | ChunkEvent::ReasoningDelta(_)
+        | ChunkEvent::ToolCall { .. }
+        | ChunkEvent::ToolResult { .. } => {
+            // These are no longer sent via channel after ADR-021 Phase 4.
+            // If they arrive here, it's a bug — log and drop.
+            tracing::warn!(
+                event = ?event,
+                "Data event received in relay_chunk_event (should not happen after ADR-021 Phase 4)"
+            );
         }
 
-        ChunkEvent::Delta(delta) => {
-            let params = serde_json::json!({ "content": delta, "session_id": sid });
-            // Non-blocking: dropping a single delta is acceptable,
-            // but blocking would stall control events in the relay loop.
-            try_relay_stream_chunk(outbound_data_tx, "agent_chunk", &params);
-        }
-
-        ChunkEvent::ReasoningDelta(delta) => {
-            let params = serde_json::json!({ "reasoning_content": delta, "session_id": sid });
-            // Non-blocking: same rationale as Delta above.
-            try_relay_stream_chunk(outbound_data_tx, "agent_chunk", &params);
-        }
-
-        // ── L2/L3/L4: Control channel (blocking, must deliver) ─────────
+        // ── Control events (blocking, must deliver) ─────────────────────
 
         ChunkEvent::ContextUsage(ctx_info) => {
             let msg = acowork_core::proto::ClientMessage {
@@ -385,26 +256,6 @@ async fn relay_chunk_event(
         ChunkEvent::CompactingEnded => {
             let params = serde_json::json!({ "session_id": sid });
             relay_intent(outbound_ctrl_tx, "compacting_ended", &params).await;
-        }
-
-        ChunkEvent::ToolCall { name, args, id } => {
-            let parsed_args: serde_json::Value =
-                serde_json::from_str(&args).unwrap_or_else(|_| serde_json::json!({ "raw": args }));
-            let params = serde_json::json!({
-                "name": name, "params": parsed_args,
-                "tool_call_id": id, "session_id": sid,
-            });
-            relay_intent(outbound_ctrl_tx, "agent_tool_call", &params).await;
-        }
-
-        ChunkEvent::ToolResult { name, result, tool_call_id } => {
-            let parsed_result: serde_json::Value = serde_json::from_str(&result)
-                .unwrap_or_else(|_| serde_json::json!({ "content": result }));
-            let params = serde_json::json!({
-                "name": name, "result": parsed_result,
-                "tool_call_id": tool_call_id, "session_id": sid,
-            });
-            relay_intent(outbound_ctrl_tx, "agent_tool_result", &params).await;
         }
 
         ChunkEvent::IterationLimitPaused { iteration, max_iterations } => {
@@ -500,6 +351,19 @@ async fn relay_chunk_event(
         ChunkEvent::TodoListUpdated { todos } => {
             let params = serde_json::json!({ "todos": todos, "session_id": sid });
             relay_intent(outbound_ctrl_tx, "todo_list_updated", &params).await;
+        }
+
+        ChunkEvent::NewDataAvailable {
+            session_id,
+            total_lines,
+            streaming_line,
+        } => {
+            let params = serde_json::json!({
+                "session_id": session_id,
+                "total_lines": total_lines,
+                "streaming_line": streaming_line,
+            });
+            relay_intent(outbound_ctrl_tx, "new_data_available", &params).await;
         }
 
         ChunkEvent::AskQuestion {

@@ -295,6 +295,10 @@ impl super::loop_::AgentLoop {
             conversation.append_message("assistant", &assistant_text, None);
         }
 
+        // ADR-021: Remove streaming line after final persistence
+        // (handle_text_response already wrote thought + assistant to JSONL)
+        self.core.remove_streaming_line();
+
         self.session.history.append(ChatMessage {
             ..ChatMessage::assistant(content.clone())
         });

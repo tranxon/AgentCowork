@@ -13,7 +13,7 @@ use std::sync::Arc;
 use acowork_core::providers::traits::Provider;
 
 use crate::agent::context::count_chat_request_chars;
-use crate::agent::loop_::{AgentLoop, ChunkEvent, SessionChunkEvent};
+use crate::agent::loop_::{AgentLoop, ChunkEvent};
 
 impl AgentLoop {
     /// Update the LLM provider at runtime (e.g., after a `ModelSwitch`
@@ -182,14 +182,7 @@ impl AgentLoop {
             );
 
             // Notify frontend that compaction has started (both manual and auto paths).
-            if let Some(ref tx) = self.core.on_chunk {
-                let _ = tx
-                    .send(SessionChunkEvent {
-                        session_id: self.core.session_id.clone().unwrap_or_default(),
-                        event: ChunkEvent::CompactingStarted,
-                    })
-                    .await;
-            }
+            let _ = self.core.try_send_chunk(ChunkEvent::CompactingStarted);
 
             // Build combined text from history for model-aware token counting.
             let combined_text: String =
@@ -322,40 +315,29 @@ impl AgentLoop {
             // the "compacting..." indicator (both success and error paths).
             // Also send updated context usage so the frontend shows the new
             // token count and percentage after compaction.
-            if let Some(ref tx) = self.core.on_chunk {
-                let session_id = self.core.session_id.clone().unwrap_or_default();
-                let _ = tx.try_send(SessionChunkEvent {
-                    session_id: session_id.clone(),
-                    event: ChunkEvent::CompactingEnded,
-                });
+            let _ = self.core.try_send_chunk(ChunkEvent::CompactingEnded);
 
-                // Compute and send updated context usage after compaction.
-                // The history token count has changed, but the frontend still
-                // shows the old number from the last LLM API response.
-                let caps = self.core.get_model_capabilities(model_name);
-                if let Some(caps) = caps {
-                    let max_output_limit = self.core.max_output_tokens_limit_for_model(model_name);
-                    let usable = caps.effective_input_budget(max_output_limit);
-                    let total_tokens = self.session.history.token_count();
-                    let usage_percent = if usable > 0 {
-                        ((total_tokens as f64 / usable as f64) * 100.0).min(100.0) as u8
-                    } else {
-                        0
-                    };
-                    let ctx_info = acowork_core::protocol::ContextUsageInfo {
-                        context_window: caps.context_window,
-                        input_tokens: total_tokens,
-                        output_tokens: 0,
-                        total_tokens,
-                        max_input_tokens: caps.max_input_tokens,
-                        usable_context: usable,
-                        usage_percent,
-                    };
-                    let _ = tx.try_send(SessionChunkEvent {
-                        session_id,
-                        event: ChunkEvent::ContextUsage(ctx_info),
-                    });
-                }
+            // Compute and send updated context usage after compaction.
+            let caps = self.core.get_model_capabilities(model_name);
+            if let Some(caps) = caps {
+                let max_output_limit = self.core.max_output_tokens_limit_for_model(model_name);
+                let usable = caps.effective_input_budget(max_output_limit);
+                let total_tokens = self.session.history.token_count();
+                let usage_percent = if usable > 0 {
+                    ((total_tokens as f64 / usable as f64) * 100.0).min(100.0) as u8
+                } else {
+                    0
+                };
+                let ctx_info = acowork_core::protocol::ContextUsageInfo {
+                    context_window: caps.context_window,
+                    input_tokens: total_tokens,
+                    output_tokens: 0,
+                    total_tokens,
+                    max_input_tokens: caps.max_input_tokens,
+                    usable_context: usable,
+                    usage_percent,
+                };
+                let _ = self.core.try_send_chunk(ChunkEvent::ContextUsage(ctx_info));
             }
         } else if usage_percent >= 95.0 {
             // Stage 3: emergency trim without attempting compaction
@@ -491,13 +473,13 @@ impl AgentLoop {
         // (mcp_install, mcp_uninstall) with MCP server tools, and filtering by
         // "mcp_" prefix would re-inject built-in tools and cause
         // "Tool names must be unique" 400 errors.
-        if let Some(ref mut tools) = chat_request.tools {
-            if let Some(ref mcp_tools) = self.core.mcp_tools {
-                for tool in mcp_tools {
-                    let spec = tool.spec();
-                    let val = serde_json::to_value(&spec).unwrap_or_default();
-                    tools.push(val);
-                }
+        if let Some(ref mut tools) = chat_request.tools
+            && let Some(ref mcp_tools) = self.core.mcp_tools
+        {
+            for tool in mcp_tools {
+                let spec = tool.spec();
+                let val = serde_json::to_value(&spec).unwrap_or_default();
+                tools.push(val);
             }
         }
 
@@ -594,7 +576,7 @@ impl AgentLoop {
             let model_caps = self.get_model_capabilities(current_model);
             let max_output_limit = self.core.max_output_tokens_limit_for_model(current_model);
             tracing::debug!(
-                has_chunk_tx = self.core.on_chunk.is_some(),
+                has_chunk_tx = self.core.chunk_tx.is_some(),
                 has_model_caps = model_caps.is_some(),
                 has_usage = true,
                 "ContextUsage: checking preconditions"
@@ -642,7 +624,7 @@ impl AgentLoop {
                     .try_send_chunk(ChunkEvent::ContextUsage(ctx_usage))
                 {
                     tracing::debug!(
-                        "ContextUsage: on_chunk channel full/closed or session_id missing"
+                        "ContextUsage: chunk channel full/closed or session_id missing"
                     );
                 }
             } else {

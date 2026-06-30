@@ -33,7 +33,6 @@ pub async fn dispatch_grpc_request(
     conn_id: &str,
     state: &SharedState,
     session_mgr: &Arc<Mutex<SessionManager>>,
-    bridge_data_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     bridge_ctrl_tx: &Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: &Option<SessionPendingRequests>,
 ) -> proto::ServerMessage {
@@ -85,7 +84,6 @@ pub async fn dispatch_grpc_request(
                     conn_id,
                     state,
                     session_mgr,
-                    bridge_data_tx,
                     bridge_ctrl_tx,
                 )
                 .await
@@ -287,19 +285,9 @@ pub async fn dispatch_grpc_request(
                         payload["delta"] = serde_json::Value::String(content.to_string());
                     }
 
-                // P2 (ADR-020): Route by event type.
-                // L1 data (Chunk, ReasoningStarted) → bridge_data_tx (high capacity, droppable).
-                // L2/L3/L4 control → bridge_ctrl_tx (must deliver).
-                let target_tx: Option<&tokio::sync::broadcast::Sender<BridgeEvent>> =
-                    match event_type {
-                        crate::http::routes::BridgeEventType::Chunk
-                        | crate::http::routes::BridgeEventType::ReasoningStarted => {
-                            bridge_data_tx.as_ref()
-                        }
-                        _ => bridge_ctrl_tx.as_ref(),
-                    };
-
-                if let Some(tx) = target_tx {
+                // ADR-021 Phase 2: All events go through the single ctrl channel.
+                // Data channel removed — frontend polls via HTTP for message data.
+                if let Some(tx) = bridge_ctrl_tx.as_ref() {
                     let event = BridgeEvent {
                         agent_id: agent_id.clone(),
                         message_id: format!("chunk-{}", chrono::Utc::now().timestamp_millis()),

@@ -71,7 +71,7 @@ pub enum TodoStatus {
 ///
 /// ADR-014: The Runtime owns session status; the frontend is read-only.
 /// State transitions are emitted as `ChunkEvent::SessionStateChanged` via
-/// the on_chunk channel, so the Gateway and frontend stay in sync without
+/// the chunk channel, so the Gateway and frontend stay in sync without
 /// optimistic local writes.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case", tag = "status", content = "detail")]

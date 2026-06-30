@@ -398,7 +398,6 @@ pub struct GatewayGrpcService {
     /// gRPC sessions register here too so that IntentReceived push works.
     ipc_session_mgr: SharedSessionMgr,
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
-    bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
     data_flow_config: crate::config::DataFlowConfig,
@@ -446,7 +445,6 @@ impl GatewayService for GatewayGrpcService {
         let grpc_session_mgr = Arc::clone(&self.grpc_session_mgr);
         let ipc_session_mgr = Arc::clone(&self.ipc_session_mgr);
         let mut cap_rx = self.capability_tx.subscribe();
-        let bridge_data_tx = self.bridge_data_tx.clone();
         let bridge_ctrl_tx = self.bridge_ctrl_tx.clone();
         let session_pending = self.session_pending.clone();
         let conn_id_clone = conn_id.clone();
@@ -543,7 +541,6 @@ impl GatewayService for GatewayGrpcService {
                                         &conn_id_clone,
                                         &state,
                                         &ipc_session_mgr,
-                                        &bridge_data_tx,
                                         &bridge_ctrl_tx,
                                         &session_pending,
                                     ).await;
@@ -573,7 +570,6 @@ impl GatewayService for GatewayGrpcService {
                                     &conn_id_clone,
                                     &state,
                                     &ipc_session_mgr,
-                                    &bridge_data_tx,
                                     &bridge_ctrl_tx,
                                     &session_pending,
                                 ).await;
@@ -645,13 +641,13 @@ static CONN_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// This creates a `GatewayGrpcService` from the provided shared state
 /// and serves it via tonic's `Server`. The server listens on
 /// `127.0.0.1:19877` by default.
+#[allow(clippy::too_many_arguments)]
 pub async fn start_grpc_server(
     addr: SocketAddr,
     state: SharedState,
     grpc_session_mgr: SharedGrpcSessionMgr,
     ipc_session_mgr: SharedSessionMgr,
     capability_tx: tokio::sync::broadcast::Sender<GatewayResponse>,
-    bridge_data_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     bridge_ctrl_tx: Option<tokio::sync::broadcast::Sender<BridgeEvent>>,
     session_pending: Option<SessionPendingRequests>,
     data_flow_config: crate::config::DataFlowConfig,
@@ -661,7 +657,6 @@ pub async fn start_grpc_server(
         grpc_session_mgr,
         ipc_session_mgr,
         capability_tx,
-        bridge_data_tx,
         bridge_ctrl_tx,
         session_pending,
         data_flow_config,

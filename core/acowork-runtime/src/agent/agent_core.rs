@@ -11,7 +11,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use acowork_core::protocol::{ModelCapabilitiesInfo, ProviderListItem};
 use acowork_core::providers::traits::Provider;
@@ -79,25 +79,17 @@ pub struct AgentCore {
     /// Used to annotate all ChunkEvents with their origin session, eliminating
     /// the need for external relay-side injection (which had a race condition).
     pub(crate) session_id: Option<String>,
-    /// Optional streaming chunk sender (like ZeroClaw's on_delta).
-    /// When set, each StreamEvent::Content delta is forwarded here
-    /// so the caller can relay chunks to Gateway via StreamChunk.
-    pub(crate) on_chunk: Option<mpsc::Sender<crate::agent::loop_::SessionChunkEvent>>,
-    /// Dedicated control-event channel for high-priority events that MUST
-    /// reach the frontend (Stopped, SessionStateChanged, Done, Error,
-    /// ToolApprovalNeeded, AskQuestion, IterationLimitPaused).
-    ///
-    /// This channel is consumed with priority over `on_chunk` by the chunk
-    /// relay task, ensuring control events are never blocked by data-event
-    /// backpressure (e.g. a burst of ReasoningDelta chunks filling the
-    /// data channel). None in standalone mode.
-    pub(crate) control_chunk: Option<mpsc::Sender<crate::agent::loop_::SessionChunkEvent>>,
-    /// Whether this session is allowed to push data events (Delta, ReasoningDelta,
-    /// ToolCall, ToolResult) to Gateway. Control events (Stopped, Done, Error,
-    /// SessionStateChanged, etc.) are always pushed regardless of this flag.
-    /// Defaults to false — set to true by EnablePush message on session activation.
+    /// ADR-021: Single chunk sender for control events (Stopped, Done, Error,
+    /// SessionStateChanged, ToolApprovalNeeded, AskQuestion, IterationLimitPaused,
+    /// NewDataAvailable, ContextUsage, CompactingStarted, CompactingEnded).
+    /// Data events (Delta, ReasoningDelta, ToolCall, ToolResult) are no longer
+    /// pushed via channel — the frontend polls them via HTTP.
+    /// None in standalone mode.
+    pub(crate) chunk_tx: Option<mpsc::Sender<crate::agent::loop_::SessionChunkEvent>>,
+    /// Whether this session is allowed to send NewDataAvailable notifications.
+    /// Defaults to false — set to true by EnableNotify message on session activation.
     /// Uses Arc<AtomicBool> so SessionTask can modify it externally.
-    pub(crate) push_enabled: Arc<AtomicBool>,
+    pub(crate) notify_enabled: Arc<AtomicBool>,
     /// Grafeo memory store (shared across all sessions of this agent).
     /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
     /// None if initialization failed (memory features degraded gracefully).
@@ -181,6 +173,12 @@ pub struct AgentCore {
     /// `ContinueExecution` to trigger `skip_notify` and wake the retry loop.
     pub(crate) retry_wait_handle:
         Option<crate::providers::reliable::RetryWaitHandle>,
+    /// ADR-021: Shared map of in-progress streaming lines, keyed by session ID.
+    ///
+    /// Written by AgentLoop on each Delta/ReasoningDelta; read by the HTTP
+    /// handler (`read_messages_since`) on poll. Wrapped in `Arc<RwLock>` for
+    /// concurrent access across tokio tasks.
+    pub(crate) streaming_lines: crate::conversation::StreamingStateMap,
 }
 
 impl AgentCore {
@@ -197,7 +195,7 @@ impl AgentCore {
         manifest: acowork_core::AgentManifest,
         provider: Arc<dyn Provider>,
         tools: Vec<Arc<dyn Tool>>,
-        on_chunk: Option<mpsc::Sender<SessionChunkEvent>>,
+        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
         observer: crate::debug::DebugObserverSlot,
     ) -> Self {
         let initial_work_dir = config.work_dir.clone();
@@ -218,9 +216,8 @@ impl AgentCore {
             temperature_override: None,
             system_prompt_override: None,
             session_id: None,
-            on_chunk,
-            control_chunk: None,
-            push_enabled: Arc::new(AtomicBool::new(false)),
+            chunk_tx,
+            notify_enabled: Arc::new(AtomicBool::new(false)),
             memory_store: None,
             memory_session: None,
             debug_observer: observer,
@@ -239,6 +236,7 @@ impl AgentCore {
             current_work_dir: Some(initial_work_dir),
             retry_session_status: None,
             retry_wait_handle: None,
+            streaming_lines: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -252,14 +250,14 @@ impl AgentCore {
         manifest: acowork_core::AgentManifest,
         provider: Arc<dyn Provider>,
         tools: Vec<Arc<dyn Tool>>,
-        on_chunk: Option<mpsc::Sender<SessionChunkEvent>>,
+        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
     ) -> Self {
         Self::new_with_observer(
             config,
             manifest,
             provider,
             tools,
-            on_chunk,
+            chunk_tx,
             DebugObserverSlot::production(),
         )
     }
@@ -324,11 +322,6 @@ impl AgentCore {
         32_768
     }
 
-    /// Access the streaming chunk sender.
-    pub fn on_chunk(&self) -> Option<&mpsc::Sender<SessionChunkEvent>> {
-        self.on_chunk.as_ref()
-    }
-
     /// Wrap a ChunkEvent into a SessionChunkEvent using this core's session_id.
     ///
     /// Returns None if session_id is not set (should not happen in Gateway mode).
@@ -341,35 +334,14 @@ impl AgentCore {
         })
     }
 
-    /// Try-send a ChunkEvent via the on_chunk channel, wrapped with session_id.
+    /// Try-send a ChunkEvent via the chunk channel, wrapped with session_id.
     ///
-    /// Convenience method used by AgentLoop emit sites. Returns true if sent,
-    /// false if channel full/closed or session_id missing.
+    /// ADR-021: All events go through the single chunk channel. Data events
+    /// (Delta, ReasoningDelta, ToolCall, ToolResult) are no longer sent via
+    /// channel — the frontend polls them via HTTP.
     pub fn try_send_chunk(&self, event: ChunkEvent) -> bool {
-        // Auto-route: control events go to the dedicated control channel
-        // (never blocked by data backpressure); data events use the regular
-        // on_chunk channel. Falls back to on_chunk when control_chunk is None
-        // (standalone mode).
-        let is_control = event.is_control();
-
-        // P1: Background sessions only push control events; data events are
-        // silently dropped. This prevents LLM token floods from inactive
-        // sessions from consuming channel bandwidth.
-        if !is_control && !self.push_enabled.load(Ordering::Relaxed) {
-            tracing::debug!(
-                "push_enabled=false, dropping data event (session not activated)"
-            );
-            return false;
-        }
-
         if let Some(wrapped) = self.make_chunk_event(event) {
-            if is_control
-                && let Some(tx) = self.control_chunk.as_ref()
-            {
-                return tx.try_send(wrapped).is_ok();
-            }
-            // Fallback: standalone mode has no control channel, or data event
-            self.on_chunk
+            self.chunk_tx
                 .as_ref()
                 .map(|tx| tx.try_send(wrapped).is_ok())
                 .unwrap_or(false)
@@ -390,6 +362,140 @@ impl AgentCore {
             model = %model,
             "LLM provider updated at runtime (model_switch)"
         );
+    }
+
+    // ── ADR-021: StreamingStateMap helpers ─────────────────────────────────
+
+    /// Ensure a `StreamingLine` exists for this session, creating one if needed.
+    ///
+    /// The `line_number` is set to the current JSONL total line count so the
+    /// frontend knows which line this will become after flush.
+    fn ensure_streaming_line(&self, role: &str) {
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let mut map = self.streaming_lines.write().unwrap();
+        if map.contains_key(&sid) {
+            return;
+        }
+        // Determine line_number from JSONL file
+        let line_number = self
+            .current_work_dir
+            .as_ref()
+            .map(|wd| {
+                let jsonl_path = std::path::PathBuf::from(wd)
+                    .join("conversations")
+                    .join(format!("{}.jsonl", sid));
+                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        map.insert(
+            sid,
+            crate::conversation::StreamingLine {
+                line_number,
+                role: role.to_string(),
+                accumulated_content: String::new(),
+                started_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+    }
+
+    /// Append a delta to the streaming line for this session.
+    ///
+    /// Creates the streaming line if it doesn't exist yet.
+    pub(crate) fn append_streaming_delta(&self, role: &str, delta: &str) {
+        self.ensure_streaming_line(role);
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        let mut map = self.streaming_lines.write().unwrap();
+        if let Some(sl) = map.get_mut(&sid) {
+            sl.accumulated_content.push_str(delta);
+        }
+    }
+
+    /// Flush the current streaming line to JSONL and remove it from the map.
+    ///
+    /// Called on natural boundaries (tool_call, Done, Error, Stop).
+    /// Returns the flushed content if a streaming line existed.
+    ///
+    /// Note: the JSONL write (`append_message`) is performed outside the
+    /// `RwLock` write scope to avoid blocking concurrent HTTP poll reads.
+    pub(crate) fn flush_streaming_line(
+        &self,
+        conversation: Option<&crate::conversation::ConversationSession>,
+    ) -> Option<String> {
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => return None,
+        };
+        // Extract the streaming line from the map under the write lock,
+        // then drop the lock before doing any I/O.
+        let removed = {
+            let mut map = self.streaming_lines.write().unwrap();
+            map.remove(&sid)
+        };
+        let sl = removed?;
+        let content = sl.accumulated_content.clone();
+        if !content.is_empty()
+            && let Some(conv) = conversation
+        {
+            conv.append_message(&sl.role, &content, None);
+        }
+        Some(content)
+    }
+
+    /// Remove the streaming line for this session without persisting to JSONL.
+    ///
+    /// Used when the caller has already persisted the content through another
+    /// path (e.g., `handle_text_response` already wrote thought + assistant).
+    pub(crate) fn remove_streaming_line(&self) {
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => return,
+        };
+        self.streaming_lines.write().unwrap().remove(&sid);
+    }
+
+    /// Send a `NewDataAvailable` notification via the control channel.
+    ///
+    /// ADR-021: This notifies the frontend that new data is available for
+    /// polling. The frontend should trigger an HTTP poll to fetch the latest
+    /// messages and streaming line delta.
+    ///
+    /// Only sends if `notify_enabled` is true (session is activated).
+    pub(crate) fn notify_new_data_available(&self) {
+        if !self.notify_enabled.load(Ordering::Relaxed) {
+            return;
+        }
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => return,
+        };
+
+        // Read actual total_lines from the JSONL file, not from streaming_line
+        let total_lines = self
+            .current_work_dir
+            .as_ref()
+            .map(|wd| {
+                let jsonl_path = std::path::PathBuf::from(wd)
+                    .join("conversations")
+                    .join(format!("{}.jsonl", sid));
+                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
+            })
+            .unwrap_or(0);
+
+        let map = self.streaming_lines.read().unwrap();
+        let streaming_line = map.get(&sid).map(|sl| sl.line_number).unwrap_or(0);
+        drop(map);
+
+        let _ = self.try_send_chunk(ChunkEvent::NewDataAvailable {
+            session_id: sid,
+            total_lines,
+            streaming_line,
+        });
     }
 
     /// Update the embedding provider at runtime (hot-push from Gateway
@@ -773,12 +879,11 @@ impl AgentCore {
     ///
     /// Heavy fields (provider, tools, memory_store) are Arc-cloned (refcount increment),
     /// while value fields (config, manifest, capabilities) are deep-cloned.
-    /// The `on_chunk` channel and `session_id` are replaced with the caller-provided ones,
-    /// since each session needs its own streaming channel and identity.
+    /// The `chunk_tx` channel and `session_id` are replaced with the caller-provided ones,
+    /// since each session needs its own channel and identity.
     pub(crate) fn clone_for_session(
         &self,
-        on_chunk: Option<mpsc::Sender<SessionChunkEvent>>,
-        control_chunk: Option<mpsc::Sender<SessionChunkEvent>>,
+        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
         session_id: String,
     ) -> Self {
         Self {
@@ -795,9 +900,8 @@ impl AgentCore {
             temperature_override: self.temperature_override,
             system_prompt_override: self.system_prompt_override.clone(),
             session_id: Some(session_id),
-            on_chunk,
-            control_chunk,
-            push_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnablePush
+            chunk_tx,
+            notify_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnableNotify
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),
             // Debug observer is NOT cloned — each session gets a fresh
@@ -826,6 +930,9 @@ impl AgentCore {
             current_work_dir: Some(self.config.work_dir.clone()),
             retry_session_status: None, // set separately by SessionTask
             retry_wait_handle: None,    // set separately by SessionTask
+            // ADR-021: StreamingStateMap is shared across all sessions (Arc clone).
+            // Each session writes to its own key; the HTTP handler reads by session_id.
+            streaming_lines: self.streaming_lines.clone(),
         }
     }
 
@@ -903,7 +1010,7 @@ impl AgentCore {
         // Wire up 429 retry UX if the session has set up the shared state
         if let Some(status) = &self.retry_session_status
             && let Some(handle) = &self.retry_wait_handle
-            && let Some(tx) = &self.on_chunk
+            && let Some(tx) = &self.chunk_tx
             && let Some(sid) = &self.session_id
         {
             reliable = reliable.with_retry_ux(
@@ -1035,8 +1142,8 @@ mod tests {
         let provider = Arc::new(MockProvider::single_text("OK"));
         let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
         core.session_id = session_id.map(|s| s.to_string());
-        // Default to push-enabled for existing tests that predate P1 push_enabled.
-        core.push_enabled.store(true, Ordering::Relaxed);
+        // Default to notify-enabled for existing tests.
+        core.notify_enabled.store(true, Ordering::Relaxed);
         (core, rx)
     }
 
@@ -1081,7 +1188,7 @@ mod tests {
         let provider = Arc::new(MockProvider::single_text("OK"));
         let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
         core.session_id = Some("s1".to_string());
-        core.push_enabled.store(true, Ordering::Relaxed);
+        core.notify_enabled.store(true, Ordering::Relaxed);
 
         // Fill the channel
         assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::ReasoningStarted));
@@ -1108,33 +1215,65 @@ mod tests {
         assert!(wrapped.is_none());
     }
 
-    // ── P1: push_enabled filtering ──────────────────────────────────────
+    // ── ADR-021: notify_enabled controls NewDataAvailable ──────────────
 
-    /// Helper: create an AgentCore with push_enabled explicitly set.
-    fn make_core_with_push(
-        push_enabled: bool,
+    /// Helper: create an AgentCore with notify_enabled explicitly set.
+    fn make_core_with_notify(
+        notify_enabled: bool,
     ) -> (
         AgentCore,
         mpsc::Receiver<crate::agent::loop_::SessionChunkEvent>,
     ) {
         let (core, rx) = make_core_with_channel(Some("s1"));
-        core.push_enabled.store(push_enabled, Ordering::Relaxed);
+        core.notify_enabled.store(notify_enabled, Ordering::Relaxed);
         (core, rx)
     }
 
     #[test]
-    fn test_push_disabled_blocks_data_event() {
-        // push_enabled=false → data events (Delta) are silently dropped
-        let (core, _rx) = make_core_with_push(false);
-        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta(
-            "hello".to_string()
-        )));
+    fn test_notify_disabled_suppresses_new_data_available() {
+        // notify_enabled=false → NewDataAvailable is NOT sent
+        let (core, mut rx) = make_core_with_notify(false);
+        // Set up streaming_lines so notify_new_data_available has something to read
+        core.streaming_lines.write().unwrap().insert(
+            "s1".to_string(),
+            crate::conversation::StreamingLine {
+                line_number: 1,
+                accumulated_content: String::new(),
+                role: "assistant".to_string(),
+                started_at: String::new(),
+            },
+        );
+        core.notify_new_data_available();
+        // Should not have sent anything
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
-    fn test_push_disabled_allows_control_event() {
-        // push_enabled=false → control events (Done) still pass through
-        let (core, mut rx) = make_core_with_push(false);
+    fn test_notify_enabled_sends_new_data_available() {
+        // notify_enabled=true → NewDataAvailable IS sent
+        let (core, mut rx) = make_core_with_notify(true);
+        core.streaming_lines.write().unwrap().insert(
+            "s1".to_string(),
+            crate::conversation::StreamingLine {
+                line_number: 1,
+                accumulated_content: String::new(),
+                role: "assistant".to_string(),
+                started_at: String::new(),
+            },
+        );
+        core.notify_new_data_available();
+        let evt = rx.try_recv().unwrap();
+        assert!(matches!(
+            evt.event,
+            crate::agent::loop_::ChunkEvent::NewDataAvailable { .. }
+        ));
+    }
+
+    #[test]
+    fn test_try_send_chunk_always_sends_regardless_of_notify() {
+        // ADR-021: try_send_chunk no longer checks notify_enabled.
+        // All events go through the single channel.
+        let (core, mut rx) = make_core_with_notify(false);
         assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
             content: "test".to_string(),
             message_id: "msg-1".to_string(),
@@ -1143,60 +1282,6 @@ mod tests {
         assert!(matches!(
             evt.event,
             crate::agent::loop_::ChunkEvent::Done { .. }
-        ));
-    }
-
-    #[test]
-    fn test_push_enabled_allows_data_event() {
-        // push_enabled=true → data events pass through normally
-        let (core, mut rx) = make_core_with_push(true);
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Delta(
-            "hello".to_string()
-        )));
-        let evt = rx.try_recv().unwrap();
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::Delta(_)
-        ));
-    }
-
-    #[test]
-    fn test_push_disabled_blocks_reasoning_delta() {
-        // ReasoningDelta is a data event, blocked when push_enabled=false
-        let (core, _rx) = make_core_with_push(false);
-        assert!(!core.try_send_chunk(
-            crate::agent::loop_::ChunkEvent::ReasoningDelta("think".to_string())
-        ));
-    }
-
-    #[test]
-    fn test_push_disabled_allows_stopped() {
-        // Stopped is a control event, always passes
-        let (core, mut rx) = make_core_with_push(false);
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Stopped {
-            content: "user stopped".to_string()
-        }));
-        let evt = rx.try_recv().unwrap();
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::Stopped { .. }
-        ));
-    }
-
-    #[test]
-    fn test_push_disabled_allows_error() {
-        // Error is a control event, always passes
-        let (core, mut rx) = make_core_with_push(false);
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Error {
-            user_message: "fail".to_string(),
-            detail: "details".to_string(),
-            error_type: "test".to_string(),
-            message_id: "msg-err".to_string(),
-        }));
-        let evt = rx.try_recv().unwrap();
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::Error { .. }
         ));
     }
 }

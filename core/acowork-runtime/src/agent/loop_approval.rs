@@ -346,7 +346,7 @@ impl AgentLoop {
         }
     }
 
-    /// Send ToolApprovalNeeded chunk event to Gateway (via on_chunk channel).
+    /// Send ToolApprovalNeeded chunk event to Gateway (via chunk channel).
     fn send_tool_approval_needed(&self, request_id: &str, req: &ApprovalRequest) {
         let _ = self.core.try_send_chunk(ChunkEvent::ToolApprovalNeeded {
             request_id: request_id.to_string(),

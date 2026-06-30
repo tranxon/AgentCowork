@@ -488,9 +488,8 @@ pub async fn agent_stream_ws(
 async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
     tracing::info!("WebSocket connected for agent: {}", agent_id);
 
-    // P2 (ADR-020): Subscribe to both bridge channels.
-    // ctrl channel (L2/L3/L4) gets biased-select priority over data (L1).
-    let mut bridge_data_rx = state.bridge_data_tx.as_ref().map(|tx| tx.subscribe());
+    // ADR-021 Phase 2: Single bridge channel for all events.
+    // Data channel removed — frontend polls via HTTP for message data.
     let mut bridge_ctrl_rx = state.bridge_ctrl_tx.as_ref().map(|tx| tx.subscribe());
 
     // Send initial connection acknowledgment
@@ -502,11 +501,9 @@ async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
 
     loop {
         tokio::select! {
-            biased;
-
-            // Branch 1 (HIGHEST priority): Control bridge events
-            // L2/L3/L4: ToolCall, Done, Error, Stopped, SessionStateChanged, etc.
-            // These must always be delivered — never starved by L1 chunks.
+            // Branch 1: Bridge control events (all event types)
+            // ADR-021 Phase 2: Single channel — data events (Chunk, ReasoningStarted)
+            // no longer flow through WebSocket. Frontend polls via HTTP.
             ctrl_event = async {
                 match &mut bridge_ctrl_rx {
                     Some(rx) => rx.recv().await,
@@ -529,31 +526,7 @@ async fn handle_ws(mut socket: WebSocket, agent_id: String, state: AppState) {
                 }
             }
 
-            // Branch 2: Data bridge events (L1: Delta, ReasoningDelta)
-            // High frequency, droppable — Lagged is acceptable.
-            data_event = async {
-                match &mut bridge_data_rx {
-                    Some(rx) => rx.recv().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                match data_event {
-                    Ok(event) => {
-                        if event.agent_id == agent_id {
-                            forward_bridge_event(&mut socket, &event).await;
-                        }
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!("Bridge data channel lagged for {}: skipped {} events", agent_id, n);
-                    }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                        tracing::info!("Bridge data channel closed for agent: {}", agent_id);
-                        break;
-                    }
-                }
-            }
-
-            // Branch 3 (LOWEST priority): Incoming message from client
+            // Branch 2: Incoming message from client
             msg = socket.recv() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
