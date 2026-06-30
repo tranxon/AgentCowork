@@ -1,4 +1,94 @@
 {
+  "onboarding": {
+    "step": "第 {{current}} 步,共 {{total}} 步",
+    "welcome": {
+      "title": "歡迎使用",
+      "subtitle": "讓我們快速設定你的 Agent 環境",
+      "startSetup": "開始設定",
+      "skip": "已完成設定?跳過設定 →"
+    },
+    "gateway": {
+      "title": "連接 Gateway",
+      "subtitle": "選擇連接到 Gateway 的方式",
+      "modeLabel": "Gateway 模式",
+      "modeLocalRecommended": "本地(推薦)",
+      "modeLocal": "本地",
+      "modeRemote": "遠端",
+      "localHint": "Gateway 會隨 Desktop App 自動啟動",
+      "remoteHint": "連接到執行於其他機器上的 Gateway",
+      "status": "狀態:",
+      "starting": "Gateway 啟動中...",
+      "connected": "Gateway 已連接",
+      "failedToStart": "啟動失敗",
+      "notStarted": "未啟動",
+      "startFailed": "無法啟動本地 Gateway",
+      "startFailedToast": "啟動本地 Gateway 失敗",
+      "startLocalBtn": "啟動本地 Gateway",
+      "urlLabel": "Gateway URL",
+      "apply": "套用",
+      "checking": "檢測中...",
+      "connectedShort": "已連接",
+      "cannotConnect": "無法連接",
+      "testConnection": "測試連接",
+      "startingShort": "啟動中...",
+      "next": "下一步",
+      "back": "返回"
+    },
+    "apiKey": {
+      "title": "設定 LLM Provider",
+      "subtitle": "至少需要一個 Provider 才能與 Agent 對話",
+      "baseUrlPlaceholder": "Base URL",
+      "saving": "儲存中...",
+      "saved": "已儲存 ✓",
+      "save": "儲存",
+      "localProvidersLabel": "本地 Provider(無需金鑰)",
+      "localProvidersFallback": "Ollama、LM Studio",
+      "back": "返回",
+      "next": "下一步"
+    },
+    "identity": {
+      "title": "身分資訊",
+      "subtitle": "協助 Agent 更好地了解你(標 * 為必填)",
+      "nameLabel": "姓名 *",
+      "namePlaceholder": "你的姓名",
+      "languageLabel": "語言 *",
+      "timezoneLabel": "時區 *",
+      "cityLabel": "城市(選填)",
+      "occupationLabel": "職業(選填)",
+      "languages": {
+        "zh-CN": "中文(簡體)",
+        "zh-TW": "中文(繁體)",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "timezones": {
+        "Asia/Shanghai": "Asia/Shanghai",
+        "Asia/Tokyo": "Asia/Tokyo",
+        "America/New_York": "America/New_York",
+        "America/Los_Angeles": "America/Los_Angeles",
+        "Europe/London": "Europe/London",
+        "UTC": "UTC"
+      },
+      "back": "返回",
+      "next": "下一步"
+    },
+    "installAgent": {
+      "title": "安裝你的第一個 Agent",
+      "subtitle": "選擇推薦的內建 Agent,或從本地安裝包安裝",
+      "recommendedTitle": "推薦 Agent",
+      "recommendedSubtitle": "選擇一個或多個內建 Agent 進行安裝",
+      "clear": "清空",
+      "selectAll": "全選",
+      "installSelected": "安裝所選({{count}})",
+      "installing": "正在安裝:{{name}}",
+      "installSelectedInstalling": "正在安裝 {{name}}...",
+      "fromFileTitle": "從 .agent 檔案安裝",
+      "fromFileSubtitle": "從你的電腦上選擇一個 .agent 安裝包",
+      "complete": "完成 →",
+      "back": "返回"
+    }
+  },
   "titleBar": {
     "collapseRightPanel": "Collapse Right Panel",
     "expandRightPanel": "Expand Right Panel"
@@ -656,6 +746,27 @@
     "thinking": "正在思考",
     "thought": "深度思考"
   },
+  "tools": {
+    "memory_recall": { "running": "回憶中", "done": "已回憶" },
+    "memory_store": { "running": "記憶中", "done": "已記憶" },
+    "http_request": { "running": "請求中", "done": "已請求" },
+    "web_fetch": { "running": "取得網頁中", "done": "已取得網頁" },
+    "web_search": { "running": "搜尋網頁中", "done": "已搜尋網頁" },
+    "file_read": { "running": "讀取檔案中", "done": "已讀取檔案" },
+    "file_write": { "running": "寫入檔案中", "done": "已寫入檔案" },
+    "file_edit": { "running": "編輯檔案中", "done": "已編輯檔案" },
+    "doc_reader": { "running": "讀取文件中", "done": "已讀取文件" },
+    "glob_search": { "running": "匹配檔案中", "done": "已匹配檔案" },
+    "content_search": { "running": "搜尋內容中", "done": "已搜尋內容" },
+    "intent_send": { "running": "發送意圖中", "done": "已發送意圖" },
+    "ask_user_question": { "running": "詢問中", "done": "已詢問" },
+    "todo_write": { "running": "更新待辦中", "done": "已更新待辦" },
+    "mcp_install": { "running": "安裝 MCP 中", "done": "已安裝 MCP" },
+    "mcp_uninstall": { "running": "解除安裝 MCP 中", "done": "已解除安裝 MCP" },
+    "rag_query": { "running": "檢索知識庫中", "done": "已檢索知識庫" },
+    "codebase": { "running": "搜尋程式碼中", "done": "已搜尋程式碼" },
+    "shell": { "running": "執行命令中", "done": "已執行命令" }
+  },
   "askQuestionCard": {
     "other": "其他",
     "placeholder": "輸入你的回答...",
@@ -729,10 +840,6 @@
     "statusStable": "穩定",
     "statusDecaying": "衰退中",
     "statusCritical": "關鍵"
-  },
-  "modelsPage": {
-    "title": "模型",
-    "labelProvider": "服務商"
   },
   "agentDetailDialog": {
     "ariaLabelClose": "關閉",

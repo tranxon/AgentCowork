@@ -105,6 +105,96 @@
     "agentRunning": "Agent running",
     "compressContext": "compact context"
   },
+  "onboarding": {
+    "step": "Step {{current}} of {{total}}",
+    "welcome": {
+      "title": "Welcome to",
+      "subtitle": "Let's quickly set up your Agent environment",
+      "startSetup": "Start Setup",
+      "skip": "Already configured? Skip setup →"
+    },
+    "gateway": {
+      "title": "Connect to Gateway",
+      "subtitle": "Choose how you want to connect to the Gateway",
+      "modeLabel": "Gateway Mode",
+      "modeLocalRecommended": "Local (recommended)",
+      "modeLocal": "Local",
+      "modeRemote": "Remote",
+      "localHint": "Gateway starts automatically with the Desktop App",
+      "remoteHint": "Connect to a Gateway running on another machine",
+      "status": "Status:",
+      "starting": "Starting Gateway...",
+      "connected": "Gateway Connected",
+      "failedToStart": "Failed to start",
+      "notStarted": "Not started",
+      "startFailed": "Could not start local Gateway",
+      "startFailedToast": "Failed to start local Gateway",
+      "startLocalBtn": "Start Local Gateway",
+      "urlLabel": "Gateway URL",
+      "apply": "Apply",
+      "checking": "Checking...",
+      "connectedShort": "Connected",
+      "cannotConnect": "Cannot connect",
+      "testConnection": "Test Connection",
+      "startingShort": "Starting...",
+      "next": "Next",
+      "back": "Back"
+    },
+    "apiKey": {
+      "title": "Configure LLM Provider",
+      "subtitle": "At least one provider is needed to chat with Agents",
+      "baseUrlPlaceholder": "Base URL",
+      "saving": "Saving...",
+      "saved": "Saved ✓",
+      "save": "Save",
+      "localProvidersLabel": "Local Providers (no key needed)",
+      "localProvidersFallback": "Ollama, LM Studio",
+      "back": "Back",
+      "next": "Next"
+    },
+    "identity": {
+      "title": "Identity Information",
+      "subtitle": "Help Agents understand you better (required fields marked *)",
+      "nameLabel": "Name *",
+      "namePlaceholder": "Your Name",
+      "languageLabel": "Language *",
+      "timezoneLabel": "Timezone *",
+      "cityLabel": "City (optional)",
+      "occupationLabel": "Occupation (optional)",
+      "languages": {
+        "zh-CN": "中文 (简体)",
+        "zh-TW": "中文 (繁體)",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "timezones": {
+        "Asia/Shanghai": "Asia/Shanghai",
+        "Asia/Tokyo": "Asia/Tokyo",
+        "America/New_York": "America/New_York",
+        "America/Los_Angeles": "America/Los_Angeles",
+        "Europe/London": "Europe/London",
+        "UTC": "UTC"
+      },
+      "back": "Back",
+      "next": "Next"
+    },
+    "installAgent": {
+      "title": "Install Your First Agent",
+      "subtitle": "Choose recommended built-in agents or install a local package",
+      "recommendedTitle": "Recommended Agents",
+      "recommendedSubtitle": "Select one or more built-in agents to install",
+      "clear": "Clear",
+      "selectAll": "Select all",
+      "installSelected": "Install selected ({{count}})",
+      "installing": "Installing: {{name}}",
+      "installSelectedInstalling": "Installing {{name}}...",
+      "fromFileTitle": "Install from .agent file",
+      "fromFileSubtitle": "Select a .agent package from your computer",
+      "complete": "Complete →",
+      "back": "Back"
+    }
+  },
   "agentList": {
     "doubleClickToStart": "Double-click to start",
     "searchPlaceholder": "Search agents...",
@@ -255,10 +345,6 @@
     "buttonImport": "Import",
     "buttonImportSkills": "Import Skills",
     "searchPlaceholder": "Search skills..."
-  },
-  "modelsPage": {
-    "title": "Models",
-    "labelProvider": "Provider"
   },
   "debugPanel": {
     "editSection": "Edit section",
@@ -716,6 +802,27 @@
   "thinkBlock": {
     "thinking": "Thinking",
     "thought": "Thought"
+  },
+  "tools": {
+    "memory_recall": { "running": "Recalling", "done": "Recalled" },
+    "memory_store": { "running": "Storing", "done": "Stored" },
+    "http_request": { "running": "Requesting", "done": "Requested" },
+    "web_fetch": { "running": "Fetching", "done": "Fetched" },
+    "web_search": { "running": "Searching the web", "done": "Searched the web" },
+    "file_read": { "running": "Reading", "done": "Read" },
+    "file_write": { "running": "Writing", "done": "Written" },
+    "file_edit": { "running": "Editing", "done": "Edited" },
+    "doc_reader": { "running": "Reading document", "done": "Read document" },
+    "glob_search": { "running": "Globbing", "done": "Globbed" },
+    "content_search": { "running": "Searching content", "done": "Searched content" },
+    "intent_send": { "running": "Sending intent", "done": "Sent intent" },
+    "ask_user_question": { "running": "Asking", "done": "Asked" },
+    "todo_write": { "running": "Updating todos", "done": "Updated todos" },
+    "mcp_install": { "running": "Installing", "done": "Installed" },
+    "mcp_uninstall": { "running": "Uninstalling", "done": "Uninstalled" },
+    "rag_query": { "running": "Querying", "done": "Queried" },
+    "codebase": { "running": "Searching code", "done": "Searched code" },
+    "shell": { "running": "Running", "done": "Ran" }
   },
   "askQuestionCard": {
     "other": "Other",

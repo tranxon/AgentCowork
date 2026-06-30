@@ -1,11 +1,10 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import type { VaultKeyEntry, ModelInfo, ModelCapabilitiesInfo, ProviderListEntry } from "../../lib/types";
-import { cn } from "../../lib/utils";
 import { StyledInput } from "../common/StyledInput";
 import { needsApiKey, keyPlaceholder, isLocalProvider } from "../../lib/providers";
 import { fetchProviderModels, discoverModels, fetchProviders } from "../../lib/gateway-api";
-import { ModelCapEditor } from "./ModelCapEditor";
+import { ModelMultiSelect } from "./ModelMultiSelect";
 import { ProviderPicker } from "./ProviderPicker";
 import { useTranslation } from "../../i18n/useTranslation";
 import { ChevronLeft } from "lucide-react";
@@ -49,8 +48,6 @@ export function AddProviderFlow({
   const [newModels, setNewModels] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelSearchTerm, setModelSearchTerm] = useState("");
-  const [modelCapabilityFilter, setModelCapabilityFilter] = useState<string[]>([]);
   const [newModelCaps, setNewModelCaps] = useState<Record<string, ModelCapabilitiesInfo>>({});
   const [newExpandedModels, setNewExpandedModels] = useState<Set<string>>(new Set());
   const [newCompactModel, setNewCompactModel] = useState("");
@@ -66,7 +63,6 @@ export function AddProviderFlow({
   const [customAvailableModels, setCustomAvailableModels] = useState<ModelInfo[]>([]);
   const [customModelsLoading, setCustomModelsLoading] = useState(false);
   const [customDiscoverError, setCustomDiscoverError] = useState<string | null>(null);
-  const [customModelSearchTerm, setCustomModelSearchTerm] = useState("");
   const [customTesting, setCustomTesting] = useState(false);
   const [customModelCaps, setCustomModelCaps] = useState<Record<string, ModelCapabilitiesInfo>>({});
   const [customExpandedModels, setCustomExpandedModels] = useState<Set<string>>(new Set());
@@ -126,62 +122,6 @@ export function AddProviderFlow({
   }, [open]);
 
   // ── Helpers ──
-  const makeDefaultCaps = (mi: ModelInfo | undefined): ModelCapabilitiesInfo => {
-    if (mi && (mi.context_window || mi.max_tokens)) {
-      return {
-        context_window: mi.context_window ?? 128000,
-        max_output_tokens: mi.max_tokens ?? 16384,
-        supports_tool_calling: mi.tool_call ?? true,
-        supports_reasoning: mi.reasoning ?? false,
-        modalities: {
-          input: mi.input_modalities ?? ["text"],
-          output: mi.output_modalities ?? ["text"],
-        },
-      };
-    }
-    return {
-      context_window: 128000,
-      max_output_tokens: 16384,
-      supports_tool_calling: true,
-      supports_reasoning: false,
-      modalities: { input: ["text"], output: ["text"] },
-    };
-  };
-
-  const toggleNewModel = (model: string) => {
-    if (newModels.includes(model)) {
-      setNewModels(newModels.filter(m => m !== model));
-      const next = { ...newModelCaps };
-      delete next[model];
-      setNewModelCaps(next);
-    } else {
-      setNewModels([...newModels, model]);
-      const mi = availableModels.find(m => m.id === model);
-      setNewModelCaps({ ...newModelCaps, [model]: makeDefaultCaps(mi) });
-    }
-  };
-
-  const toggleCustomModel = (model: string) => {
-    if (customModels.includes(model)) {
-      setCustomModels(customModels.filter(m => m !== model));
-      const next = { ...customModelCaps };
-      delete next[model];
-      setCustomModelCaps(next);
-    } else {
-      setCustomModels([...customModels, model]);
-      const mi = customAvailableModels.find(m => m.id === model);
-      setCustomModelCaps({ ...customModelCaps, [model]: makeDefaultCaps(mi) });
-    }
-  };
-
-  const updateNewModelCap = (modelId: string, field: keyof ModelCapabilitiesInfo, value: unknown) => {
-    setNewModelCaps(prev => ({ ...prev, [modelId]: { ...prev[modelId], [field]: value } }));
-  };
-
-  const updateCustomModelCap = (modelId: string, field: keyof ModelCapabilitiesInfo, value: unknown) => {
-    setCustomModelCaps(prev => ({ ...prev, [modelId]: { ...prev[modelId], [field]: value } }));
-  };
-
   const slugifyProviderId = (name: string): string => {
     return "custom-" + name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   };
@@ -196,8 +136,6 @@ export function AddProviderFlow({
     setNewExpandedModels(new Set());
     setNewCompactModel("");
     setTestResult(null);
-    setModelSearchTerm("");
-    setModelCapabilityFilter([]);
     setStep("add");
     setModelsLoading(true);
     fetchModels(providerId).then((models) => {
@@ -215,7 +153,6 @@ export function AddProviderFlow({
     setCustomModels([]);
     setCustomAvailableModels([]);
     setCustomDiscoverError(null);
-    setCustomModelSearchTerm("");
     setCustomModelCaps({});
     setCustomExpandedModels(new Set());
     setStep("custom");
@@ -413,200 +350,28 @@ export function AddProviderFlow({
                 />
               </div>
 
-              {/* Model selection */}
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">
-                  {t("harness.defaultModel")} {newModels.length > 0 && <span className="text-accent-green">({newModels.length} {t("harness.selected")})</span>}
-                </label>
-
-                {/* Capability filters */}
-                <div className="mb-2 flex gap-2">
-                  <button
-                    onClick={() => setModelCapabilityFilter(
-                      modelCapabilityFilter.includes('tool_call')
-                        ? modelCapabilityFilter.filter(f => f !== 'tool_call')
-                        : [...modelCapabilityFilter, 'tool_call']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      modelCapabilityFilter.includes('tool_call')
-                        ? "bg-accent-green/10 text-accent-green"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🔧 {t("harness.toolCalling")}
-                  </button>
-                  <button
-                    onClick={() => setModelCapabilityFilter(
-                      modelCapabilityFilter.includes('reasoning')
-                        ? modelCapabilityFilter.filter(f => f !== 'reasoning')
-                        : [...modelCapabilityFilter, 'reasoning']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      modelCapabilityFilter.includes('reasoning')
-                        ? "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🧠 {t("harness.reasoning")}
-                  </button>
-                  <button
-                    onClick={() => setModelCapabilityFilter(
-                      modelCapabilityFilter.includes('image')
-                        ? modelCapabilityFilter.filter(f => f !== 'image')
-                        : [...modelCapabilityFilter, 'image']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      modelCapabilityFilter.includes('image')
-                        ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🖼️ {t("harness.image")}
-                  </button>
-                </div>
-
-                {/* Selected models as tags */}
-                {newModels.length > 0 && (
-                  <div className="mb-1 flex flex-wrap gap-1">
-                    {newModels.map((m) => (
-                      <span key={m} className="inline-flex items-center gap-1 rounded bg-accent-green/10 px-2 py-0.5 text-xs text-accent-green">
-                        {m}
-                        <button onClick={() => toggleNewModel(m)} className="text-accent-green/60 hover:text-accent-green">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-
-                <StyledInput
-                  type="text"
-                  value={modelSearchTerm}
-                  onChange={(e) => setModelSearchTerm(e.target.value)}
-                  placeholder={t("harness.searchModels")}
-                />
-
-                <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
-                  {modelsLoading ? (
-                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.loadingModels")}</div>
-                  ) : (
-                    availableModels
-                      .filter((m) => {
-                        const matchesSearch = !modelSearchTerm ||
-                          m.id.toLowerCase().includes(modelSearchTerm.toLowerCase()) ||
-                          m.name.toLowerCase().includes(modelSearchTerm.toLowerCase());
-                        const matchesCapabilities = modelCapabilityFilter.length === 0 ||
-                          modelCapabilityFilter.every(filter => {
-                            if (filter === 'tool_call') return m.tool_call === true;
-                            if (filter === 'reasoning') return m.reasoning === true;
-                            if (filter === 'image') return m.input_modalities?.includes('image') ?? false;
-                            return true;
-                          });
-                        return matchesSearch && matchesCapabilities;
-                      })
-                      .map((m) => (
-                        <label
-                          key={m.id}
-                          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={newModels.includes(m.id)}
-                            onChange={() => toggleNewModel(m.id)}
-                            className="accent-[var(--color-accent)]"
-                          />
-                          <div className="flex flex-1 flex-col gap-0.5">
-                            <span className="truncate">{m.name || m.id}</span>
-                            <div className="flex gap-2 text-xs text-zinc-400">
-                              {m.context_window && (
-                                <span>{(m.context_window / 1000).toFixed(0)}K {t("harness.context")}</span>
-                              )}
-                              {m.max_tokens && (
-                                <span>{(m.max_tokens / 1000).toFixed(1)}K {t("harness.maxOutput")}</span>
-                              )}
-                              {m.reasoning && <span>🧠 {t("harness.reasoning")}</span>}
-                              {m.tool_call && <span>🔧 {t("harness.tools")}</span>}
-                              {m.input_modalities?.includes('image') && <span>🖼️ {t("harness.image")}</span>}
-                            </div>
-                          </div>
-                        </label>
-                      ))
-                  )}
-                  {!modelsLoading && availableModels.length === 0 && (
-                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.noModelsFound")}</div>
-                  )}
-                </div>
-
-                {/* Manual model input */}
-                <div className="mt-2 flex gap-1">
-                  <StyledInput
-                    type="text"
-                    placeholder={t("harness.customModelPlaceholder")}
-                    className="flex-1"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const val = (e.target as HTMLInputElement).value.trim();
-                        if (val && !newModels.includes(val)) {
-                          setNewModels([...newModels, val]);
-                          setNewModelCaps(prev => ({ ...prev, [val]: makeDefaultCaps(undefined) }));
-                          (e.target as HTMLInputElement).value = "";
-                        }
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Per-model capabilities (local providers only) */}
-              {selectedProviderIsLocal && newModels.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-500">
-                    {t("harness.modelCapabilities")}
-                    <span className="ml-1 text-xs text-amber-500">({t("harness.manualInputRequired")})</span>
-                  </label>
-                  <div className="space-y-1">
-                    {newModels.map(modelId => {
-                      const caps = newModelCaps[modelId];
-                      if (!caps) return null;
-                      return (
-                        <ModelCapEditor
-                          key={modelId}
-                          modelId={modelId}
-                          caps={caps}
-                          expanded={newExpandedModels.has(modelId)}
-                          onToggle={() => setNewExpandedModels(prev => {
-                            const next = new Set(prev);
-                            if (next.has(modelId)) next.delete(modelId);
-                            else next.add(modelId);
-                            return next;
-                          })}
-                          onUpdate={(field, value) => updateNewModelCap(modelId, field, value)}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {/* Compact model */}
-              {newModels.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-500">
-                    {t("harness.compactModel")}
-                  </label>
-                  <select
-                    value={newCompactModel}
-                    onChange={(e) => setNewCompactModel(e.target.value)}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                  >
-                    <option value="">{t("harness.useCurrentModel")}</option>
-                    {newModels.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
+              {/* Model selection (shared multi-select component) */}
+              <ModelMultiSelect
+                models={availableModels}
+                loading={modelsLoading}
+                selected={newModels}
+                onSelectedChange={setNewModels}
+                caps={newModelCaps}
+                onCapsChange={setNewModelCaps}
+                expandedModels={newExpandedModels}
+                onExpandedToggle={(modelId) =>
+                  setNewExpandedModels((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(modelId)) next.delete(modelId);
+                    else next.add(modelId);
+                    return next;
+                  })
+                }
+                showModelCapEditor={selectedProviderIsLocal}
+                compactModel={newCompactModel}
+                onCompactModelChange={setNewCompactModel}
+                showCompactModel={true}
+              />
 
               {/* Test result */}
               {testResult && testResult.success && (
@@ -684,111 +449,27 @@ export function AddProviderFlow({
                 <ErrorBox message={`${t("harness.discoverFailed")}: ${customDiscoverError}`} />
               )}
 
-              {/* Model selection */}
+              {/* Model selection (shared multi-select component) — only after discover */}
               {customAvailableModels.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-500">
-                    {t("harness.defaultModel")} {customModels.length > 0 && <span className="text-accent-green">({customModels.length} {t("harness.selected")})</span>}
-                  </label>
-                  {customModels.length > 0 && (
-                    <div className="mb-1 flex flex-wrap gap-1">
-                      {customModels.map((m) => (
-                        <span key={m} className="inline-flex items-center gap-1 rounded bg-accent-green/10 px-2 py-0.5 text-xs text-accent-green">
-                          {m}
-                          <button onClick={() => toggleCustomModel(m)} className="text-accent-green/60 hover:text-accent-green">×</button>
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                  <StyledInput
-                    type="text"
-                    value={customModelSearchTerm}
-                    onChange={(e) => setCustomModelSearchTerm(e.target.value)}
-                    placeholder={t("harness.searchModels")}
-                  />
-                  <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
-                    {customAvailableModels
-                      .filter((m) => {
-                        if (!customModelSearchTerm) return true;
-                        const term = customModelSearchTerm.toLowerCase();
-                        return m.id.toLowerCase().includes(term) || m.name.toLowerCase().includes(term);
-                      })
-                      .map((m) => (
-                        <label
-                          key={m.id}
-                          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={customModels.includes(m.id)}
-                            onChange={() => toggleCustomModel(m.id)}
-                            className="accent-[var(--color-accent)]"
-                          />
-                          <div className="flex flex-1 flex-col gap-0.5">
-                            <span className="truncate">{m.name || m.id}</span>
-                            <div className="flex gap-2 text-xs text-zinc-400">
-                              {m.context_window && (
-                                <span>{(m.context_window / 1000).toFixed(0)}K {t("harness.context")}</span>
-                              )}
-                              {m.max_tokens && (
-                                <span>{(m.max_tokens / 1000).toFixed(1)}K {t("harness.maxOutput")}</span>
-                              )}
-                              {m.reasoning && <span>🧠 {t("harness.reasoning")}</span>}
-                              {m.tool_call && <span>🔧 {t("harness.tools")}</span>}
-                            </div>
-                          </div>
-                        </label>
-                      ))}
-                  </div>
-                  <div className="mt-2 flex gap-1">
-                    <StyledInput
-                      type="text"
-                      placeholder={t("harness.customModelPlaceholder")}
-                      className="flex-1"
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const val = (e.target as HTMLInputElement).value.trim();
-                          if (val && !customModels.includes(val)) {
-                            setCustomModels([...customModels, val]);
-                            setCustomModelCaps(prev => ({ ...prev, [val]: makeDefaultCaps(undefined) }));
-                            (e.target as HTMLInputElement).value = "";
-                          }
-                        }
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {/* Per-model capabilities */}
-              {customModels.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-500">
-                    {t("harness.modelCapabilities")}
-                    <span className="ml-1 text-xs text-amber-500">({t("harness.manualInputRequired")})</span>
-                  </label>
-                  <div className="space-y-1">
-                    {customModels.map(modelId => {
-                      const caps = customModelCaps[modelId];
-                      if (!caps) return null;
-                      return (
-                        <ModelCapEditor
-                          key={modelId}
-                          modelId={modelId}
-                          caps={caps}
-                          expanded={customExpandedModels.has(modelId)}
-                          onToggle={() => setCustomExpandedModels(prev => {
-                            const next = new Set(prev);
-                            if (next.has(modelId)) next.delete(modelId);
-                            else next.add(modelId);
-                            return next;
-                          })}
-                          onUpdate={(field, value) => updateCustomModelCap(modelId, field, value)}
-                        />
-                      );
-                    })}
-                  </div>
-                </div>
+                <ModelMultiSelect
+                  models={customAvailableModels}
+                  selected={customModels}
+                  onSelectedChange={setCustomModels}
+                  caps={customModelCaps}
+                  onCapsChange={setCustomModelCaps}
+                  expandedModels={customExpandedModels}
+                  onExpandedToggle={(modelId) =>
+                    setCustomExpandedModels((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(modelId)) next.delete(modelId);
+                      else next.add(modelId);
+                      return next;
+                    })
+                  }
+                  showModelCapEditor={true}
+                  showCapabilityFilter={false}
+                  showCompactModel={false}
+                />
               )}
             </div>
           )}

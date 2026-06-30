@@ -1,4 +1,94 @@
 {
+  "onboarding": {
+    "step": "{{total}}단계 중 {{current}}단계",
+    "welcome": {
+      "title": "환영합니다",
+      "subtitle": "Agent 환경을 빠르게 설정해 보겠습니다",
+      "startSetup": "설정 시작",
+      "skip": "이미 설정하셨나요? 설정 건너뛰기 →"
+    },
+    "gateway": {
+      "title": "Gateway 연결",
+      "subtitle": "Gateway 연결 방법을 선택하세요",
+      "modeLabel": "Gateway 모드",
+      "modeLocalRecommended": "로컬(권장)",
+      "modeLocal": "로컬",
+      "modeRemote": "원격",
+      "localHint": "Gateway는 Desktop App과 함께 자동으로 시작됩니다",
+      "remoteHint": "다른 컴퓨터에서 실행 중인 Gateway에 연결",
+      "status": "상태:",
+      "starting": "Gateway 시작 중...",
+      "connected": "Gateway 연결됨",
+      "failedToStart": "시작 실패",
+      "notStarted": "시작되지 않음",
+      "startFailed": "로컬 Gateway를 시작할 수 없습니다",
+      "startFailedToast": "로컬 Gateway 시작 실패",
+      "startLocalBtn": "로컬 Gateway 시작",
+      "urlLabel": "Gateway URL",
+      "apply": "적용",
+      "checking": "확인 중...",
+      "connectedShort": "연결됨",
+      "cannotConnect": "연결할 수 없음",
+      "testConnection": "연결 테스트",
+      "startingShort": "시작 중...",
+      "next": "다음",
+      "back": "뒤로"
+    },
+    "apiKey": {
+      "title": "LLM Provider 설정",
+      "subtitle": "Agent와 대화하려면 최소 하나의 Provider가 필요합니다",
+      "baseUrlPlaceholder": "Base URL",
+      "saving": "저장 중...",
+      "saved": "저장됨 ✓",
+      "save": "저장",
+      "localProvidersLabel": "로컬 Provider(키 불필요)",
+      "localProvidersFallback": "Ollama, LM Studio",
+      "back": "뒤로",
+      "next": "다음"
+    },
+    "identity": {
+      "title": "프로필 정보",
+      "subtitle": "Agent가 사용자를 더 잘 이해할 수 있도록 도와주세요(* 표시는 필수 항목)",
+      "nameLabel": "이름 *",
+      "namePlaceholder": "당신의 이름",
+      "languageLabel": "언어 *",
+      "timezoneLabel": "시간대 *",
+      "cityLabel": "도시(선택 사항)",
+      "occupationLabel": "직업(선택 사항)",
+      "languages": {
+        "zh-CN": "中文(简体)",
+        "zh-TW": "中文(繁體)",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "timezones": {
+        "Asia/Shanghai": "Asia/Shanghai",
+        "Asia/Tokyo": "Asia/Tokyo",
+        "America/New_York": "America/New_York",
+        "America/Los_Angeles": "America/Los_Angeles",
+        "Europe/London": "Europe/London",
+        "UTC": "UTC"
+      },
+      "back": "뒤로",
+      "next": "다음"
+    },
+    "installAgent": {
+      "title": "첫 번째 Agent 설치",
+      "subtitle": "추천 내장 Agent를 선택하거나 로컬 패키지에서 설치",
+      "recommendedTitle": "추천 Agent",
+      "recommendedSubtitle": "설치할 내장 Agent를 하나 이상 선택",
+      "clear": "비우기",
+      "selectAll": "모두 선택",
+      "installSelected": "선택한 항목 설치 ({{count}})",
+      "installing": "설치 중: {{name}}",
+      "installSelectedInstalling": "{{name}} 설치 중...",
+      "fromFileTitle": ".agent 파일에서 설치",
+      "fromFileSubtitle": "컴퓨터에서 .agent 패키지를 선택하세요",
+      "complete": "완료 →",
+      "back": "뒤로"
+    }
+  },
   "titleBar": {
     "collapseRightPanel": "Collapse Right Panel",
     "expandRightPanel": "Expand Right Panel"
@@ -656,6 +746,27 @@
     "thinking": "생각 중",
     "thought": "심층 사고"
   },
+  "tools": {
+    "memory_recall": { "running": "기억 회상 중", "done": "기억 회상 완료" },
+    "memory_store": { "running": "저장 중", "done": "저장됨" },
+    "http_request": { "running": "요청 중", "done": "요청됨" },
+    "web_fetch": { "running": "웹 페이지 가져오는 중", "done": "웹 페이지 가져옴" },
+    "web_search": { "running": "웹 검색 중", "done": "웹 검색 완료" },
+    "file_read": { "running": "파일 읽는 중", "done": "파일 읽음" },
+    "file_write": { "running": "파일 쓰는 중", "done": "파일 썼음" },
+    "file_edit": { "running": "파일 편집 중", "done": "파일 편집됨" },
+    "doc_reader": { "running": "문서 읽는 중", "done": "문서 읽음" },
+    "glob_search": { "running": "파일 패턴 매칭 중", "done": "파일 패턴 매칭 완료" },
+    "content_search": { "running": "내용 검색 중", "done": "내용 검색 완료" },
+    "intent_send": { "running": "인텐트 전송 중", "done": "인텐트 전송됨" },
+    "ask_user_question": { "running": "질문 중", "done": "질문 완료" },
+    "todo_write": { "running": "할 일 업데이트 중", "done": "할 일 업데이트됨" },
+    "mcp_install": { "running": "MCP 설치 중", "done": "MCP 설치됨" },
+    "mcp_uninstall": { "running": "MCP 제거 중", "done": "MCP 제거됨" },
+    "rag_query": { "running": "지식 베이스 조회 중", "done": "지식 베이스 조회 완료" },
+    "codebase": { "running": "코드 검색 중", "done": "코드 검색 완료" },
+    "shell": { "running": "실행 중", "done": "실행 완료" }
+  },
   "askQuestionCard": {
     "other": "기타",
     "placeholder": "답변을 입력하세요...",
@@ -729,10 +840,6 @@
     "statusStable": "안정",
     "statusDecaying": "쇠퇴 중",
     "statusCritical": "중요"
-  },
-  "modelsPage": {
-    "title": "모델",
-    "labelProvider": "공급자"
   },
   "agentDetailDialog": {
     "ariaLabelClose": "닫기",

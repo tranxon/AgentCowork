@@ -1,4 +1,94 @@
 {
+  "onboarding": {
+    "step": "ステップ {{current}} / {{total}}",
+    "welcome": {
+      "title": "ようこそ",
+      "subtitle": "Agent 環境をすぐにセットアップしましょう",
+      "startSetup": "セットアップ開始",
+      "skip": "設定済み?セットアップをスキップ →"
+    },
+    "gateway": {
+      "title": "Gateway に接続",
+      "subtitle": "Gateway への接続方法を選択してください",
+      "modeLabel": "Gateway モード",
+      "modeLocalRecommended": "ローカル(推奨)",
+      "modeLocal": "ローカル",
+      "modeRemote": "リモート",
+      "localHint": "Gateway は Desktop App と共に自動起動します",
+      "remoteHint": "他のマシンで動作する Gateway に接続します",
+      "status": "状態:",
+      "starting": "Gateway 起動中...",
+      "connected": "Gateway 接続済み",
+      "failedToStart": "起動失敗",
+      "notStarted": "未起動",
+      "startFailed": "ローカル Gateway を起動できません",
+      "startFailedToast": "ローカル Gateway の起動に失敗しました",
+      "startLocalBtn": "ローカル Gateway を起動",
+      "urlLabel": "Gateway URL",
+      "apply": "適用",
+      "checking": "確認中...",
+      "connectedShort": "接続済み",
+      "cannotConnect": "接続できません",
+      "testConnection": "接続をテスト",
+      "startingShort": "起動中...",
+      "next": "次へ",
+      "back": "戻る"
+    },
+    "apiKey": {
+      "title": "LLM Provider を設定",
+      "subtitle": "Agent と会話するには少なくとも 1 つの Provider が必要です",
+      "baseUrlPlaceholder": "Base URL",
+      "saving": "保存中...",
+      "saved": "保存しました ✓",
+      "save": "保存",
+      "localProvidersLabel": "ローカル Provider(キー不要)",
+      "localProvidersFallback": "Ollama、LM Studio",
+      "back": "戻る",
+      "next": "次へ"
+    },
+    "identity": {
+      "title": "プロフィール情報",
+      "subtitle": "Agent があなたをより理解するための情報(* は必須項目)",
+      "nameLabel": "名前 *",
+      "namePlaceholder": "あなたの名前",
+      "languageLabel": "言語 *",
+      "timezoneLabel": "タイムゾーン *",
+      "cityLabel": "都市(任意)",
+      "occupationLabel": "職業(任意)",
+      "languages": {
+        "zh-CN": "中文(简体)",
+        "zh-TW": "中文(繁體)",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "timezones": {
+        "Asia/Shanghai": "Asia/Shanghai",
+        "Asia/Tokyo": "Asia/Tokyo",
+        "America/New_York": "America/New_York",
+        "America/Los_Angeles": "America/Los_Angeles",
+        "Europe/London": "Europe/London",
+        "UTC": "UTC"
+      },
+      "back": "戻る",
+      "next": "次へ"
+    },
+    "installAgent": {
+      "title": "最初の Agent をインストール",
+      "subtitle": "推奨の内蔵 Agent を選択するか、ローカルパッケージからインストール",
+      "recommendedTitle": "推奨 Agent",
+      "recommendedSubtitle": "インストールする内蔵 Agent を 1 つ以上選択",
+      "clear": "クリア",
+      "selectAll": "すべて選択",
+      "installSelected": "選択したものをインストール ({{count}})",
+      "installing": "インストール中:{{name}}",
+      "installSelectedInstalling": "{{name}} をインストール中...",
+      "fromFileTitle": ".agent ファイルからインストール",
+      "fromFileSubtitle": "コンピューターから .agent パッケージを選択",
+      "complete": "完了 →",
+      "back": "戻る"
+    }
+  },
   "titleBar": {
     "collapseRightPanel": "Collapse Right Panel",
     "expandRightPanel": "Expand Right Panel"
@@ -658,6 +748,27 @@
     "thinking": "思考中",
     "thought": "深い思考"
   },
+  "tools": {
+    "memory_recall": { "running": "記憶を思い出し中", "done": "記憶を思い出した" },
+    "memory_store": { "running": "保存中", "done": "保存済み" },
+    "http_request": { "running": "リクエスト中", "done": "リクエスト済み" },
+    "web_fetch": { "running": "ウェブページ取得中", "done": "ウェブページ取得済み" },
+    "web_search": { "running": "ウェブ検索中", "done": "ウェブ検索済み" },
+    "file_read": { "running": "ファイル読み込み中", "done": "ファイル読み込み済み" },
+    "file_write": { "running": "ファイル書き込み中", "done": "ファイル書き込み済み" },
+    "file_edit": { "running": "ファイル編集中", "done": "ファイル編集済み" },
+    "doc_reader": { "running": "文書読み込み中", "done": "文書読み込み済み" },
+    "glob_search": { "running": "ファイルパターンマッチ中", "done": "ファイルパターンマッチ済み" },
+    "content_search": { "running": "コンテンツ検索中", "done": "コンテンツ検索済み" },
+    "intent_send": { "running": "インテント送信中", "done": "インテント送信済み" },
+    "ask_user_question": { "running": "質問中", "done": "質問済み" },
+    "todo_write": { "running": "TODO 更新中", "done": "TODO 更新済み" },
+    "mcp_install": { "running": "MCP インストール中", "done": "MCP インストール済み" },
+    "mcp_uninstall": { "running": "MCP アンインストール中", "done": "MCP アンインストール済み" },
+    "rag_query": { "running": "知識庫検索中", "done": "知識庫検索済み" },
+    "codebase": { "running": "コード検索中", "done": "コード検索済み" },
+    "shell": { "running": "実行中", "done": "実行済み" }
+  },
   "askQuestionCard": {
     "other": "その他",
     "placeholder": "回答を入力...",
@@ -731,10 +842,6 @@
     "statusStable": "安定",
     "statusDecaying": "衰退中",
     "statusCritical": "クリティカル"
-  },
-  "modelsPage": {
-    "title": "モデル",
-    "labelProvider": "プロバイダー"
   },
   "agentDetailDialog": {
     "ariaLabelClose": "閉じる",

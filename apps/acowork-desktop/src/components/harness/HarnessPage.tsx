@@ -13,7 +13,7 @@ import { MCP_PRESETS, presetToServerConfig } from "../../lib/mcp-presets";
 import { SearchTab } from "./SearchTab";
 import { EmbeddingModelTab } from "./EmbeddingModelTab";
 import { LspTab } from "./LspTab";
-import { ModelCapEditor } from "./ModelCapEditor";
+import { ModelMultiSelect, defaultMakeCaps } from "./ModelMultiSelect";
 import { ProviderPicker } from "./ProviderPicker";
 import { AddProviderFlow } from "./AddProviderFlow";
 import { useTranslation } from "../../i18n/useTranslation";
@@ -80,8 +80,6 @@ function ProvidersTab() {
   const [editModels, setEditModels] = useState<string[]>([]);
   const [editAvailableModels, setEditAvailableModels] = useState<ModelInfo[]>([]);
   const [editModelsLoading, setEditModelsLoading] = useState(false);
-  const [editModelSearchTerm, setEditModelSearchTerm] = useState("");
-  const [editModelCapabilityFilter, setEditModelCapabilityFilter] = useState<string[]>([]);
 
   // Edit dialog — per-model capabilities state
   const [editModelCaps, setEditModelCaps] = useState<Record<string, ModelCapabilitiesInfo>>({});
@@ -181,8 +179,6 @@ function ProvidersTab() {
     setEditBaseUrl(keyEntry?.base_url ?? dynamicProvider?.api ?? "");
     const configuredModels = keyEntry?.models?.length ? keyEntry.models : keyEntry?.default_model ? [keyEntry.default_model] : [];
     setEditModels(configuredModels);
-    setEditModelSearchTerm("");
-    setEditModelCapabilityFilter([]);
     setEditCompactModel(keyEntry?.compact_model ?? "");
     setEditModelCaps({});
     setEditExpandedModels(new Set());
@@ -201,8 +197,8 @@ function ProvidersTab() {
       const mi = models.find(m => m.id === modelId);
       const stored = storedCaps[modelId];
       caps[modelId] = stored
-        ? { ...makeDefaultCaps(mi), ...stored }
-        : makeDefaultCaps(mi);
+        ? { ...defaultMakeCaps(mi), ...stored }
+        : defaultMakeCaps(mi);
     }
     setEditModelCaps(caps);
   };
@@ -241,57 +237,6 @@ function ProvidersTab() {
     } catch (e) {
       alert(`${t("harness.failedUpdateKey")}: ${e}`);
     }
-  };
-
-  // Helper: create default capabilities for a model
-  const makeDefaultCaps = (mi: ModelInfo | undefined): ModelCapabilitiesInfo => {
-    if (mi && (mi.context_window || mi.max_tokens)) {
-      return {
-        context_window: mi.context_window ?? 128000,
-        max_output_tokens: mi.max_tokens ?? 16384,
-        supports_tool_calling: mi.tool_call ?? true,
-        supports_reasoning: mi.reasoning ?? false,
-        modalities: {
-          input: mi.input_modalities ?? ["text"],
-          output: mi.output_modalities ?? ["text"],
-        },
-      };
-    }
-    return {
-      context_window: 128000,
-      max_output_tokens: 16384,
-      supports_tool_calling: true,
-      supports_reasoning: false,
-      modalities: { input: ["text"], output: ["text"] },
-    };
-  };
-
-  // Toggle model in edit dialog (with caps management)
-  const toggleEditModel = (model: string) => {
-    if (editModels.includes(model)) {
-      setEditModels(editModels.filter(m => m !== model));
-      const next = { ...editModelCaps };
-      delete next[model];
-      setEditModelCaps(next);
-    } else {
-      setEditModels([...editModels, model]);
-      const mi = editAvailableModels.find(m => m.id === model);
-      // Preserve stored caps when re-selecting a previously configured model
-      const keyEntry = keys.find(k => k.provider === showEditDialog);
-      const stored = keyEntry?.model_capabilities?.[model];
-      setEditModelCaps({
-        ...editModelCaps,
-        [model]: stored ? { ...makeDefaultCaps(mi), ...stored } : makeDefaultCaps(mi),
-      });
-    }
-  };
-
-  // Update a single field in a model's capabilities (edit dialog)
-  const updateEditModelCap = (modelId: string, field: keyof ModelCapabilitiesInfo, value: unknown) => {
-    setEditModelCaps(prev => ({
-      ...prev,
-      [modelId]: { ...prev[modelId], [field]: value },
-    }));
   };
 
   return (
@@ -464,202 +409,35 @@ function ProvidersTab() {
                 </div>
               )}
 
-              {/* Model selection */}
-              <div>
-                <label className="mb-1 block text-xs text-zinc-500">
-                  {t("harness.defaultModel")} {editModels.length > 0 && <span className="text-accent-green">({editModels.length} {t("harness.selected")})</span>}
-                </label>
-
-                {/* Capability filters */}
-                <div className="mb-2 flex gap-2">
-                  <button
-                    onClick={() => setEditModelCapabilityFilter(
-                      editModelCapabilityFilter.includes('tool_call')
-                        ? editModelCapabilityFilter.filter(f => f !== 'tool_call')
-                        : [...editModelCapabilityFilter, 'tool_call']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      editModelCapabilityFilter.includes('tool_call')
-                        ? "bg-accent-green/10 text-accent-green"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🔧 {t("harness.toolCalling")}
-                  </button>
-                  <button
-                    onClick={() => setEditModelCapabilityFilter(
-                      editModelCapabilityFilter.includes('reasoning')
-                        ? editModelCapabilityFilter.filter(f => f !== 'reasoning')
-                        : [...editModelCapabilityFilter, 'reasoning']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      editModelCapabilityFilter.includes('reasoning')
-                        ? "bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🧠 {t("harness.reasoning")}
-                  </button>
-                  <button
-                    onClick={() => setEditModelCapabilityFilter(
-                      editModelCapabilityFilter.includes('image')
-                        ? editModelCapabilityFilter.filter(f => f !== 'image')
-                        : [...editModelCapabilityFilter, 'image']
-                    )}
-                    className={cn(
-                      "rounded px-2 py-0.5 text-xs font-medium",
-                      editModelCapabilityFilter.includes('image')
-                        ? "bg-sky-100 text-sky-700 dark:bg-sky-900 dark:text-sky-300"
-                        : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200 dark:bg-zinc-700 dark:text-zinc-400"
-                    )}
-                  >
-                    🖼️ {t("harness.image")}
-                  </button>
-                </div>
-
-                {editModels.length > 0 && (
-                  <div className="mb-1 flex flex-wrap gap-1">
-                    {editModels.map((m) => (
-                      <span key={m} className="inline-flex items-center gap-1 rounded bg-accent-green/10 px-2 py-0.5 text-xs text-accent-green">
-                        {m}
-                        <button onClick={() => toggleEditModel(m)} className="text-accent-green/60 hover:text-accent-green">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
-                <StyledInput
-                  type="text"
-                  value={editModelSearchTerm}
-                  onChange={(e) => setEditModelSearchTerm(e.target.value)}
-                  placeholder={t("harness.searchModels")}
-                />
-                <div className="mt-1 max-h-40 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
-                  {editModelsLoading ? (
-                    <div className="px-3 py-2 text-xs text-zinc-400">{t("harness.loadingModels")}</div>
-                  ) : (
-                    editAvailableModels
-                      .filter((m) => {
-                        // Filter by search term
-                        const matchesSearch = !editModelSearchTerm ||
-                          m.id.toLowerCase().includes(editModelSearchTerm.toLowerCase()) ||
-                          m.name.toLowerCase().includes(editModelSearchTerm.toLowerCase());
-
-                        // Filter by capabilities
-                        const matchesCapabilities = editModelCapabilityFilter.length === 0 ||
-                          editModelCapabilityFilter.every(filter => {
-                            if (filter === 'tool_call') return m.tool_call === true;
-                            if (filter === 'reasoning') return m.reasoning === true;
-                            if (filter === 'image') return m.input_modalities?.includes('image') ?? false;
-                            return true;
-                          });
-
-                        return matchesSearch && matchesCapabilities;
-                      })
-                      .map((m) => (
-                        <label
-                          key={m.id}
-                          className="flex cursor-pointer items-center gap-2 px-3 py-1.5 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-700"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={editModels.includes(m.id)}
-                            onChange={() => toggleEditModel(m.id)}
-                            className="accent-[var(--color-accent)]"
-                          />
-                          <div className="flex flex-1 flex-col gap-0.5">
-                            <span className="truncate">{m.name || m.id}</span>
-                            <div className="flex gap-2 text-xs text-zinc-400">
-                              {m.context_window && (
-                                <span>{(m.context_window / 1000).toFixed(0)}K {t("harness.context")}</span>
-                              )}
-                              {m.max_tokens && (
-                                <span>{(m.max_tokens / 1000).toFixed(1)}K {t("harness.maxOutput")}</span>
-                              )}
-                              {m.reasoning && <span>🧠 {t("harness.reasoning")}</span>}
-                              {m.tool_call && <span>🔧 {t("harness.tools")}</span>}
-                              {m.input_modalities?.includes('image') && <span>🖼️ {t("harness.image")}</span>}
-                            </div>
-                          </div>
-                        </label>
-                      ))
-                  )}
-                </div>
-                <div className="mt-2 flex gap-1">
-                  <StyledInput
-                    type="text"
-                    placeholder={t("harness.customModelPlaceholder")}
-                    className="flex-1"
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        const val = (e.target as HTMLInputElement).value.trim();
-                        if (val && !editModels.includes(val)) {
-                          setEditModels([...editModels, val]);
-                          setEditModelCaps(prev => ({ ...prev, [val]: makeDefaultCaps(undefined) }));
-                          (e.target as HTMLInputElement).value = "";
-                        }
-                      }
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Per-model capabilities (local/custom providers only — remote uses offline data) */}
+              {/* Model selection (shared multi-select component) */}
               {(() => {
-                const editKeyEntry = keys.find(k => k.provider === showEditDialog);
+                const editKeyEntry = showEditDialog ? keys.find(k => k.provider === showEditDialog) : undefined;
                 const editIsLocal = showEditDialog ? isLocalProvider(showEditDialog) : false;
                 const editIsCustom = editKeyEntry?.custom ?? false;
-                if (!(editIsLocal || editIsCustom) || editModels.length === 0) return null;
                 return (
-                  <div>
-                    <label className="mb-1 block text-xs text-zinc-500">
-                      {t("harness.modelCapabilities")}
-                      <span className="ml-1 text-xs text-amber-500">({t("harness.manualInputRequired")})</span>
-                    </label>
-                    <div className="space-y-1">
-                      {editModels.map(modelId => {
-                        const caps = editModelCaps[modelId];
-                        if (!caps) return null;
-                        return (
-                          <ModelCapEditor
-                            key={modelId}
-                            modelId={modelId}
-                            caps={caps}
-                            expanded={editExpandedModels.has(modelId)}
-                            onToggle={() => setEditExpandedModels(prev => {
-                              const next = new Set(prev);
-                              if (next.has(modelId)) next.delete(modelId);
-                              else next.add(modelId);
-                              return next;
-                            })}
-                            onUpdate={(field, value) => updateEditModelCap(modelId, field, value)}
-                          />
-                        );
-                      })}
-                    </div>
-                  </div>
+                  <ModelMultiSelect
+                    models={editAvailableModels}
+                    loading={editModelsLoading}
+                    selected={editModels}
+                    onSelectedChange={setEditModels}
+                    caps={editModelCaps}
+                    onCapsChange={setEditModelCaps}
+                    expandedModels={editExpandedModels}
+                    onExpandedToggle={(modelId) =>
+                      setEditExpandedModels((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(modelId)) next.delete(modelId);
+                        else next.add(modelId);
+                        return next;
+                      })
+                    }
+                    showModelCapEditor={editIsLocal || editIsCustom}
+                    compactModel={editCompactModel}
+                    onCompactModelChange={setEditCompactModel}
+                    showCompactModel={true}
+                  />
                 );
               })()}
-
-              {/* Compact model for LLM summarization */}
-              {editModels.length > 0 && (
-                <div>
-                  <label className="mb-1 block text-xs text-zinc-500">
-                    {t("harness.compactModel")}
-                  </label>
-                  <select
-                    value={editCompactModel}
-                    onChange={(e) => setEditCompactModel(e.target.value)}
-                    className="w-full rounded-md border border-zinc-200 px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-200"
-                  >
-                    <option value="">{t("harness.useCurrentModel")}</option>
-                    {editModels.map((m) => (
-                      <option key={m} value={m}>{m}</option>
-                    ))}
-                  </select>
-                </div>
-              )}
             </div>
 
             <div className="mt-4 flex items-center justify-end gap-2">

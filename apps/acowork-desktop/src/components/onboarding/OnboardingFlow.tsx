@@ -13,6 +13,8 @@ import type { GatewayMode, ModelInfo } from "../../lib/types";
 import { RadioGroup } from "../common/RadioGroup";
 import { StyledInput } from "../common/StyledInput";
 import { ErrorBox } from "../common/ErrorBox";
+import { useTranslation } from "../../i18n/useTranslation";
+import { ModelMultiSelect } from "../harness/ModelMultiSelect";
 import brandMark from "../../../../../assets/brand-mark.svg";
 
 const TOTAL_STEPS = 5;
@@ -68,6 +70,7 @@ interface OnboardingState {
 }
 
 export function OnboardingFlow({ onComplete }: { onComplete?: () => void }) {
+  const { t } = useTranslation();
   const [state, setState] = useState<OnboardingState>({
     completed: false,
     currentStep: 1,
@@ -133,7 +136,7 @@ export function OnboardingFlow({ onComplete }: { onComplete?: () => void }) {
               />
             ))}
           </div>
-          <p className="mt-2 text-xs text-zinc-400">Step {state.currentStep} of {TOTAL_STEPS}</p>
+          <p className="mt-2 text-xs text-zinc-400">{t("onboarding.step", { current: state.currentStep, total: TOTAL_STEPS })}</p>
         </div>
 
         {/* Step content */}
@@ -160,23 +163,24 @@ export function OnboardingFlow({ onComplete }: { onComplete?: () => void }) {
 
 /** Step 1: Welcome */
 function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => void }) {
+  const { t } = useTranslation();
   return (
     <div className="text-center">
       <div className="text-4xl">🎉🎉🎉</div>
-      <h1 className="mt-4 text-2xl font-bold flex items-center justify-center gap-2"><span>Welcome to</span><img src={brandMark} alt="ACowork" className="h-10" /></h1>
-      <p className="mt-2 text-sm text-zinc-500">Let's quickly set up your Agent environment</p>
+      <h1 className="mt-4 text-2xl font-bold flex items-center justify-center gap-2"><span>{t("onboarding.welcome.title")}</span><img src={brandMark} alt="ACowork" className="h-10" /></h1>
+      <p className="mt-2 text-sm text-zinc-500">{t("onboarding.welcome.subtitle")}</p>
       <div className="mt-8 space-y-3">
         <button
           onClick={onNext}
           className="w-full rounded btn-solid py-2.5 text-sm font-medium"
         >
-          Start Setup
+          {t("onboarding.welcome.startSetup")}
         </button>
         <button
           onClick={onSkip}
           className="w-full py-2 text-xs text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-300"
         >
-          Already configured? Skip setup →
+          {t("onboarding.welcome.skip")}
         </button>
       </div>
     </div>
@@ -185,6 +189,7 @@ function WelcomeStep({ onNext, onSkip }: { onNext: () => void; onSkip: () => voi
 
 /** Step 2: Gateway Connection — mode selection + connect */
 function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void }) {
+  const { t } = useTranslation();
   const { status, localState, checkHealth, startLocalGateway } = useGatewayStore();
   const gatewayMode = useSettingsStore((s) => s.gatewayMode);
   const setGatewayMode = useSettingsStore((s) => s.setGatewayMode);
@@ -222,7 +227,7 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
       await startLocalGateway();
       // After successful start, health is already checked
     } catch {
-      setStartError("Failed to start local Gateway");
+      setStartError(t("onboarding.gateway.startFailedToast"));
     } finally {
       setStarting(false);
     }
@@ -245,30 +250,30 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
 
   return (
     <div>
-      <h2 className="text-lg font-semibold">Connect to Gateway</h2>
-      <p className="mt-1 text-sm text-zinc-500">Choose how you want to connect to the Gateway</p>
+      <h2 className="text-lg font-semibold">{t("onboarding.gateway.title")}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{t("onboarding.gateway.subtitle")}</p>
 
       <div className="mt-6 space-y-4">
         {/* Mode selection */}
         <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
-          <label className="mb-2 block text-xs text-zinc-500">Gateway Mode</label>
+          <label className="mb-2 block text-xs text-zinc-500">{t("onboarding.gateway.modeLabel")}</label>
           <RadioGroup
             name="gatewayMode"
             value={gatewayMode}
             options={[
-              { label: <span className="font-medium">Local (recommended)</span>, value: "local" as GatewayMode },
-              { label: "Remote", value: "remote" as GatewayMode },
+              { label: <span className="font-medium">{t("onboarding.gateway.modeLocalRecommended")}</span>, value: "local" as GatewayMode },
+              { label: t("onboarding.gateway.modeRemote"), value: "remote" as GatewayMode },
             ]}
             onChange={handleModeChange}
           />
           {gatewayMode === "local" && (
             <p className="mt-1 text-xs text-zinc-400">
-              Gateway starts automatically with the Desktop App
+              {t("onboarding.gateway.localHint")}
             </p>
           )}
           {gatewayMode === "remote" && (
             <p className="mt-1 text-xs text-zinc-400">
-              Connect to a Gateway running on another machine
+              {t("onboarding.gateway.remoteHint")}
             </p>
           )}
         </div>
@@ -277,26 +282,26 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
         {gatewayMode === "local" && (
           <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-zinc-500">Status:</span>
+              <span className="text-zinc-500">{t("onboarding.gateway.status")}</span>
               {starting ? (
-                <span className="text-zinc-400">Starting Gateway...</span>
+                <span className="text-zinc-400">{t("onboarding.gateway.starting")}</span>
               ) : localConnected ? (
                 <>
                   <span className="h-2 w-2 rounded-full bg-green-500" />
-                  <span className="text-green-600 dark:text-green-400">Gateway Connected</span>
+                  <span className="text-green-600 dark:text-green-400">{t("onboarding.gateway.connected")}</span>
                 </>
               ) : (
                 <>
                   <span className="h-2 w-2 rounded-full bg-amber-500" />
                   <span className="text-amber-600 dark:text-amber-400">
-                    {localError ? "Failed to start" : "Not started"}
+                    {localError ? t("onboarding.gateway.failedToStart") : t("onboarding.gateway.notStarted")}
                   </span>
                 </>
               )}
             </div>
             {localError && (
               <div className="mt-1">
-                <ErrorBox message={startError ?? "Could not start local Gateway"} />
+                <ErrorBox message={startError ?? t("onboarding.gateway.startFailed")} />
               </div>
             )}
             {!localConnected && !starting && (
@@ -314,7 +319,7 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
         {/* Remote mode: URL config + test */}
         {gatewayMode === "remote" && (
           <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
-            <label className="mb-1 block text-xs text-zinc-500">Gateway URL</label>
+            <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.gateway.urlLabel")}</label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -329,24 +334,24 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
                   className="rounded-md px-3 py-2 text-xs font-medium text-white hover:opacity-90"
                   style={{ backgroundColor: "var(--color-accent)" }}
                 >
-                  Apply
+                  {t("onboarding.gateway.apply")}
                 </button>
               )}
             </div>
 
             <div className="mt-3 flex items-center gap-2 text-sm">
-              <span className="text-zinc-500">Status:</span>
+              <span className="text-zinc-500">{t("onboarding.gateway.status")}</span>
               {checking ? (
-                <span className="text-zinc-400">Checking...</span>
+                <span className="text-zinc-400">{t("onboarding.gateway.checking")}</span>
               ) : status === "connected" ? (
                 <>
                   <span className="h-2 w-2 rounded-full bg-green-500" />
-                  <span className="text-green-600 dark:text-green-400">Connected</span>
+                  <span className="text-green-600 dark:text-green-400">{t("onboarding.gateway.connectedShort")}</span>
                 </>
               ) : (
                 <>
                   <span className="h-2 w-2 rounded-full bg-red-500" />
-                  <span className="text-red-600 dark:text-red-400">Cannot connect</span>
+                  <span className="text-red-600 dark:text-red-400">{t("onboarding.gateway.cannotConnect")}</span>
                 </>
               )}
             </div>
@@ -357,7 +362,7 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
                 disabled={checking || !urlDraft.trim()}
                 className="mt-3 rounded btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
               >
-                {checking ? "Testing..." : "Test Connection"}
+                {checking ? t("onboarding.gateway.startingShort") : t("onboarding.gateway.testConnection")}
               </button>
             )}
           </div>
@@ -366,14 +371,14 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
 
       <div className="mt-8 flex justify-between">
         <button onClick={onPrev} className="rounded-md px-4 py-2 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-          Back
+          {t("onboarding.gateway.back")}
         </button>
         <button
           onClick={onNext}
           disabled={!canProceed || starting}
           className="rounded btn-solid px-4 py-2 text-xs font-medium disabled:opacity-50"
         >
-          {starting ? "Starting..." : "Next"}
+          {starting ? t("onboarding.gateway.startingShort") : t("onboarding.gateway.next")}
         </button>
       </div>
     </div>
@@ -382,6 +387,7 @@ function GatewayStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => voi
 
 /** Step 3: API Key */
 function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void }) {
+  const { t } = useTranslation();
   const [provider, setProvider] = useState("openai");
   const [dynamicProviders, setDynamicProviders] = useState<Array<{ id: string; name: string; api?: string }>>([]);
   const [apiKey, setApiKey] = useState("");
@@ -389,7 +395,6 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
   const [selectedModels, setSelectedModels] = useState<string[]>([]);
   const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelSearchTerm, setModelSearchTerm] = useState("");
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
 
@@ -422,7 +427,6 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
     setProvider(id);
     setSaved(false);
     setSelectedModels([]);
-    setModelSearchTerm("");
     const dynamicProvider = dynamicProviders.find((p) => p.id === id);
     setBaseUrl(dynamicProvider?.api ?? "");
     loadModels(id);
@@ -450,21 +454,13 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
     }
   };
 
-  const toggleModel = (model: string) => {
-    if (selectedModels.includes(model)) {
-      setSelectedModels(selectedModels.filter((m) => m !== model));
-    } else {
-      setSelectedModels([...selectedModels, model]);
-    }
-  };
-
   const needsKey = needsApiKey(provider);
   const canSave = needsKey ? apiKey.trim().length > 0 : true;
 
   return (
     <div>
-      <h2 className="text-lg font-semibold">Configure LLM Provider</h2>
-      <p className="mt-1 text-sm text-zinc-500">At least one provider is needed to chat with Agents</p>
+      <h2 className="text-lg font-semibold">{t("onboarding.apiKey.title")}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{t("onboarding.apiKey.subtitle")}</p>
 
       <div className="mt-6 space-y-4">
         {/* Provider selector */}
@@ -499,75 +495,23 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
               type="text"
               value={baseUrl}
               onChange={(e) => { setBaseUrl(e.target.value); setSaved(false); }}
-              placeholder="Base URL"
+              placeholder={t("onboarding.apiKey.baseUrlPlaceholder")}
               className="mt-2 w-full rounded-md border border-zinc-200 px-3 py-2 text-xs font-mono dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
             />
           )}
 
-          {/* Model selection (multi-select) */}
+          {/* Model selection (shared multi-select component) */}
           <div className="mt-2">
-            <label className="mb-1 block text-xs text-zinc-500">
-              Default Model {selectedModels.length > 0 && <span className="text-accent-green">({selectedModels.length} selected)</span>}
-            </label>
-            {/* Selected model tags */}
-            {selectedModels.length > 0 && (
-              <div className="mb-1 flex flex-wrap gap-1">
-                {selectedModels.map((m) => (
-                  <span key={m} className="inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs border" style={{ backgroundColor: "color-mix(in srgb, var(--color-accent) 10%, transparent)", color: "var(--color-accent)", borderColor: "color-mix(in srgb, var(--color-accent) 20%, transparent)" }}>
-                    {m}
-                    <button onClick={() => setSelectedModels(selectedModels.filter((x) => x !== m))} className="hover:opacity-70" style={{ color: "var(--color-accent)" }}>×</button>
-                  </span>
-                ))}
-              </div>
-            )}
-            {/* Search and select */}
-            <input
-              type="text"
-              value={modelSearchTerm}
-              onChange={(e) => setModelSearchTerm(e.target.value)}
-              placeholder="Search models..."
-              className="w-full rounded-md border border-zinc-200 px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-            />
-            <div className="mt-1 max-h-32 overflow-y-auto rounded border border-zinc-200 dark:border-zinc-700">
-              {modelsLoading ? (
-                <div className="px-3 py-2 text-xs text-zinc-400">Loading models...</div>
-              ) : (
-                availableModels
-                  .filter((m) =>
-                    !modelSearchTerm ||
-                    m.id.toLowerCase().includes(modelSearchTerm.toLowerCase()) ||
-                    m.name.toLowerCase().includes(modelSearchTerm.toLowerCase())
-                  )
-                  .map((m) => (
-                    <label
-                      key={m.id}
-                      className="flex cursor-pointer items-center gap-2 px-3 py-1 text-xs hover:bg-zinc-50 dark:hover:bg-zinc-700"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={selectedModels.includes(m.id)}
-                        onChange={() => toggleModel(m.id)}
-                        className="accent-[var(--color-accent)]"
-                      />
-                      <span className="flex-1 truncate">{m.name || m.id}</span>
-                    </label>
-                  ))
-              )}
-            </div>
-            {/* Manual model input */}
-            <input
-              type="text"
-              placeholder="Or type a custom model name and press Enter..."
-              className="mt-1 w-full rounded-md border border-zinc-200 px-2 py-1 text-xs dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  const val = (e.target as HTMLInputElement).value.trim();
-                  if (val && !selectedModels.includes(val)) {
-                    setSelectedModels([...selectedModels, val]);
-                    (e.target as HTMLInputElement).value = "";
-                  }
-                }
-              }}
+            <ModelMultiSelect
+              models={availableModels}
+              loading={modelsLoading}
+              selected={selectedModels}
+              onSelectedChange={setSelectedModels}
+              showCapabilityFilter={true}
+              showMetadata={false}
+              showCustomInput={true}
+              showModelCapEditor={false}
+              showCompactModel={false}
             />
           </div>
 
@@ -578,7 +522,7 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
             disabled={!canSave || saving}
             className="mt-2 rounded btn-solid px-3 py-1.5 text-xs font-medium disabled:opacity-50"
           >
-            {saving ? "Saving..." : saved ? "Saved \u2713" : "Save"}
+            {saving ? t("onboarding.apiKey.saving") : saved ? t("onboarding.apiKey.saved") : t("onboarding.apiKey.save")}
           </button>
         </div>
 
@@ -586,23 +530,23 @@ function ApiKeyStep({ onNext, onPrev }: { onNext: () => void; onPrev: () => void
         <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
           <div className="flex items-center gap-2">
             <span className="text-lg">🏠</span>
-            <span className="text-sm font-medium">Local Providers (no key needed)</span>
+            <span className="text-sm font-medium">{t("onboarding.apiKey.localProvidersLabel")}</span>
           </div>
           <p className="mt-1 text-xs text-zinc-400">
-            {dynamicProviders.filter(p => !needsApiKey(p.id)).map((p) => p.name).join(", ") || "Ollama, LM Studio"}
+            {dynamicProviders.filter(p => !needsApiKey(p.id)).map((p) => p.name).join(", ") || t("onboarding.apiKey.localProvidersFallback")}
           </p>
         </div>
       </div>
 
       <div className="mt-8 flex justify-between">
         <button onClick={onPrev} className="rounded-md px-4 py-2 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-          Back
+          {t("onboarding.apiKey.back")}
         </button>
         <button
           onClick={onNext}
           className="rounded btn-solid px-4 py-2 text-xs font-medium"
         >
-          Next
+          {t("onboarding.apiKey.next")}
         </button>
       </div>
     </div>
@@ -618,26 +562,27 @@ function IdentityStep({
   onUpdate: (updates: Partial<OnboardingState>) => void;
   onNext: () => void; onPrev: () => void;
 }) {
+  const { t } = useTranslation();
   const requiredFilled = name.trim() && language && timezone;
 
   return (
     <div>
-      <h2 className="text-lg font-semibold">Identity Information</h2>
-      <p className="mt-1 text-sm text-zinc-500">Help Agents understand you better (required fields marked *)</p>
+      <h2 className="text-lg font-semibold">{t("onboarding.identity.title")}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{t("onboarding.identity.subtitle")}</p>
 
       <div className="mt-6 space-y-4">
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Name *</label>
+          <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.identity.nameLabel")}</label>
           <StyledInput
             type="text"
             value={name}
             onChange={(e) => onUpdate({ name: e.target.value })}
-            placeholder="Your Name"
+            placeholder={t("onboarding.identity.namePlaceholder")}
             className="rounded-md border border-zinc-200 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-200"
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Language *</label>
+          <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.identity.languageLabel")}</label>
           <select
             value={language}
             onChange={(e) => onUpdate({ language: e.target.value })}
@@ -653,15 +598,15 @@ function IdentityStep({
               MozAppearance: 'none',
             }}
           >
-            <option value="zh-CN">中文 (简体)</option>
-            <option value="zh-TW">中文 (繁體)</option>
-            <option value="en">English</option>
-            <option value="ja">日本語</option>
-            <option value="ko">한국어</option>
+            <option value="zh-CN">{t("onboarding.identity.languages.zh-CN")}</option>
+            <option value="zh-TW">{t("onboarding.identity.languages.zh-TW")}</option>
+            <option value="en">{t("onboarding.identity.languages.en")}</option>
+            <option value="ja">{t("onboarding.identity.languages.ja")}</option>
+            <option value="ko">{t("onboarding.identity.languages.ko")}</option>
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Timezone *</label>
+          <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.identity.timezoneLabel")}</label>
           <select
             value={timezone}
             onChange={(e) => onUpdate({ timezone: e.target.value })}
@@ -686,7 +631,7 @@ function IdentityStep({
           </select>
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">City (optional)</label>
+          <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.identity.cityLabel")}</label>
           <input
             type="text"
             value={city}
@@ -695,7 +640,7 @@ function IdentityStep({
           />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-zinc-500">Occupation (optional)</label>
+          <label className="mb-1 block text-xs text-zinc-500">{t("onboarding.identity.occupationLabel")}</label>
           <input
             type="text"
             value={occupation}
@@ -707,14 +652,14 @@ function IdentityStep({
 
       <div className="mt-8 flex justify-between">
         <button onClick={onPrev} className="rounded-md px-4 py-2 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-          Back
+          {t("onboarding.identity.back")}
         </button>
         <button
           onClick={onNext}
           disabled={!requiredFilled}
           className="rounded-md bg-zinc-200 px-4 py-2 text-xs font-medium text-zinc-800 hover:bg-zinc-300 disabled:opacity-50 dark:bg-zinc-700 dark:hover:bg-zinc-600"
         >
-          Next
+          {t("onboarding.identity.next")}
         </button>
       </div>
     </div>
@@ -723,6 +668,7 @@ function IdentityStep({
 
 /** Step 5: Install first Agent */
 function InstallAgentStep({ onComplete, onPrev }: { onComplete: () => void; onPrev: () => void }) {
+  const { t } = useTranslation();
   const [installing, setInstalling] = useState<string | null>(null);
   const [installError, setInstallError] = useState<string | null>(null);
   const [selectedAgents, setSelectedAgents] = useState<string[]>(() => RECOMMENDED_AGENTS.map((agent) => agent.resourceName));
@@ -774,21 +720,21 @@ function InstallAgentStep({ onComplete, onPrev }: { onComplete: () => void; onPr
 
   return (
     <div>
-      <h2 className="text-lg font-semibold">Install Your First Agent</h2>
-      <p className="mt-1 text-sm text-zinc-500">Choose recommended built-in agents or install a local package</p>
+      <h2 className="text-lg font-semibold">{t("onboarding.installAgent.title")}</h2>
+      <p className="mt-1 text-sm text-zinc-500">{t("onboarding.installAgent.subtitle")}</p>
 
       <div className="mt-6 space-y-3">
         <div className="rounded-md border border-zinc-200 p-4 dark:border-zinc-700">
           <div className="mb-3 flex items-center justify-between">
             <div>
-              <h3 className="text-sm font-medium">Recommended Agents</h3>
-              <p className="mt-1 text-xs text-zinc-400">Select one or more built-in agents to install</p>
+              <h3 className="text-sm font-medium">{t("onboarding.installAgent.recommendedTitle")}</h3>
+              <p className="mt-1 text-xs text-zinc-400">{t("onboarding.installAgent.recommendedSubtitle")}</p>
             </div>
             <button
               onClick={() => setSelectedAgents(selectedAgents.length === RECOMMENDED_AGENTS.length ? [] : RECOMMENDED_AGENTS.map((agent) => agent.resourceName))}
               className="text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
             >
-              {selectedAgents.length === RECOMMENDED_AGENTS.length ? "Clear" : "Select all"}
+              {selectedAgents.length === RECOMMENDED_AGENTS.length ? t("onboarding.installAgent.clear") : t("onboarding.installAgent.selectAll")}
             </button>
           </div>
           <div className="max-h-56 space-y-2 overflow-y-auto pr-1">
@@ -815,7 +761,7 @@ function InstallAgentStep({ onComplete, onPrev }: { onComplete: () => void; onPr
             disabled={!!installing || selectedAgents.length === 0}
             className="mt-4 w-full rounded btn-solid py-2 text-xs font-medium disabled:opacity-50"
           >
-            {installing ? `Installing ${installing}...` : `Install selected (${selectedAgents.length})`}
+            {installing ? t("onboarding.installAgent.installSelectedInstalling", { name: installing }) : t("onboarding.installAgent.installSelected", { count: selectedAgents.length })}
           </button>
         </div>
 
@@ -824,12 +770,12 @@ function InstallAgentStep({ onComplete, onPrev }: { onComplete: () => void; onPr
           disabled={!!installing}
           className="w-full rounded-md border border-zinc-200 p-4 text-left transition-colors hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-800"
         >
-          <span className="text-sm font-medium">Install from .agent file</span>
-          <p className="mt-1 text-xs text-zinc-400">Select a .agent package from your computer</p>
+          <span className="text-sm font-medium">{t("onboarding.installAgent.fromFileTitle")}</span>
+          <p className="mt-1 text-xs text-zinc-400">{t("onboarding.installAgent.fromFileSubtitle")}</p>
         </button>
 
         {installing && (
-          <p className="text-xs text-zinc-400">Installing: {installing}</p>
+          <p className="text-xs text-zinc-400">{t("onboarding.installAgent.installing", { name: installing })}</p>
         )}
         {installError && (
           <ErrorBox message={installError} />
@@ -838,13 +784,13 @@ function InstallAgentStep({ onComplete, onPrev }: { onComplete: () => void; onPr
 
       <div className="mt-8 flex justify-between">
         <button onClick={onPrev} className="rounded-md px-4 py-2 text-xs text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300">
-          Back
+          {t("onboarding.installAgent.back")}
         </button>
         <button
           onClick={onComplete}
           className="rounded-md bg-zinc-200 px-4 py-2 text-xs font-medium text-zinc-800 hover:bg-zinc-300 dark:bg-zinc-700 dark:hover:bg-zinc-600"
         >
-          Complete →
+          {t("onboarding.installAgent.complete")}
         </button>
       </div>
     </div>
