@@ -47,6 +47,7 @@
     "sessionLoadFailed": "Session failed to load",
     "retry": "Retry",
     "taskList": "Tasks ({{completed}}/{{total}})",
+    "currentTask": "Current: {{current}}",
     "messageQueue": "Message queue ({{count}})",
     "uploadFile": "Upload file",
     "selectImage": "Select image",

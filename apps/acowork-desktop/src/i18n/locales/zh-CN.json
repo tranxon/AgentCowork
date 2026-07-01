@@ -137,6 +137,7 @@
     "sessionLoadFailed": "Session 加载失败",
     "retry": "重试",
     "taskList": "任务列表 ({{completed}}/{{total}})",
+    "currentTask": "当前任务：{{current}}",
     "messageQueue": "消息队列 ({{count}})",
     "uploadFile": "上传文件",
     "selectImage": "选择图片",

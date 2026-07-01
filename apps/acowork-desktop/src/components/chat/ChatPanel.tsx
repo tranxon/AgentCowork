@@ -329,14 +329,17 @@ export function ChatPanel() {
   const isCompacting = sessionState?.isCompacting ?? false;
   const showCompactingItem = isCompacting;
 
-  // ADR-021+fix: Working indicator — shown when the session is "streaming" but
-  // no streaming placeholder message exists yet.  This covers the gap between
-  // session_status → streaming and the first new_data_available poll response,
-  // which can take 500–2000ms (LLM call startup).
-  const hasStreamingPlaceholder = displayMessages.some(
-    (m) => 'id' in m && typeof m.id === 'string' && m.id.startsWith('msg-streaming-')
-  );
-  const showWorkingItem = sending && !hasStreamingPlaceholder;
+  // Working indicator — shown when the session is "streaming" but the agent
+  // has NOT YET responded to the current request. It fills the visual gap
+  // between session_status→streaming and the first poll response (~500-2000ms).
+  //
+  // Condition: sending=true AND the last message in the array is the user's
+  // (meaning no assistant/thought streaming placeholder has arrived yet).
+  // We check the raw messages array (not grouped displayMessages) because
+  // thought-type placeholders are folded into explore_group items and would
+  // not be found by a surface-level scan.
+  const showWorkingItem = sending && messages.length > 0
+    && messages[messages.length - 1]?.type === 'user';
 
   // Virtual scrolling: only render visible items (messages + optional compacting indicator).
   // Working indicator is rendered OUTSIDE the virtual list (below it) to avoid messing up
@@ -1363,7 +1366,25 @@ export function ChatPanel() {
                 <ChevronDown className="h-3 w-3 mr-1 text-zinc-400 dark:text-zinc-500 shrink-0" />
               )}
               <span className="text-[10px] font-medium text-zinc-400 dark:text-zinc-500 uppercase tracking-wider">
-                {t("chatPanel.taskList", { completed: todos.filter(t => t.status === "completed").length, total: todos.length })}
+                {(() => {
+                  const completed = todos.filter(t => t.status === "completed").length;
+                  const total = todos.length;
+                  const currentTodo = todos.find(t => t.status === "in_progress");
+                  const isAllCompleted = completed === total && total > 0;
+                  return (
+                    <>
+                      {t("chatPanel.taskList", { completed, total })}
+                      {!isAllCompleted && currentTodo && (
+                        <>
+                          {"    "}
+                          <span className="normal-case text-zinc-500 dark:text-zinc-300">
+                            {t("chatPanel.currentTask", { current: currentTodo.content })}
+                          </span>
+                        </>
+                      )}
+                    </>
+                  );
+                })()}
               </span>
             </button>
             {!todosCollapsed && (
