@@ -253,7 +253,7 @@ impl SessionCore {
             has_conversation = conversation.is_some(),
             "ADR-022 flush_streaming_line: flushing line"
         );
-        if !content.is_empty()
+        if !content.trim().is_empty()
             && let Some(conv) = conversation
         {
             let metadata = if sl.role == "thought" {
@@ -271,10 +271,11 @@ impl SessionCore {
                 content_len = content.len(),
                 "ADR-022 flush_streaming_line: wrote to JSONL"
             );
-        } else if content.is_empty() {
+        } else if content.trim().is_empty() {
             tracing::warn!(
                 role = %sl.role,
-                "ADR-022 flush_streaming_line: content is EMPTY, skipping write"
+                content_len = content.len(),
+                "ADR-022 flush_streaming_line: content is whitespace-only, skipping write"
             );
         }
         Some(content)
