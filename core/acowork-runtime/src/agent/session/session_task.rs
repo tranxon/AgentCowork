@@ -399,9 +399,10 @@ impl SessionTask {
         // Applied directly to AgentCore during session init so the session
         // starts with correct values (not patched via message replay).
         runtime_overrides: RuntimeConfigOverrides,
-        // Resolved workspace directory for tool execution.
-        // None = keep the default from AgentCore.config.work_dir.
-        initial_work_dir: Option<String>,
+        // Per-session workspace ID. Single source of truth, shared with SessionManager.
+        workspace_id: Arc<std::sync::RwLock<String>>,
+        // Resolved workspace directory for tool execution. Shared with SessionManager.
+        current_work_dir: Arc<std::sync::RwLock<Option<String>>>,
         // Per-session committed_lines counter, shared with the writer thread.
         committed_lines: Arc<std::sync::atomic::AtomicUsize>,
         // Shared streaming lines map, cloned into SessionCore.
@@ -409,15 +410,13 @@ impl SessionTask {
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Create per-session SessionCore from the shared AgentCore template.
         let notify_interval_ms = core.config.data_flow.notify_interval_ms;
-        let work_dir_for_session = initial_work_dir
-            .clone()
-            .unwrap_or_else(|| core.config.work_dir.clone());
-        let mut session_core = SessionCore::new(
+        let session_core = SessionCore::new(
             session_id.clone(),
             chunk_tx.clone(),
             committed_lines,
             notify_interval_ms,
-            Some(work_dir_for_session),
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
 
@@ -483,12 +482,6 @@ impl SessionTask {
         let mut session = session;
         if core_mut.temperature_override.is_some() {
             session.set_temperature(core_mut.temperature_override);
-        }
-
-        // Set initial workspace (SessionCore constructor already set it, but
-        // this call ensures it matches the resolved work_dir from SessionManager).
-        if let Some(dir) = initial_work_dir {
-            session_core.current_work_dir = Some(dir);
         }
 
         let (agent_loop, agent_inbound_tx) =
@@ -1178,17 +1171,18 @@ impl SessionTask {
                     tracing::info!(
                         session_id = %session_id,
                         workspace_id = %workspace_id,
-                        "SessionTask: persisting workspace_id to JSONL"
+                        "SessionTask: persisting workspace_id to JSONL (SessionCore already updated by SessionManager)"
                     );
                     agent_loop.update_session_workspace_id(&workspace_id);
                 }
                 Some(SessionMessage::SetWorkDir { path }) => {
-                    tracing::info!(
+                    tracing::debug!(
                         session_id = %session_id,
                         path = %path,
-                        "SessionTask: updating work_dir for tool execution"
+                        "SessionTask: SetWorkDir received (SessionCore already updated synchronously by SessionManager)"
                     );
-                    agent_loop.session_core.current_work_dir = Some(path);
+                    // SessionCore.current_work_dir is already set via the shared
+                    // Arc<RwLock> by SessionManager — no further action needed.
                 }
                 Some(SessionMessage::SetWorkspacePromptFile { content }) => {
                     tracing::info!(

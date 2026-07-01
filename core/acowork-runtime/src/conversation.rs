@@ -752,9 +752,8 @@ impl ConversationSession {
     /// Persist the per-session workspace selection to the JSONL metadata.
     ///
     /// Rewrites the first line of the JSONL file so the workspace binding
-    /// survives cold restarts. Does NOT mutate the in-memory
-    /// `SessionManager.session_workspaces` — the caller is responsible for
-    /// keeping the two in sync.
+    /// survives cold restarts. The authoritative workspace_id is stored in
+    /// [`SessionCore`]; this method only persists to disk.
     pub fn update_workspace_id(&self, workspace_id: &str) {
         // Update in-memory state FIRST so that subsequent metadata updates
         // (e.g. set_title via first user message) don't lose workspace_id.

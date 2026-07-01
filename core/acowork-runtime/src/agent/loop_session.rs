@@ -47,13 +47,17 @@ impl super::loop_::AgentLoop {
             .or(self.core.temperature_override)
             .unwrap_or(DEFAULT_TEMPERATURE);
         // Emit chunk event to Gateway → frontend
+        let workspace_id_str = {
+            let ws_id = self.session_core.workspace_id.read().unwrap().clone();
+            if ws_id == "__agent_home__" { None } else { Some(ws_id) }
+        };
         if !self
             .session_core
             .try_send_chunk(super::loop_::ChunkEvent::SessionStateChanged {
                 status: status.clone(),
                 model: self.session.model().map(|s| s.to_string()),
                 provider: self.session.provider().map(|s| s.to_string()),
-                workspace_id: self.session.workspace_id(),
+                workspace_id: workspace_id_str.clone(),
                 ratio: self.session.model_ratio(),
                 reasoning_effort: self.session.reasoning_effort().map(|e| e.to_string()),
                 temperature: Some(effective_temperature),
@@ -76,7 +80,7 @@ impl super::loop_::AgentLoop {
                 status_json,
                 model: self.session.model().map(|s| s.to_string()),
                 provider: self.session.provider().map(|s| s.to_string()),
-                workspace_id: self.session.workspace_id(),
+                workspace_id: workspace_id_str,
                 ratio: self.session.model_ratio(),
                 reasoning_effort: self.session.reasoning_effort().map(|e| e.to_string()),
                 temperature: Some(effective_temperature),

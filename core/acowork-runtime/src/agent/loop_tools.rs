@@ -89,7 +89,7 @@ impl AgentLoop {
                 let tx = tx.clone();
                 let approval_handle = approval_handle.clone();
                 let approval_gate = approval_gate.clone();
-                let work_dir = self.session_core.current_work_dir.clone();
+                let work_dir = self.session_core.current_work_dir.read().unwrap().clone();
                 tokio::spawn(async move {
                     // Shell risk check: if this is a shell command and risk >= threshold,
                     // request user approval before execution.

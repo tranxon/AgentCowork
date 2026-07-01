@@ -175,14 +175,11 @@ pub struct SessionManager {
     mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     /// MCP connection manager.
     mcp_manager: McpManager,
-    /// Per-session workspace selection.
-    /// Maps session_id → workspace_id (or "__agent_home__" for agent home).
-    session_workspaces: HashMap<String, String>,
     /// Per-session pending workspace reference.
-    /// When a session's last workspace was deleted from the list,
-    /// the session_id → ws_id mapping is moved here so it can be
+    /// When a session's workspace was deleted from the resolver,
+    /// the session_id → old_ws_id mapping is moved here so it can be
     /// reconciled if the workspace is re-added.
-    pub pending_workspaces: HashMap<String, String>,
+    pending_workspaces: HashMap<String, String>,
     /// Default workspace ID for new sessions (no persisted workspace).
     /// Falls back to "__agent_home__" when no last_active workspace is set.
     default_workspace_id: String,
@@ -228,7 +225,6 @@ impl SessionManager {
             runtime_overrides: RuntimeConfigOverrides::default(),
             mcp_tools: None,
             mcp_manager: McpManager::new(),
-            session_workspaces: HashMap::new(),
             pending_workspaces: HashMap::new(),
             default_workspace_id: "__agent_home__".to_string(),
             resolver: None,
@@ -331,15 +327,14 @@ impl SessionManager {
             None
         };
 
-        // Resolve initial workspace directory for direct initialization.
-        // This avoids relying on the SetWorkDir message replay to set
-        // AgentCore.current_work_dir — it's applied during session creation.
+        // Create per-session workspace Arcs — the single source of truth.
+        // SessionCore and SessionHandle share these Arcs, so SessionManager
+        // can read/write workspace state synchronously without channel delay.
         let initial_workspace = persisted_workspace_id
             .clone()
             .unwrap_or_else(|| self.default_workspace_id.clone());
-        // Pre-register the workspace mapping so current_dir_for works.
-        self.session_workspaces
-            .insert(session_id.clone(), initial_workspace.clone());
+        let workspace_id: Arc<std::sync::RwLock<String>> =
+            Arc::new(std::sync::RwLock::new(initial_workspace.clone()));
         self.pending_workspaces.remove(&session_id);
         // Store per-session committed_lines for HTTP handler access.
         if let Some(ref cl) = committed_lines {
@@ -358,6 +353,8 @@ impl SessionManager {
         } else {
             self.core.config.work_dir.clone()
         };
+        let current_work_dir: Arc<std::sync::RwLock<Option<String>>> =
+            Arc::new(std::sync::RwLock::new(Some(initial_work_dir)));
 
         // For sessions without a persistent conversation, create a dummy
         // committed_lines counter.  This session won't produce JSONL writes
@@ -379,7 +376,8 @@ impl SessionManager {
             per_session_debug,
             pending_debug_handles.clone(),
             self.runtime_overrides.clone(),
-            Some(initial_work_dir),
+            workspace_id.clone(),
+            current_work_dir.clone(),
             session_committed_lines,
             self.streaming_lines.clone(),
         );
@@ -434,6 +432,8 @@ impl SessionManager {
             last_active_at: std::sync::Mutex::new(std::time::Instant::now()),
             pending_debug_handles: pending_debug_handles.clone(),
             snapshot_slot,
+            workspace_id,
+            current_work_dir,
         };
 
         self.sessions.insert(session_id.clone(), handle);
@@ -646,8 +646,7 @@ impl SessionManager {
         // Send Close signal; ignore errors (session may have already stopped)
         let _ = handle.inbound_tx.send(SessionMessage::Close).await;
 
-        // Clean up per-session workspace mappings
-        self.session_workspaces.remove(session_id);
+        // Clean up per-session mappings
         self.pending_workspaces.remove(session_id);
         self.urgent_stops.remove(session_id);
 
@@ -1427,70 +1426,68 @@ After installation, ask the user to re-enable the MCP server.",
 
     /// Set the current workspace for a specific session.
     ///
-    /// Updates both the in-memory map and persists to the session's JSONL
-    /// conversation file (when one exists). When a `resolver` has been
-    /// set via [`set_resolver`], also sends `SetWorkDir` so that
-    /// `AgentCore::current_work_dir` is updated for tool execution.
+    /// Synchronously updates the session's workspace ID and resolved work_dir
+    /// on the shared [`SessionCore`] Arc — no channel delay. Also persists the
+    /// workspace_id to JSONL via async message.
+    ///
+    /// When `resolver` is available, resolves the workspace_id to a filesystem
+    /// path and writes it to `current_work_dir` synchronously.
     pub fn set_session_workspace(&mut self, session_id: &str, workspace_id: &str) {
-        self.session_workspaces
-            .insert(session_id.to_string(), workspace_id.to_string());
         // Remove from pending if the workspace is now active
         self.pending_workspaces.remove(session_id);
         tracing::info!(
             session_id = %session_id,
             workspace_id = %workspace_id,
-            "SessionManager: session workspace updated"
+            "SessionManager: session workspace updated (synchronous)"
         );
-        // Persist to the session's JSONL conversation file
+
         if let Some(handle) = self.sessions.get(session_id) {
+            // Write workspace_id synchronously — emit_session_state and
+            // list_sessions will see the new value immediately.
+            *handle.workspace_id.write().unwrap() = workspace_id.to_string();
+
+            // Resolve and write current_work_dir synchronously
+            if let Some(ref resolver) = self.resolver {
+                let guard = resolver.read().unwrap();
+                let resolved_path = if workspace_id == "__agent_home__" {
+                    guard.agent_home().to_string()
+                } else {
+                    guard
+                        .find_by_id(workspace_id)
+                        .map(|d| d.path.clone())
+                        .unwrap_or_else(|| guard.agent_home().to_string())
+                };
+                *handle.current_work_dir.write().unwrap() = Some(resolved_path);
+            }
+
+            // Persist to JSONL (async, non-blocking)
             let _ = handle.send(SessionMessage::SetWorkspaceId {
                 workspace_id: workspace_id.to_string(),
             });
         }
-        // When resolver is available, also send SetWorkDir so that
-        // AgentCore::current_work_dir is updated for tool execution.
-        // Without this, the session would keep using the default agent_home
-        // path until an explicit SetSessionWorkspace message arrives from
-        // the Gateway.
-        if let Some(ref resolver) = self.resolver {
-            let (resolved_path, _is_home) = {
-                let guard = resolver.read().unwrap();
-                self.current_dir_for(session_id, &guard)
-            };
-            if let Some(handle) = self.sessions.get(session_id) {
-                let _ = handle.send(SessionMessage::SetWorkDir {
-                    path: resolved_path,
-                });
-            }
-        }
     }
 
-    /// Set the session workspace and also send the resolved workspace path
-    /// for tool execution. This is the preferred method when the resolver
-    /// is available.
+    /// Set the session workspace and send the resolved workspace path
+    /// for tool execution. Kept for API compatibility with callers that
+    /// already hold a resolver guard.
     pub fn set_session_workspace_with_resolver(
         &mut self,
         session_id: &str,
         workspace_id: &str,
-        resolver: &WorkspaceResolver,
+        _resolver: &WorkspaceResolver,
     ) {
+        // set_session_workspace already handles resolver internally
         self.set_session_workspace(session_id, workspace_id);
-        // Resolve and send the workspace path for tool execution
-        let (resolved_path, _is_home) = self.current_dir_for(session_id, resolver);
-        if let Some(handle) = self.sessions.get(session_id) {
-            let _ = handle.send(SessionMessage::SetWorkDir {
-                path: resolved_path,
-            });
-        }
     }
 
     /// Get the current workspace ID for a session.
-    /// Returns `"__agent_home__"` if the session has no explicit workspace set.
-    pub fn session_workspace_id(&self, session_id: &str) -> &str {
-        self.session_workspaces
+    /// Returns `"__agent_home__"` if the session has no explicit workspace set
+    /// or the session is not found.
+    pub fn session_workspace_id(&self, session_id: &str) -> String {
+        self.sessions
             .get(session_id)
-            .map(|s| s.as_str())
-            .unwrap_or("__agent_home__")
+            .map(|h| h.workspace_id.read().unwrap().clone())
+            .unwrap_or_else(|| "__agent_home__".to_string())
     }
 
     /// Get the current working directory path for a session.
@@ -1504,7 +1501,7 @@ After installation, ask the user to re-enable the MCP server.",
         if ws_id == "__agent_home__" {
             return (resolver.agent_home().to_string(), true);
         }
-        match resolver.find_by_id(ws_id) {
+        match resolver.find_by_id(&ws_id) {
             Some(dir) => (dir.path.clone(), false),
             None => {
                 tracing::warn!(
@@ -1530,8 +1527,8 @@ After installation, ask the user to re-enable the MCP server.",
             .expect("set_resolver must be called before any workspace context update");
         let resolver_guard = resolver.read().unwrap();
         let ws_id = self.session_workspace_id(session_id);
-        let context_text = format_workspace_context_for_session(&resolver_guard, ws_id);
-        let prompt_file_content = resolver_guard.read_prompt_file(ws_id);
+        let context_text = format_workspace_context_for_session(&resolver_guard, &ws_id);
+        let prompt_file_content = resolver_guard.read_prompt_file(&ws_id);
         if let Some(handle) = self.sessions.get(session_id) {
             let has_prompt_file = prompt_file_content.is_some();
             let _ = handle.send(SessionMessage::UpdateWorkspaceContext { context_text });
@@ -1568,19 +1565,23 @@ After installation, ask the user to re-enable the MCP server.",
     /// to agent home.
     pub fn reconcile_deleted_workspaces(&mut self, resolver: &WorkspaceResolver) {
         let mut changes: Vec<(String, String)> = Vec::new();
-        for (sid, ws_id) in &self.session_workspaces {
+        // Collect sessions whose workspace was deleted
+        for (sid, handle) in &self.sessions {
+            let ws_id = handle.workspace_id.read().unwrap().clone();
             if ws_id == "__agent_home__" {
                 continue;
             }
-            if resolver.find_by_id(ws_id).is_none() {
-                changes.push((sid.clone(), ws_id.clone()));
+            if resolver.find_by_id(&ws_id).is_none() {
+                changes.push((sid.clone(), ws_id));
             }
         }
         for (sid, old_ws_id) in changes {
             self.pending_workspaces
                 .insert(sid.clone(), old_ws_id.clone());
-            self.session_workspaces
-                .insert(sid.clone(), "__agent_home__".to_string());
+            if let Some(handle) = self.sessions.get(&sid) {
+                *handle.workspace_id.write().unwrap() = "__agent_home__".to_string();
+                *handle.current_work_dir.write().unwrap() = Some(resolver.agent_home().to_string());
+            }
             tracing::info!(
                 session_id = %sid,
                 old_workspace_id = %old_ws_id,
@@ -1592,6 +1593,13 @@ After installation, ask the user to re-enable the MCP server.",
     /// Get the pending workspace ID for a session, if any.
     pub fn pending_workspace_id(&self, session_id: &str) -> Option<&str> {
         self.pending_workspaces.get(session_id).map(|s| s.as_str())
+    }
+
+    /// Register a pending workspace for a session (when the workspace
+    /// doesn't exist in the resolver yet, but may be re-added later).
+    pub fn add_pending_workspace(&mut self, session_id: &str, workspace_id: &str) {
+        self.pending_workspaces
+            .insert(session_id.to_string(), workspace_id.to_string());
     }
 
     /// Fire the urgent_stop notify for a specific session.

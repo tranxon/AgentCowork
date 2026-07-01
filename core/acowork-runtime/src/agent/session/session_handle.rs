@@ -3,7 +3,7 @@
 //! Provides a typed interface for sending messages to a session and
 //! checking whether the session task is still alive.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
 use tokio::sync::mpsc;
@@ -57,6 +57,14 @@ pub struct SessionHandle {
     /// `GET /api/agents/{id}/sessions/{session_id}/state` handler.
     pub(crate) snapshot_slot:
         Arc<std::sync::RwLock<Option<SessionStateSnapshot>>>,
+    /// Per-session workspace ID. Single source of truth, shared with [`SessionCore`].
+    /// Written synchronously by [`SessionManager::set_session_workspace`],
+    /// read by `list_sessions` and `current_dir_for`.
+    pub(crate) workspace_id: Arc<RwLock<String>>,
+    /// Resolved workspace directory path, shared with [`SessionCore`].
+    /// Written synchronously by SessionManager alongside `workspace_id`,
+    /// read by the HTTP tree/find handlers.
+    pub(crate) current_work_dir: Arc<RwLock<Option<String>>>,
 }
 
 impl SessionHandle {

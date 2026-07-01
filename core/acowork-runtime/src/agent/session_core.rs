@@ -8,7 +8,7 @@
 //! `AgentCore` template at session creation time.
 
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use chrono::Utc;
 use tokio::sync::mpsc;
@@ -94,8 +94,18 @@ pub(crate) struct SessionCore {
     pub(crate) retry_wait_handle:
         Option<crate::providers::reliable::RetryWaitHandle>,
 
+    /// Per-session workspace ID. Single source of truth for workspace selection.
+    /// Defaults to `"__agent_home__"`. Updated synchronously by SessionManager
+    /// when the user switches workspace — no channel delay.
+    ///
+    /// Shared with [`SessionHandle`] so that `list_sessions` and
+    /// `emit_session_state` always see the latest value.
+    pub(crate) workspace_id: Arc<RwLock<String>>,
+
     /// Current workspace directory for tool execution.
-    pub(crate) current_work_dir: Option<String>,
+    /// Resolved from `workspace_id` via WorkspaceResolver.
+    /// Updated synchronously by SessionManager alongside workspace_id.
+    pub(crate) current_work_dir: Arc<RwLock<Option<String>>>,
 
     /// Approval handle for shell command risk confirmation (Gateway mode).
     /// None in CLI mode.
@@ -110,7 +120,8 @@ impl SessionCore {
         chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
         committed_lines: Arc<AtomicUsize>,
         notify_interval_ms: u64,
-        initial_work_dir: Option<String>,
+        workspace_id: Arc<RwLock<String>>,
+        current_work_dir: Arc<RwLock<Option<String>>>,
         streaming_lines: StreamingStateMap,
     ) -> Self {
         Self {
@@ -129,7 +140,8 @@ impl SessionCore {
                 SessionStatus::Streaming { message_id: None },
             ))),
             retry_wait_handle: Some(RetryWaitHandle::new()),
-            current_work_dir: initial_work_dir,
+            workspace_id,
+            current_work_dir,
             approval_handle: None,
         }
     }
@@ -171,6 +183,8 @@ impl SessionCore {
         // Cold start: scan file once to initialize.
         let count = self
             .current_work_dir
+            .read()
+            .unwrap()
             .as_ref()
             .map(|wd| {
                 let jsonl_path = std::path::PathBuf::from(wd)
@@ -448,12 +462,15 @@ mod tests {
         let (tx, rx) = mpsc::channel(16);
         let streaming_lines: StreamingStateMap =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let workspace_id = Arc::new(RwLock::new("__agent_home__".to_string()));
+        let current_work_dir = Arc::new(RwLock::new(None));
         let core = SessionCore::new(
             "s1".to_string(),
             Some(tx),
             Arc::new(AtomicUsize::new(0)),
             500,
-            None,
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
         core.notify_enabled.store(enabled, Ordering::Relaxed);
@@ -474,13 +491,18 @@ mod tests {
         let streaming_lines: StreamingStateMap =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
         let committed_lines = Arc::new(AtomicUsize::new(0));
+        let workspace_id = Arc::new(RwLock::new("__agent_home__".to_string()));
+        let current_work_dir = Arc::new(RwLock::new(Some(
+            work_dir.to_string_lossy().to_string(),
+        )));
 
         let core = SessionCore::new(
             session_id.to_string(),
             Some(tx),
             committed_lines.clone(),
             500,
-            Some(work_dir.to_string_lossy().to_string()),
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
         core.notify_enabled.store(true, Ordering::Relaxed);

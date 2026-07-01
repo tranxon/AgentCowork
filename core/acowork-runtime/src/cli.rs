@@ -1727,8 +1727,7 @@ async fn process_gateway_recv(
                             "SetSessionWorkspace: workspace not in list, setting as pending + fallback"
                         );
                         session_manager
-                            .pending_workspaces
-                            .insert(session_id.clone(), workspace_id.clone());
+                            .add_pending_workspace(&session_id, &workspace_id);
                         session_manager.set_session_workspace_with_resolver(
                             &session_id,
                             "__agent_home__",
@@ -2830,7 +2829,7 @@ async fn handle_list_sessions(
             let workspace_id = if ws_id == "__agent_home__" {
                 None
             } else {
-                Some(ws_id.to_string())
+                Some(ws_id)
             };
             acowork_core::protocol::SessionInfoDto {
                 session_id: s.session_id,

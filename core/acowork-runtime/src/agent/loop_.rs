@@ -266,12 +266,16 @@ impl AgentLoop {
         );
         let streaming_lines: crate::conversation::StreamingStateMap =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let workspace_id = Arc::new(std::sync::RwLock::new("__agent_home__".to_string()));
+        let current_work_dir =
+            Arc::new(std::sync::RwLock::new(Some(config.work_dir.clone())));
         let session_core = SessionCore::new(
             String::new(), // session_id set later
             chunk_tx,
             Arc::new(std::sync::atomic::AtomicUsize::new(0)), // committed_lines placeholder
             config.data_flow.notify_interval_ms,
-            Some(config.work_dir.clone()),
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
         let mut loop_ = Self {
@@ -383,9 +387,8 @@ impl AgentLoop {
             .find(|t| t.spec().name == name)
             .ok_or_else(|| format!("Tool not found: {}", name))?;
 
-        match tool
-            .execute(params, self.session_core.current_work_dir.as_deref())
-            .await
+        let work_dir = self.session_core.current_work_dir.read().unwrap().clone();
+        match tool.execute(params, work_dir.as_deref()).await
         {
             Ok(result) if result.ok => Ok(result.content),
             Ok(result) => Err(result
@@ -2560,12 +2563,15 @@ mod tests {
 
         let streaming_lines: crate::conversation::StreamingStateMap =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let workspace_id = Arc::new(std::sync::RwLock::new("__agent_home__".to_string()));
+        let current_work_dir = Arc::new(std::sync::RwLock::new(None));
         let session_core = SessionCore::new(
             "test-session".to_string(),
             Some(chunk_tx),
             Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             500,
-            None,
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
 
@@ -2589,12 +2595,15 @@ mod tests {
         // In standalone mode, chunk_tx is None → try_send_chunk returns false.
         let streaming_lines: crate::conversation::StreamingStateMap =
             Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let workspace_id = Arc::new(std::sync::RwLock::new("__agent_home__".to_string()));
+        let current_work_dir = Arc::new(std::sync::RwLock::new(None));
         let session_core = SessionCore::new(
             "test-session".to_string(),
             None,
             Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             500,
-            None,
+            workspace_id,
+            current_work_dir,
             streaming_lines,
         );
 
