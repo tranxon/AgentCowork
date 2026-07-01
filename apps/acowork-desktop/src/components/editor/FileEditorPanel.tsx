@@ -6,10 +6,11 @@ import { useSettingsStore } from "../../stores/settingsStore";
 import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { useChatStore } from "../../stores/chatStore";
 import { useAgentStore } from "../../stores/agentStore";
+import { useLayoutStore } from "../../stores/layoutStore";
 import { useLspClientPool, type LspStatus } from "../../hooks/useLspClientPool";
 import { cn } from "../../lib/utils";
 import { getGatewayUrl } from "../../lib/config";
-import { X, Save, Loader2, FileText, CircleDot, Circle, Copy, Check, MessageSquarePlus, Play, AlertTriangle, Eye } from "lucide-react";
+import { X, Save, Loader2, FileText, CircleDot, Circle, Copy, Check, MessageSquarePlus, Play, AlertTriangle, Eye, Locate } from "lucide-react";
 import Editor, { type OnMount } from "@monaco-editor/react";
 import { ScrollableTabBar } from "../common/ScrollableTabBar";
 import { TabItem } from "../common/tab";
@@ -368,6 +369,9 @@ export function FileEditorPanel({ width }: { width: number }) {
     const addAttachedContext = useChatStore((s) => s.addAttachedContext);
     const getActiveSessionId = useChatStore((s) => s.getActiveSessionId);
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
+    const sessionWorkspaceMap = useWorkspaceStore((s) => s.sessionWorkspaceMap);
+    const requestLocate = useWorkspaceStore((s) => s.requestLocate);
+    const requestShowWorkspacePanel = useLayoutStore((s) => s.requestShowWorkspacePanel);
 
     const theme = useSettingsStore((s) => s.theme);
     const fontSize = useSettingsStore((s) => s.fontSize);
@@ -409,6 +413,40 @@ export function FileEditorPanel({ width }: { width: number }) {
     const codeEditorOverriddenRef = useRef(false);
 
     const activeFile = openFiles.find((f) => f.id === activeFileId) ?? null;
+
+    // ── Locate-in-tree eligibility ──────────────────────────────────
+    // The button is only enabled when the active file lives in the currently
+    // selected agent AND the currently active session's workspace. Otherwise
+    // the workspace tree wouldn't actually contain this file (or it'd be the
+    // wrong file), and revealing it would be misleading.
+    const activeSessionId = selectedAgentId ? getActiveSessionId(selectedAgentId) : null;
+    const currentWorkspaceId = activeSessionId
+        ? (sessionWorkspaceMap[activeSessionId] ?? "__agent_home__")
+        : null;
+
+    type LocateDisabledReason = "no-file" | "loading" | "url-preview" | "wrong-agent" | "wrong-workspace" | null;
+    const locateDisabledReason: LocateDisabledReason = (() => {
+        if (!activeFile) return "no-file";
+        if (activeFile.loading) return "loading";
+        if (activeFile.kind === "url") return "url-preview";
+        if (activeFile.agentId !== selectedAgentId) return "wrong-agent";
+        if (currentWorkspaceId !== null && activeFile.workspaceId !== currentWorkspaceId) return "wrong-workspace";
+        return null;
+    })();
+    const locateDisabled = locateDisabledReason !== null;
+
+    const handleLocateInTree = useCallback(() => {
+        if (!activeFile || locateDisabled || !selectedAgentId || !activeSessionId) return;
+        // Force the workspace panel to be visible — the AppLayout effect
+        // consumes workspacePanelRequestSeq and expands the panel.
+        requestShowWorkspacePanel();
+        requestLocate({
+            agentId: activeFile.agentId,
+            workspaceId: activeFile.workspaceId,
+            sessionId: activeSessionId,
+            relPath: activeFile.relPath,
+        });
+    }, [activeFile, locateDisabled, selectedAgentId, activeSessionId, requestShowWorkspacePanel, requestLocate]);
 
     // Resolve workspace root for LSP URI mapping.
     // Monaco's Uri.parse() cannot handle Windows file URIs (file:///C:/...),
@@ -1263,6 +1301,32 @@ export function FileEditorPanel({ width }: { width: number }) {
                         );
                     })}
                 </ScrollableTabBar>
+
+                {/* Locate-in-tree button — only for workspace files (not URL previews).
+                    Disabled (greyed out) when the file belongs to a different agent
+                    or a different workspace than the currently active session. */}
+                {activeFile && (
+                    <Tooltip
+                        content={locateDisabledReason
+                            ? t(`fileEditor.locateDisabled.${locateDisabledReason}`)
+                            : t("fileEditor.locateInTree")}
+                        variant="plain"
+                    >
+                        <button
+                            aria-label={t("fileEditor.locateInTree")}
+                            onClick={handleLocateInTree}
+                            disabled={locateDisabled}
+                            className={cn(
+                                "flex items-center justify-center rounded p-1 transition-colors shrink-0",
+                                locateDisabled
+                                    ? "text-zinc-300 dark:text-zinc-600 cursor-not-allowed"
+                                    : "text-zinc-500 hover:bg-zinc-200 hover:text-[var(--color-accent)] dark:hover:bg-zinc-700",
+                            )}
+                        >
+                            <Locate className="h-3.5 w-3.5" />
+                        </button>
+                    </Tooltip>
+                )}
 
                 {/* Save button — only for editable files in edit mode */}
                 {activeFile && !activeFile.loading && activeFile.mode === "edit" && (

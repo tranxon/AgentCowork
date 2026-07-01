@@ -59,6 +59,21 @@ export interface FileFindResponse {
 /** Cache key: `${agentId}:${workspaceId}:${relPath}` → TreeEntry[] */
 type TreeCacheKey = string;
 
+/**
+ * One-shot "reveal this file in the workspace tree" request. Subscribers
+ * (FileTree, AppLayout) compare `seq` against their last-consumed value to
+ * detect re-clicks even when the same file is requested twice in a row.
+ */
+export interface LocateRequest {
+  agentId: string;
+  workspaceId: string;
+  sessionId: string;
+  /** Forward-slash relative path within the workspace (e.g. "src/foo/bar.ts"). */
+  relPath: string;
+  /** Monotonically-increasing counter; bumped on every request. */
+  seq: number;
+}
+
 interface WorkspaceState {
   workspaces: WorkspaceDir[];
   /** Per-session current workspace selection. "__agent_home__" = agent home. */
@@ -110,6 +125,15 @@ interface WorkspaceState {
   // Invalidate tree cache for an agent (e.g. when workspace changes)
   invalidateTreeCache: (agentId: string) => void;
 
+  /**
+   * Latest "locate file in tree" request, or null. Each call to
+   * `requestLocate` overwrites this value (with a fresh `seq`) so subscribers
+   * can re-trigger even when the target path is unchanged.
+   */
+  locateRequest: LocateRequest | null;
+  /** Publish a locate request. Subscribers should compare `seq` to act. */
+  requestLocate: (req: Omit<LocateRequest, "seq">) => void;
+
   // Create a new empty file in the workspace
   createFile: (agentId: string, workspaceId: string, path: string) => Promise<boolean>;
 
@@ -151,6 +175,7 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   treeCache: {},
   treeRoots: {},
   treeLoadingPaths: new Set<string>(),
+  locateRequest: null,
 
   fetchWorkspaces: async (agentId: string) => {
     const seq = ++requestSeq;
@@ -367,6 +392,18 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
     });
   },
 
+  requestLocate: (req) => {
+    set((state) => ({
+      locateRequest: {
+        agentId: req.agentId,
+        workspaceId: req.workspaceId,
+        sessionId: req.sessionId,
+        relPath: req.relPath,
+        seq: (state.locateRequest?.seq ?? 0) + 1,
+      },
+    }));
+  },
+
   createFile: async (agentId: string, workspaceId: string, path: string) => {
     try {
       const baseUrl = getGatewayUrl();
@@ -524,7 +561,16 @@ export const useWorkspaceStore = create<WorkspaceState>((set, get) => ({
   },
 
   reset: () => {
-    set({ workspaces: [], sessionWorkspaceMap: {}, loading: false, treeCache: {}, treeRoots: {}, treeLoadingPaths: new Set(), copiedEntry: null });
+    set({
+      workspaces: [],
+      sessionWorkspaceMap: {},
+      loading: false,
+      treeCache: {},
+      treeRoots: {},
+      treeLoadingPaths: new Set(),
+      copiedEntry: null,
+      locateRequest: null,
+    });
   },
 }));
 

@@ -624,6 +624,8 @@
     "batchCloseOthersConfirm": "他の {{count}} 個のタブに未保存の変更があります。破棄して閉じますか？",
     "batchCloseAllConfirm": "{{count}} 個のタブに未保存の変更があります。破棄してすべて閉じますか？",
     "save": "保存 (Ctrl+S)",
+    "locateInTree": "ファイルツリーで位置を表示",
+    "locateDisabled": { "no-file": "ファイルが開かれていません", "loading": "ファイルを読込中です", "url-preview": "URL プレビューはワークスペースの一部ではありません", "wrong-agent": "このファイルは別のエージェントに属しています", "wrong-workspace": "このファイルは別のワークスペースに属しています" },
     "copy": "コピー",
     "previewBadge": "プレビュー",
     "previewLoading": "プレビューを読み込み中...",

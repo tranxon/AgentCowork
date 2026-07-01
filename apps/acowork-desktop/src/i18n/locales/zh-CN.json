@@ -627,6 +627,8 @@
     "batchCloseOthersConfirm": "其他 {{count}} 个标签有未保存的更改。放弃并关闭？",
     "batchCloseAllConfirm": "{{count}} 个标签有未保存的更改。放弃并全部关闭？",
     "save": "保存 (Ctrl+S)",
+    "locateInTree": "在文件树中定位",
+    "locateDisabled": { "no-file": "当前未打开任何文件", "loading": "文件正在加载中", "url-preview": "URL 预览不属于工作区", "wrong-agent": "此文件属于其他 Agent", "wrong-workspace": "此文件属于其他工作区" },
     "copy": "复制",
     "previewBadge": "预览",
     "previewLoading": "正在加载预览...",

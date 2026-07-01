@@ -622,6 +622,8 @@
     "batchCloseOthersConfirm": "其他 {{count}} 個分頁有未儲存的變更。放棄並關閉？",
     "batchCloseAllConfirm": "{{count}} 個分頁有未儲存的變更。放棄並全部關閉？",
     "save": "儲存 (Ctrl+S)",
+    "locateInTree": "在檔案樹中定位",
+    "locateDisabled": { "no-file": "目前未開啟任何檔案", "loading": "檔案正在載入中", "url-preview": "URL 預覽不屬於工作區", "wrong-agent": "此檔案屬於其他 Agent", "wrong-workspace": "此檔案屬於其他工作區" },
     "copy": "複製",
     "previewBadge": "預覽",
     "previewLoading": "正在載入預覽...",

@@ -622,6 +622,8 @@
     "batchCloseOthersConfirm": "다른 {{count}}개 탭에 저장되지 않은 변경사항이 있습니다. 삭제하고 닫으시겠습니까?",
     "batchCloseAllConfirm": "{{count}}개 탭에 저장되지 않은 변경사항이 있습니다. 모두 삭제하고 닫으시겠습니까?",
     "save": "Save (Ctrl+S)",
+    "locateInTree": "파일 트리에서 찾기",
+    "locateDisabled": { "no-file": "열린 파일이 없습니다", "loading": "파일을 불러오는 중입니다", "url-preview": "URL 미리보기는 작업 공간에 포함되지 않습니다", "wrong-agent": "이 파일은 다른 에이전트에 속합니다", "wrong-workspace": "이 파일은 다른 작업 공간에 속합니다" },
     "copy": "Copy",
     "previewBadge": "미리보기",
     "previewLoading": "미리보기 로딩 중...",

@@ -33,6 +33,7 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
     const fetchTree = useWorkspaceStore((s) => s.fetchTree);
     const treeLoadingPaths = useWorkspaceStore((s) => s.treeLoadingPaths);
     const toggleTreeExpandedPath = useChatStore((s) => s.toggleTreeExpandedPath);
+    const expandTreeToPath = useChatStore((s) => s.expandTreeToPath);
     const selectedAgentId = useAgentStore((s) => s.selectedAgentId);
 
     /** Build cache key prefix: agentId:workspaceId (tree cache is NOT per-session) */
@@ -72,6 +73,44 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
             fetchTree(agentId, workspaceId, "");
         }
     }, [agentId, workspaceId, fetchTree]);
+
+    // ── Locate-in-tree: expand ancestors, lazy-load, select, scroll ───
+    // The FileEditorPanel's "locate" button publishes a request via
+    // workspaceStore.requestLocate. We expand all ancestor directories
+    // synchronously, kick off `fetchTree` for any not-yet-cached ancestor,
+    // then poll flatNodes until the target node appears so we can select
+    // and center-scroll it.
+    const locateRequest = useWorkspaceStore((s) => s.locateRequest);
+    const consumedLocateSeqRef = useRef<number>(-1);
+
+    // Step 1+2: expand ancestors and pre-fetch (only runs once per request).
+    useEffect(() => {
+        if (!locateRequest) return;
+        if (locateRequest.agentId !== agentId) return;
+        if (locateRequest.workspaceId !== workspaceId) return;
+        if (locateRequest.sessionId !== sessionId) return;
+        if (consumedLocateSeqRef.current === locateRequest.seq) return;
+        consumedLocateSeqRef.current = locateRequest.seq;
+
+        const { relPath } = locateRequest;
+
+        // Expand ancestor dirs (synchronous Zustand update).
+        expandTreeToPath(agentId, sessionId, relPath);
+
+        // Lazy-fetch each ancestor dir that isn't already cached so the
+        // target node eventually appears in flatNodes.
+        const parts = relPath.split("/");
+        const ancestors: string[] = [];
+        for (let i = 0; i < parts.length - 1; i++) {
+            ancestors.push(parts.slice(0, i + 1).join("/"));
+        }
+        for (const p of ancestors) {
+            const key = `${treeCachePrefix}:${p}`;
+            if (!treeCache[key]) {
+                void fetchTree(agentId, workspaceId, p);
+            }
+        }
+    }, [locateRequest, agentId, workspaceId, sessionId, treeCachePrefix, treeCache, expandTreeToPath, fetchTree]);
 
     // Flatten the tree into a list respecting expanded state
     const flatNodes = useMemo<FlatNode[]>(() => {
@@ -123,6 +162,23 @@ export function FileTree({ agentId, workspaceId, sessionId, onFileDoubleClick, o
         estimateSize: () => rowHeight,
         overscan: 20,
     });
+
+    // Step 3 of locate-in-tree: select the matched node and center-scroll it.
+    // Re-runs whenever flatNodes changes, so once the lazy-loaded children
+    // arrive in the cache we'll center-scroll automatically.
+    useEffect(() => {
+        if (!locateRequest) return;
+        if (consumedLocateSeqRef.current !== locateRequest.seq) return;
+        const idx = flatNodes.findIndex((n) => n.relPath === locateRequest.relPath);
+        if (idx < 0) return;
+        setSelectedPath(locateRequest.relPath);
+        // Defer one frame so the virtualizer has updated totalSize for the
+        // newly-loaded flatNodes length before we ask it to scroll.
+        const frame = requestAnimationFrame(() => {
+            virtualizer.scrollToIndex(idx, { align: "center" });
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [flatNodes, locateRequest, virtualizer]);
 
     // Empty state
     if (flatNodes.length === 0) {

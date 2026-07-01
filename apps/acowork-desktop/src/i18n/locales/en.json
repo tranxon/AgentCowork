@@ -705,6 +705,8 @@
     "batchCloseOthersConfirm": "{{count}} other tab(s) have unsaved changes. Discard and close?",
     "batchCloseAllConfirm": "{{count}} tab(s) have unsaved changes. Discard and close all?",
     "save": "Save (Ctrl+S)",
+    "locateInTree": "Locate in file tree",
+    "locateDisabled": { "no-file": "No file is open", "loading": "File is still loading", "url-preview": "URL previews are not part of the workspace", "wrong-agent": "This file belongs to a different agent", "wrong-workspace": "This file belongs to a different workspace" },
     "copy": "Copy",
     "previewBadge": "Preview",
     "previewLoading": "Loading preview...",

@@ -340,6 +340,15 @@ interface ChatStore {
   compactContext: (agentId: string, sessionId: string) => void;
   /** Toggle a file tree directory expansion (per-session) */
   toggleTreeExpandedPath: (agentId: string, sessionId: string, relPath: string) => void;
+  /**
+   * Ensure all ancestor directories of `relPath` are expanded in the session's
+   * file tree (additive merge with existing expansions). Idempotent. No-op for
+   * `relPath === ""` or files directly at the workspace root.
+   *
+   * Example: for `src/components/Foo.tsx` this adds "src" and
+   * "src/components" to `treeExpandedPaths` without removing other expansions.
+   */
+  expandTreeToPath: (agentId: string, sessionId: string, relPath: string) => void;
   /** Add a file/directory/selection to attached chat context */
   addAttachedContext: (agentId: string, sessionId: string, item: { id: string; type: "file" | "directory" | "selection"; name: string; absPath: string; startLine?: number; endLine?: number }) => void;
   /** Remove a file/directory from attached chat context */
@@ -1456,6 +1465,29 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         ? current.filter((p) => p !== relPath)
         : [...current, relPath];
       return updateSessionState(state, agentId, sessionId, { treeExpandedPaths: next });
+    });
+  },
+
+  expandTreeToPath: (agentId, sessionId, relPath) => {
+    if (!relPath) return;
+    const parts = relPath.split("/");
+    if (parts.length <= 1) return;
+    set((state) => {
+      const ss = getSessionState(state, agentId, sessionId);
+      const current = ss.treeExpandedPaths;
+      const set_ = new Set(current);
+      let changed = false;
+      for (let i = 0; i < parts.length - 1; i++) {
+        const ancestor = parts.slice(0, i + 1).join("/");
+        if (!set_.has(ancestor)) {
+          set_.add(ancestor);
+          changed = true;
+        }
+      }
+      if (!changed) return state;
+      return updateSessionState(state, agentId, sessionId, {
+        treeExpandedPaths: Array.from(set_),
+      });
     });
   },
 

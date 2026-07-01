@@ -17,14 +17,14 @@ import { cn } from "../../lib/utils";
 import { SettingsPage } from "../settings/SettingsPage";
 import { HarnessPage } from "../harness/HarnessPage";
 import { useChatStore } from "../../stores/chatStore";
+import { useLayoutStore, type PanelTab } from "../../stores/layoutStore";
+import { useWorkspaceStore } from "../../stores/workspaceStore";
 import { getGatewayUrl } from "../../lib/config";
 import { useTranslation } from "../../i18n/useTranslation";
 import { Bot, MessagesSquare, Cpu } from "lucide-react";
 
 /** Settings tab type — keep in sync with SettingsPage */
 type SettingsTab = "gateway" | "appearance" | "general" | "profile";
-type PanelTab = "debug" | "status" | "setup" | "tools" | "memory" | "workspace";
-
 const MIN_SIDEBAR_WIDTH = 100;
 const AVATAR_SIDEBAR_WIDTH = 64;
 const MAX_SIDEBAR_WIDTH = 400;
@@ -45,8 +45,10 @@ const MIN_CHAT_WIDTH = 288;
 export function AppLayout() {
   const [currentView, setCurrentView] = useState<NavView>("chat");
   const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>("gateway");
-  const [resultsCollapsed, setResultsCollapsed] = useState(false);
-  const [activeTab, setActiveTab] = useState<PanelTab>("workspace");
+  const activeTab = useLayoutStore((s) => s.activePanelTab);
+  const setActiveTab = useLayoutStore((s) => s.setActivePanelTab);
+  const resultsCollapsed = useLayoutStore((s) => s.resultsCollapsed);
+  const setResultsCollapsed = useLayoutStore((s) => s.setResultsCollapsed);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem(SIDEBAR_WIDTH_KEY);
     if (stored) {
@@ -172,6 +174,21 @@ export function AppLayout() {
     }
     prevRunning.current = isRunning;
   }, [selectedAgent?.running, activeTab]);
+
+  // ── Reveal workspace panel on locate-in-tree requests ────────────
+  // The FileEditorPanel's "locate" button publishes a request via
+  // workspaceStore.requestLocate; here we ensure the right-side results
+  // panel is expanded and the workspace tab is active so the user can
+  // actually see the revealed file.
+  const locateRequest = useWorkspaceStore((s) => s.locateRequest);
+  const consumedLocateSeqRef = useRef<number>(-1);
+  useEffect(() => {
+    if (!locateRequest) return;
+    if (locateRequest.seq <= consumedLocateSeqRef.current) return;
+    consumedLocateSeqRef.current = locateRequest.seq;
+    setResultsCollapsed(false);
+    setActiveTab("workspace");
+  }, [locateRequest, setResultsCollapsed, setActiveTab]);
 
   const isResizing = useRef(false);
   const startX = useRef(0);
