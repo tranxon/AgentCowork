@@ -859,7 +859,8 @@ async fn process_gateway_recv(
                         let initial_model = params.get("model").and_then(|v| v.as_str());
                         let initial_provider = params.get("provider").and_then(|v| v.as_str());
                         let new_session_id = crate::conversation::generate_session_id();
-                        let committed_lines = session_manager.committed_lines_obj();
+                        // Each session gets its own committed_lines counter.
+                        let committed_lines = SessionManager::new_committed_lines();
                         match crate::conversation::ConversationSession::new(
                             std::path::Path::new(work_dir),
                             &new_session_id,
@@ -870,13 +871,14 @@ async fn process_gateway_recv(
                                 provider: initial_provider.map(|s| s.to_string()),
                             },
                             max_sessions,
-                            committed_lines,
+                            committed_lines.clone(),
                         ) {
                             Ok(new_session) => {
                                 if let Err(e) = session_manager
                                     .create_session_with_id_and_conversation(
                                         new_session_id.clone(),
                                         Some(new_session),
+                                        Some(committed_lines),
                                     )
                                     .await
                                 {
@@ -2922,7 +2924,7 @@ async fn handle_get_session_messages(
             co,
             &session_manager.streaming_lines(),
             &session_id,
-            session_manager.committed_lines(),
+            session_manager.committed_lines_for(&session_id),
         ) {
             Ok(result) => {
                 let message_dtos: Vec<acowork_core::protocol::ConversationEntryDto> = result

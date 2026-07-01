@@ -206,7 +206,7 @@ pub(crate) async fn phase_b_init_session(
     let initial_session_id = if let Some(conv) = conversation_session {
         let sid = conv.session_id().to_string();
         session_manager
-            .create_session_with_id_and_conversation(sid.clone(), Some(conv))
+            .create_session_with_id_and_conversation(sid.clone(), Some(conv), Some(committed_lines.clone()))
             .await?;
         sid
     } else {

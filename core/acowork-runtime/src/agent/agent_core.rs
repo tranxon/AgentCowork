@@ -635,8 +635,8 @@ impl AgentCore {
             None => return,
         };
 
-        // Use committed_lines — O(1) atomic read, updated by writer thread
-        // after each physical disk write.  Never ahead of the actual file.
+        // Use committed_lines — shared with writer thread, correctly
+        // reflects per-session JSONL line count after each disk write.
         let total_lines = self.get_committed_lines(&sid);
 
         let map = self.streaming_lines.read().unwrap();
@@ -676,8 +676,15 @@ impl AgentCore {
         count
     }
 
-    /// Get the committed JSONL line count (updated by writer thread after
-    /// each physical disk write).  Initializes from file on first access.
+    /// Get the committed JSONL line count from the shared writer-thread
+    /// counter.  Each session shares the same `Arc<AtomicUsize>` between
+    /// this AgentCore and the background ConversationWriter — the writer
+    /// increments it after each physical disk write, so this value never
+    /// lies about what's actually on disk.
+    ///
+    /// Falls back to cold-start file scan if the counter hasn't been
+    /// initialized yet (e.g. resuming a session that hasn't received any
+    /// new writes since startup).
     fn get_committed_lines(&self, session_id: &str) -> usize {
         let cached = self.committed_lines.load(Ordering::Relaxed);
         if cached > 0 {
@@ -1081,10 +1088,15 @@ impl AgentCore {
     /// while value fields (config, manifest, capabilities) are deep-cloned.
     /// The `chunk_tx` channel and `session_id` are replaced with the caller-provided ones,
     /// since each session needs its own channel and identity.
+    ///
+    /// `committed_lines` must be the same Arc passed to the writer thread
+    /// (ConversationWriter) so that `notify_new_data_available` reads the
+    /// correct per-session count. Each session gets its own Arc instance.
     pub(crate) fn clone_for_session(
         &self,
         chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
         session_id: String,
+        committed_lines: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             config: self.config.clone(),
@@ -1104,7 +1116,7 @@ impl AgentCore {
             notify_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnableNotify
             last_notify_ts: Arc::new(AtomicI64::new(0)),    // per-session throttle, restarts at 0
             total_lines: Arc::new(AtomicUsize::new(0)),     // per-session, initialized on first use
-            committed_lines: Arc::new(AtomicUsize::new(0)), // per-session, updated by writer thread
+            committed_lines, // shared with writer thread, passed from SessionManager
             streaming_flush_count: Arc::new(AtomicU64::new(0)), // per-stream, reset in consume_stream
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),

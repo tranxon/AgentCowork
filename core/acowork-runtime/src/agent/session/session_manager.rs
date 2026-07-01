@@ -205,6 +205,11 @@ pub struct SessionManager {
     /// Keyed by session_id; fire_urgent_stop() looks up the target session's
     /// Notify and wakes only that session's tokio::select! branches.
     urgent_stops: HashMap<String, Arc<Notify>>,
+    /// Per-session committed_lines counter, shared between the writer thread
+    /// (ConversationWriter) and the session's AgentCore. Each session gets its
+    /// own independent counter; `committed_lines_for(session_id)` returns the
+    /// count for the correct JSONL file.
+    session_committed_lines: HashMap<String, Arc<std::sync::atomic::AtomicUsize>>,
     /// Pending embedding config from Gateway EmbeddingConfigUpdate.
     /// Stored for persistence and used on next Agent restart.
     pub pending_embed_config: Option<PendingEmbedConfig>,
@@ -227,6 +232,7 @@ impl SessionManager {
             runtime_debug_handles: None,
             debug_controllers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             urgent_stops: HashMap::new(),
+            session_committed_lines: HashMap::new(),
             pending_embed_config: None,
         }
     }
@@ -252,7 +258,7 @@ impl SessionManager {
     ///
     /// Useful for testing or when the session ID needs to be deterministic.
     pub async fn create_session_with_id(&mut self, session_id: String) -> Result<String> {
-        self.create_session_with_id_and_conversation(session_id, None)
+        self.create_session_with_id_and_conversation(session_id, None, None)
             .await
     }
 
@@ -261,10 +267,17 @@ impl SessionManager {
     /// When `conversation` is provided, the session is initialized with JSONL
     /// persistence enabled. This is used for the initial session on cold start
     /// when a previous conversation is resumed.
+    ///
+    /// `committed_lines` must be the same `Arc<AtomicUsize>` that was passed to
+    /// the `ConversationSession`'s writer thread. It is shared between the
+    /// session's AgentCore and the background writer so that
+    /// `notify_new_data_available` and HTTP poll handlers always read the
+    /// correct per-session line count.
     pub async fn create_session_with_id_and_conversation(
         &mut self,
         session_id: String,
         conversation: Option<ConversationSession>,
+        committed_lines: Option<Arc<std::sync::atomic::AtomicUsize>>,
     ) -> Result<String> {
         // Read the persisted workspace_id and model/provider before the conversation
         // is moved into SessionState, so we can restore them.
@@ -324,6 +337,10 @@ impl SessionManager {
         self.session_workspaces
             .insert(session_id.clone(), initial_workspace.clone());
         self.pending_workspaces.remove(&session_id);
+        // Store per-session committed_lines for HTTP handler access.
+        if let Some(ref cl) = committed_lines {
+            self.session_committed_lines.insert(session_id.clone(), cl.clone());
+        }
         let initial_work_dir = if let Some(ref resolver) = self.resolver {
             let guard = resolver.read().unwrap();
             if initial_workspace == "__agent_home__" {
@@ -337,6 +354,12 @@ impl SessionManager {
         } else {
             self.core.config.work_dir.clone()
         };
+
+        // For sessions without a persistent conversation, create a dummy
+        // committed_lines counter.  This session won't produce JSONL writes
+        // (no writer thread), so the counter stays at 0 — which is accurate.
+        let session_committed_lines = committed_lines
+            .unwrap_or_else(|| Arc::new(std::sync::atomic::AtomicUsize::new(0)));
 
         let (mut task, agent_inbound_tx) = SessionTask::new(
             self.core.clone(),
@@ -353,6 +376,7 @@ impl SessionManager {
             pending_debug_handles.clone(),
             self.runtime_overrides.clone(),
             Some(initial_work_dir),
+            session_committed_lines,
         );
 
         // ADR-014: Create watch channel for session status
@@ -703,7 +727,11 @@ impl SessionManager {
             return Ok(());
         }
 
-        let conv = crate::conversation::ConversationSession::resume(work_dir, session_id, self.core.committed_lines.clone())
+        // Each resumed session gets its own committed_lines counter.
+        // The writer thread (inside ConversationSession) increments it;
+        // the session's AgentCore reads it via clone_for_session.
+        let committed_lines = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let conv = crate::conversation::ConversationSession::resume(work_dir, session_id, committed_lines.clone())
             .map_err(|e| {
                 RuntimeError::Config(format!(
                     "Session not found on disk: {} ({})",
@@ -711,7 +739,7 @@ impl SessionManager {
                 ))
             })?;
 
-        self.create_session_with_id_and_conversation(session_id.to_string(), Some(conv))
+        self.create_session_with_id_and_conversation(session_id.to_string(), Some(conv), Some(committed_lines))
             .await?;
 
         tracing::info!(
@@ -1216,17 +1244,23 @@ After installation, ask the user to re-enable the MCP server.",
         self.core.total_lines.load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    /// ADR-022: Committed line count — updated by writer thread after each
-    /// disk write.  Used by `read_messages_since` to avoid returning a count
-    /// ahead of the actual file.
-    pub fn committed_lines(&self) -> usize {
-        self.core.committed_lines.load(std::sync::atomic::Ordering::Relaxed)
+    /// ADR-022: Per-session committed line count — updated by writer thread
+    /// after each disk write. Returns 0 if the session has no conversation
+    /// (no writer thread, e.g. ephemeral test sessions).
+    ///
+    /// Use `read_messages_since`'s fallback (file scan) when this returns 0.
+    pub fn committed_lines_for(&self, session_id: &str) -> usize {
+        self.session_committed_lines
+            .get(session_id)
+            .map(|arc| arc.load(std::sync::atomic::Ordering::Relaxed))
+            .unwrap_or(0)
     }
 
-    /// ADR-022: Return the shared `committed_lines` Arc for passing to
-    /// `ConversationSession::new()` / `resume()`.
-    pub fn committed_lines_obj(&self) -> Arc<std::sync::atomic::AtomicUsize> {
-        self.core.committed_lines.clone()
+    /// ADR-022: Create a fresh `committed_lines` Arc for a new session's
+    /// writer thread. The Arc is cloned and stored in
+    /// `session_committed_lines` by `create_session_with_id_and_conversation`.
+    pub fn new_committed_lines() -> Arc<std::sync::atomic::AtomicUsize> {
+        Arc::new(std::sync::atomic::AtomicUsize::new(0))
     }
 
     /// Get the name of the first available provider from the global cache.

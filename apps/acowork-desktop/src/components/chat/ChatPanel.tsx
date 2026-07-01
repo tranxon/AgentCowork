@@ -329,17 +329,26 @@ export function ChatPanel() {
   const isCompacting = sessionState?.isCompacting ?? false;
   const showCompactingItem = isCompacting;
 
-  // Working indicator — shown when the session is "streaming" but the agent
-  // has NOT YET responded to the current request. It fills the visual gap
-  // between session_status→streaming and the first poll response (~500-2000ms).
+  // Working indicator — shown when the session is "streaming" but no
+  // streaming placeholder message exists yet in the rendered messages.
+  // This covers the gap between session_status→streaming and the first
+  // new_data_available poll response (~500-2000ms, LLM call startup).
   //
-  // Condition: sending=true AND the last message in the array is the user's
-  // (meaning no assistant/thought streaming placeholder has arrived yet).
-  // We check the raw messages array (not grouped displayMessages) because
-  // thought-type placeholders are folded into explore_group items and would
-  // not be found by a surface-level scan.
-  const showWorkingItem = sending && messages.length > 0
-    && messages[messages.length - 1]?.type === 'user';
+  // We scan both plain messages AND items inside explore_group because
+  // thought-type streaming placeholders are folded into explore_group
+  // by the displayMessages memo and would NOT be found by a top-level scan.
+  const hasStreamingPlaceholder = displayMessages.some((m) => {
+    if ('id' in m && typeof m.id === 'string' && m.id.startsWith('msg-streaming-')) {
+      return true;
+    }
+    if ('items' in m && Array.isArray(m.items)) {
+      return (m.items as ChatMessage[]).some(
+        (item) => typeof item.id === 'string' && item.id.startsWith('msg-streaming-')
+      );
+    }
+    return false;
+  });
+  const showWorkingItem = sending && !hasStreamingPlaceholder;
 
   // Virtual scrolling: only render visible items (messages + optional compacting indicator).
   // Working indicator is rendered OUTSIDE the virtual list (below it) to avoid messing up

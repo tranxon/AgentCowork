@@ -401,11 +401,13 @@ impl SessionTask {
         // Resolved workspace directory for tool execution.
         // None = keep the default from AgentCore.config.work_dir.
         initial_work_dir: Option<String>,
+        // Per-session committed_lines counter, shared with the writer thread.
+        committed_lines: Arc<std::sync::atomic::AtomicUsize>,
     ) -> (Self, mpsc::Sender<InboundMessage>) {
         // Build the AgentLoop eagerly so its inbound sender can be exposed.
         // Heavy fields (provider, tools) are Arc-cloned (refcount only).
         let mut core_for_session =
-            core.clone_for_session(chunk_tx.clone(), session_id.clone());
+            core.clone_for_session(chunk_tx.clone(), session_id.clone(), committed_lines);
         // Set MCP tools and rebuild the merged dispatch list
         core_for_session.mcp_tools = mcp_tools;
         core_for_session.rebuild_all_tools();
