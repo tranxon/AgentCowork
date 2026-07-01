@@ -33,8 +33,8 @@
 
 import { useChatStore } from "../stores/chatStore";
 
-/** Initial polling interval in milliseconds */
-const POLL_INITIAL_MS = 500;
+/** Polling interval when no `interval_ms` is provided by backend (fallback). */
+const POLL_FALLBACK_MS = 500;
 /** Maximum backoff interval in milliseconds */
 const POLL_MAX_MS = 5000;
 /** Backoff multiplier per empty response */
@@ -49,7 +49,8 @@ const POLL_BACKOFF_MULTIPLIER = 2.0;
 export class PollingManager {
   private agentId: string;
   private sessionId: string;
-  private intervalMs: number;
+  private baseIntervalMs: number;
+  private currentIntervalMs: number;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lineNumber: number = 0;
   private charOffset: number = 0;
@@ -58,17 +59,25 @@ export class PollingManager {
   constructor(
     agentId: string,
     sessionId: string,
+    initialLineNumber?: number,
+    initialCharOffset?: number,
   ) {
     this.agentId = agentId;
     this.sessionId = sessionId;
-    this.intervalMs = POLL_INITIAL_MS;
+    this.baseIntervalMs = POLL_FALLBACK_MS;
+    this.currentIntervalMs = POLL_FALLBACK_MS;
+    // ADR-021 Phase 4: Initialize from store's last-known coordinates so
+    // the first scheduled poll doesn't start from line 0 and accidentally
+    // overwrite optimistically rendered messages.
+    if (initialLineNumber != null) this.lineNumber = initialLineNumber;
+    if (initialCharOffset != null) this.charOffset = initialCharOffset;
   }
 
   /** Start the polling loop. Idempotent — safe to call multiple times. */
   start(): void {
     if (this.running) return;
     this.running = true;
-    this.intervalMs = POLL_INITIAL_MS;
+    this.currentIntervalMs = this.baseIntervalMs;
     console.log(
       `[PollingManager] Starting poll for ${this.agentId}/${this.sessionId}`,
     );
@@ -89,37 +98,37 @@ export class PollingManager {
    * Called when a `new_data_available` WebSocket event arrives.
    * Updates the line coordinate and triggers an immediate poll.
    *
-   * The Runtime already throttles these notifications to ≤ 2/sec (500ms
-   * cooldown per ADR-021 §难点 1), so this method always fires an immediate
-   * fetch without additional frontend-side rate limiting.
+   * The Runtime already throttles these notifications to the configured
+   * `interval_ms` (from DataFlowConfig), so this method always fires an
+   * immediate fetch without additional frontend-side rate limiting.
    *
    * If the poller was stopped (e.g., by a previous done/error event but
    * the session was re-activated), it is restarted automatically.
    *
    * @param totalLines - Total JSONL line count from the backend notification.
+   * @param intervalMs - Notify throttle interval from backend (DataFlowConfig).
+   *                     Used as the base polling interval.  When omitted,
+   *                     POLL_FALLBACK_MS is used.
    */
-  notify(totalLines: number): void {
+  notify(totalLines: number, intervalMs?: number): void {
     if (!this.running) {
-      // Poller was stopped — restart it. This handles the case where
-      // the fallback timer expired during a long thinking phase but
-      // the session is still streaming.
       this.start();
     }
 
+    // Update base interval from backend notification if provided.
+    // This ensures the polling rate matches the Runtime's throttle rate.
+    if (intervalMs != null && intervalMs > 0) {
+      this.baseIntervalMs = intervalMs;
+      this.currentIntervalMs = intervalMs;
+    }
+
     // Update line number from the notification.
-    // NOTE: Do NOT reset charOffset here. The offset tracks how much
-    // of the streaming line content the frontend has already consumed.
-    // Resetting it to 0 on every notification causes the backend to
-    // return the full accumulated content each time, which the frontend
-    // then appends — producing exponential duplication and preventing
-    // incremental display. The offset is correctly maintained by poll
-    // responses (streaming.char_offset).
     if (totalLines > 0) {
       this.lineNumber = totalLines;
     }
 
     console.log(
-      `[PollingManager] notify: totalLines=${totalLines}`,
+      `[PollingManager] notify: totalLines=${totalLines}, intervalMs=${intervalMs ?? "not set"}`,
     );
 
     // Trigger immediate poll (cancel any pending timer first)
@@ -127,12 +136,15 @@ export class PollingManager {
     this.doPoll();
   }
 
-  /** Schedule the next fallback poll with current backoff interval */
+  /** Return the current base polling interval in ms. */
+  getIntervalMs(): number {
+    return this.baseIntervalMs;
+  }
   private scheduleNext(): void {
     if (!this.running) return;
     this.timer = setTimeout(() => {
       this.doPoll();
-    }, this.intervalMs);
+    }, this.currentIntervalMs);
   }
 
   /** Clear the fallback timer */
@@ -198,13 +210,13 @@ export class PollingManager {
         // with no data. The poller is stopped only by explicit stop()
         // calls (done/error/stopped/session_state_changed to idle).
         if (this.lineNumber === prevLineNumber && this.charOffset === 0) {
-          this.intervalMs = Math.min(
-            this.intervalMs * POLL_BACKOFF_MULTIPLIER,
+          this.currentIntervalMs = Math.min(
+            this.currentIntervalMs * POLL_BACKOFF_MULTIPLIER,
             POLL_MAX_MS,
           );
         } else {
           // New data — reset backoff
-          this.intervalMs = POLL_INITIAL_MS;
+          this.currentIntervalMs = this.baseIntervalMs;
         }
       }
 
@@ -239,7 +251,14 @@ export function startPolling(
   const key = managerKey(agentId, sessionId);
   let mgr = managers.get(key);
   if (!mgr) {
-    mgr = new PollingManager(agentId, sessionId);
+    // ADR-021 Phase 4: Read current poll coordinates from store so the first
+    // scheduled poll uses the correct lineNumber (not 0 by default), preventing
+    // accidental full-range fetches that could overwrite optimistic messages.
+    const store = useChatStore.getState();
+    const session = store.agentStates[agentId]?.sessionStates[sessionId];
+    const lineNumber = session?.pollLineNumber;
+    const charOffset = session?.pollCharOffset;
+    mgr = new PollingManager(agentId, sessionId, lineNumber, charOffset);
     managers.set(key, mgr);
   }
   mgr.start();
@@ -263,11 +282,14 @@ export function stopPolling(agentId: string, sessionId: string): void {
  * Creates a manager if one doesn't exist yet.
  *
  * @param totalLines - Total JSONL line count from backend.
+ * @param intervalMs - Notify throttle interval from backend (DataFlowConfig).
+ *                     Used as the polling interval base.
  */
 export function notifyNewData(
   agentId: string,
   sessionId: string,
   totalLines: number,
+  intervalMs?: number,
 ): void {
   const key = managerKey(agentId, sessionId);
   let mgr = managers.get(key);
@@ -275,7 +297,19 @@ export function notifyNewData(
     mgr = new PollingManager(agentId, sessionId);
     managers.set(key, mgr);
   }
-  mgr.notify(totalLines);
+  mgr.notify(totalLines, intervalMs);
+}
+
+/**
+ * Get the current polling interval for a session.
+ * Returns undefined if no manager exists (no streaming in progress).
+ */
+export function getPollingIntervalMs(
+  agentId: string,
+  sessionId: string,
+): number | undefined {
+  const key = managerKey(agentId, sessionId);
+  return managers.get(key)?.getIntervalMs();
 }
 
 /**

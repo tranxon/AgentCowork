@@ -79,6 +79,17 @@ impl AgentLoop {
         let mut reasoning_finished_at: Option<i64> = None;
         let mut reasoning_in_progress = false;
 
+        // ADR-022: No think tag state machine needed here.
+        // The provider layer (openai.rs ThinkTagParser) already splits
+        // delta.content containing <!think> tags into ReasoningContent +
+        // Content events. This loop only needs to handle the structural
+        // events and flush the streaming line on role transitions.
+        //
+        // Reset the streaming flush counter at the start of each stream.
+        // handle_text_response / prepare_tool_calls check this counter
+        // to decide whether to skip legacy persistence paths.
+        self.core.reset_streaming_flush_count();
+
         // ToolCallChunk accumulation buffer: indexed by tool_call sequential index
         let mut tool_call_args_buffer: HashMap<u64, String> = HashMap::new();
         // Track which tool_call indices have accumulated valid JSON so far.
@@ -139,7 +150,15 @@ impl AgentLoop {
                     }
                     accumulated_content.push_str(&chunk);
 
-                    // ADR-021: Update StreamingStateMap for incremental polling
+                    // ADR-022: Role transition. If we were in a thought
+                    // streaming line, flush it to JSONL and start a new
+                    // assistant line. The provider layer already split think
+                    // tags into separate ReasoningContent events, so a Content
+                    // event here means we are in assistant mode.
+                    self.core.flush_and_new_streaming_line(
+                        "assistant",
+                        self.session.conversation.as_ref(),
+                    );
                     self.core.append_streaming_delta("assistant", &chunk);
                     self.core.notify_new_data_available();
                 }
@@ -151,7 +170,13 @@ impl AgentLoop {
                     reasoning_in_progress = true;
                     accumulated_reasoning_content.push_str(&chunk);
 
-                    // ADR-021: Update StreamingStateMap for incremental polling
+                    // ADR-022: Role transition. If we were in an assistant
+                    // streaming line, flush it to JSONL and start a new
+                    // thought line.
+                    self.core.flush_and_new_streaming_line(
+                        "thought",
+                        self.session.conversation.as_ref(),
+                    );
                     self.core.append_streaming_delta("thought", &chunk);
                     self.core.notify_new_data_available();
                 }
@@ -307,6 +332,10 @@ impl AgentLoop {
                         None => {
                             // Stream ended without a Finished event
                             // (common with OpenAI-compatible APIs like MiniMax).
+                            // ADR-022: No scratch buffer to flush — the provider
+                            // layer's ThinkTagParser already handled tag splitting,
+                            // and each Content/ReasoningContent event was flushed
+                            // to JSONL via flush_and_new_streaming_line.
                             break;
                         }
                     }

@@ -80,6 +80,11 @@ pub(crate) struct AgentBootContext {
 pub(crate) struct SessionBootContext {
     pub initial_session_id: String,
     pub session_manager: crate::agent::session::SessionManager,
+    /// ADR-022: Shared committed-lines counter for the initial session.
+    /// The writer thread increments this after each disk write.
+    /// `AgentCore` adopts this Arc so `read_messages_since` sees the
+    /// true on-disk line count.
+    pub committed_lines: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 /// Build a `SessionManagerConfig` from the boot context.

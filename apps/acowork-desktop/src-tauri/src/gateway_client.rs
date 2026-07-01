@@ -364,12 +364,16 @@ impl GatewayClient {
         &self,
         agent_id: &str,
         content: &str,
+        message_id: Option<&str>,
         session_id: Option<&str>,
         command: Option<&str>,
         document_ids: Option<&[String]>,
         attached_context: Option<&[serde_json::Value]>,
     ) -> Result<SendMessageResponse> {
         let mut body = serde_json::json!({ "content": content });
+        if let Some(mid) = message_id {
+            body["message_id"] = serde_json::json!(mid);
+        }
         if let Some(sid) = session_id {
             body["session_id"] = serde_json::json!(sid);
         }

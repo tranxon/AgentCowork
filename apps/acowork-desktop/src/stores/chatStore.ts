@@ -762,23 +762,52 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const sessionId = getAgentState(get(), agentId).activeSessionId;
 
     // Add user message to the active session's state
+    // NOTE: Use crypto.randomUUID() so the ID survives round-trip to the backend
+    // and back — loadSessionMessages() deduplicates by message ID, so the
+    // optimistic render and the backend-persisted message must share the same ID.
+    const userMsgId = `msg-${crypto.randomUUID()}`;
+
+    // Collect documents for optimistic render: uploaded files + attached context.
+    const optimisticDocs: ChatMessage["documents"] = [];
+
+    // Uploaded documents (via doc_reader)
+    if (documents && documents.length > 0) {
+      for (const doc of documents) {
+        optimisticDocs.push({
+          filename: doc.filename,
+          format: doc.format,
+          size: doc.size,
+          documentId: doc.id,
+        });
+      }
+    }
+
+    // Attached context files (from workspace explorer / editor "Add to Chat")
+    // Include them as document chips so the first render shows file icons,
+    // matching the visual treatment that the backend-enriched message would
+    // have had before ID-based dedup was introduced.
+    if (sessionId) {
+      const ss = getSessionState(get(), agentId, sessionId);
+      if (ss.attachedContext.length > 0) {
+        for (const ctx of ss.attachedContext) {
+          if (ctx.type === "file" || ctx.type === "selection") {
+            optimisticDocs.push({
+              filename: ctx.name,
+              format: "text",
+            });
+          }
+        }
+      }
+    }
+
     const userMsg: ChatMessage = {
-      id: `msg-user-${Date.now()}`,
+      id: userMsgId,
       type: "user",
       content,
       timestamp: Date.now(),
+      ...(optimisticDocs.length > 0 ? { documents: optimisticDocs } : {}),
       ...getUserSenderInfo(),
     };
-
-    // Attach document info to user message for inline rendering in the bubble
-    if (documents && documents.length > 0) {
-      userMsg.documents = documents.map((doc) => ({
-        filename: doc.filename,
-        format: doc.format,
-        size: doc.size,
-        documentId: doc.id,
-      }));
-    }
 
     // Attach image info to user message for inline rendering
     if (imageParts && imageParts.length > 0) {
@@ -847,6 +876,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     const sendViaWs = (socket: WebSocket) => {
       socket.send(JSON.stringify({
         type: "message",
+        message_id: userMsgId,
         content: enrichedContent,
         command,
         ...(sessionId ? { session_id: sessionId } : {}),
@@ -864,15 +894,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
         }
       }
 
-      // ADR-021: Reset polling coordinates for the active session
-      if (sessionId) {
-        set((state) => ({
-          ...updateSessionState(state, agentId, sessionId, {
-            pollLineNumber: 0,
-            pollCharOffset: 0,
-          }),
-        }));
-      }
+      // ADR-021 Phase 4: Polling coordinates are maintained by loadSessionMessages
+      // based on backend's total_lines — do NOT reset them here.  A reset to 0
+      // would cause the next incremental poll to fetch from the beginning of the
+      // JSONL file, potentially overwriting optimistically rendered messages in a
+      // race with the full-load path (see ChatPanel currentSessionId effect).
     };
 
     if (ws) {
@@ -909,7 +935,7 @@ export const useChatStore = create<ChatStore>((set, get) => ({
     try {
       const result = await invoke<{ message_id: string; status: string }>(
         "send_message",
-        { agentId, content: enrichedContent, command, sessionId, documentIds, contentParts: enrichedContentParts, attachedContext: attachedContextPayload },
+        { agentId, content: enrichedContent, messageId: userMsgId, command, sessionId, documentIds, attachedContext: attachedContextPayload },
       );
       console.log("[ChatStore] Message sent via HTTP:", result);
       const replyMsg: ChatMessage = {
@@ -1237,33 +1263,60 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           return {};
         }
 
-        // ADR-021: Incremental poll — append new messages, handle streaming delta
+        // ADR-021/022: Incremental poll — append new complete JSONL lines,
+        // then reconcile the in-progress streaming placeholder.
         if (lineNumber != null) {
           const ss = getSessionState(state, agentId, sessionId);
           const existingIds = new Set(ss.messages.map((m) => m.id));
           const newMessages = converted.filter((m) => !existingIds.has(m.id));
 
-          // Merge streaming delta into messages
           let messages = [...ss.messages];
           const streaming = data.streaming;
-          // Local variable — tracks streaming line transitions within this poll cycle.
-          // Not persisted to SessionChatState (ADR-021 §前端状态模型).
-          const prevStreamingLine = ss.pollLineNumber;
-          const streamingLineId = `msg-streaming-${sessionId}`;
 
-          if (streaming && streaming.content) {
-            // Find or create the temporary streaming message
-            const existingIdx = messages.findIndex((m) => m.id === streamingLineId);
-            if (existingIdx >= 0) {
-              // Append new content to existing streaming message
-              messages[existingIdx] = {
-                ...messages[existingIdx],
-                content: messages[existingIdx].content + streaming.content,
+          // ADR-022 §6.1: JSONL line order is the ONLY display order. The
+          // frontend never rewrites the type/role of an already-created row.
+          //
+          // We model each streaming line as a placeholder keyed by its future
+          // JSONL line number: `msg-streaming-{sid}-{line}`. Because the id is
+          // line-scoped:
+          //   - A role transition on the Runtime flushes the old line to JSONL
+          //     and starts a NEW streaming line at a higher line_number. That
+          //     produces a DIFFERENT placeholder id, so the old placeholder is
+          //     never mutated in place — its type stays fixed for its lifetime.
+          //   - The old placeholder is removed once its content lands as a
+          //     complete JSONL line (or when streaming ends entirely).
+          const placeholderPrefix = `msg-streaming-${sessionId}-`;
+
+          // 1) Append new complete lines from JSONL first (authoritative order).
+          if (newMessages.length > 0) {
+            messages = [...messages, ...newMessages];
+          }
+
+          // 2) Reconcile placeholders. Drop every streaming placeholder that
+          //    does not match the current streaming line — those lines have
+          //    been flushed to JSONL (or streaming stopped).
+          const currentPlaceholderId =
+            streaming && streaming.content
+              ? `${placeholderPrefix}${streaming.line}`
+              : null;
+          messages = messages.filter(
+            (m) =>
+              !m.id.startsWith(placeholderPrefix) ||
+              m.id === currentPlaceholderId,
+          );
+
+          // 3) Create or grow the current streaming placeholder. Its type is
+          //    fixed from the role at creation time and never changed after.
+          if (streaming && streaming.content && currentPlaceholderId) {
+            const idx = messages.findIndex((m) => m.id === currentPlaceholderId);
+            if (idx >= 0) {
+              messages[idx] = {
+                ...messages[idx],
+                content: messages[idx].content + streaming.content,
               };
             } else {
-              // Create a new temporary streaming message
               const streamingMsg: ChatMessage = {
-                id: streamingLineId,
+                id: currentPlaceholderId,
                 type: streaming.role === "thought" ? "thought" : "assistant",
                 content: streaming.content,
                 timestamp: Date.now(),
@@ -1274,27 +1327,13 @@ export const useChatStore = create<ChatStore>((set, get) => ({
             }
           }
 
-          // Remove the temporary streaming message when the backend streaming
-          // line is gone (content has been persisted to JSONL as permanent
-          // entries). Also remove when the streaming line number advanced,
-          // indicating the old line was flushed and a new one created.
-          const hasStreamingMsg = messages.some((m) => m.id === streamingLineId);
-          if (hasStreamingMsg && (!streaming || streaming.line > prevStreamingLine)) {
-            messages = messages.filter((m) => m.id !== streamingLineId);
-          }
-
-          // New complete lines from JSONL arrive — append them
-          if (newMessages.length > 0) {
-            messages = [...messages, ...newMessages];
-          }
-
           // No new data and no streaming content — just update coordinates.
-          // NOTE: streaming message removal is handled above (outside this
-          // early-return guard) so that a disappearing streaming line always
-          // cleans up the placeholder, even when no new JSONL lines arrived.
+          // Placeholder cleanup already ran above, so a vanished streaming
+          // line always removes its stale placeholder even here.
           if (newMessages.length === 0 && (!streaming || !streaming.content)) {
             return {
               ...updateSessionState(state, agentId, sessionId, {
+                messages,
                 isLoadingSession: false,
                 loadError: null,
                 pollLineNumber: data.total_lines ?? ss.pollLineNumber,
@@ -1664,6 +1703,49 @@ function mergeDocumentUploads(entries: ConversationEntry[], agentId: string): Ch
       }
     }
 
+    // ── Strip attached-context enrichment from user messages ──────────
+    // Frontend prepends "[Attached context:]\n- file: `path`\n\n" to the
+    // user content; backend then appends "\n\nThe following workspace
+    // files were attached..." enrichment.  Reconstruct the `documents`
+    // array from the file references and keep only the actual user input.
+    if (msg.type === "user" && msg.content) {
+      let cleanedContent = msg.content;
+      let attachedFiles: ChatMessage["documents"] = [];
+
+      // Parse frontend-added [Attached context:] block
+      const attachedCtxMatch = cleanedContent.match(
+        /^\[Attached context:\]\n([\s\S]*?)(?:\n\n|$)/,
+      );
+      if (attachedCtxMatch) {
+        const block = attachedCtxMatch[1];
+        for (const line of block.split('\n')) {
+          const fileMatch = line.match(/^- (?:file|folder): `(.+?)`/);
+          if (fileMatch) {
+            const absPath = fileMatch[1];
+            const filename =
+              absPath.replace(/[/\\]$/, '').split(/[/\\]/).pop() ?? absPath;
+            attachedFiles.push({ filename, format: 'text' });
+          }
+        }
+        // Remove the [Attached context:] block
+        cleanedContent = cleanedContent.slice(attachedCtxMatch[0].length);
+      }
+
+      // Strip backend-added "The following workspace files..." enrichment
+      cleanedContent = cleanedContent.replace(
+        /\n\nThe following workspace files were attached by the user\..*$/s,
+        '',
+      );
+
+      // Apply changes only if we found enrichment text
+      if (cleanedContent !== msg.content) {
+        msg.content = cleanedContent;
+        if (attachedFiles.length > 0) {
+          msg.documents = [...(msg.documents ?? []), ...attachedFiles];
+        }
+      }
+    }
+
     result.push(msg);
   }
 
@@ -1734,16 +1816,16 @@ function handleMessageEvent(
       break;
 
     // ADR-021: new_data_available — triggers HTTP poll for incremental message data.
-    // Replaces the old chunk/tool_call/tool_result streaming via WebSocket.
     case "new_data_available": {
       if (!sid) break;
       const totalLines = (data.total_lines as number) ?? 0;
+      const intervalMs = (data.interval_ms as number) ?? undefined;
       console.log(
-        `[ChatStore] new_data_available for ${agentId}/${sid}: total_lines=${totalLines}`,
+        `[ChatStore] new_data_available for ${agentId}/${sid}: total_lines=${totalLines}, interval_ms=${intervalMs}`,
       );
       // Import PollingManager dynamically to avoid circular dependency
       import("../lib/polling").then(({ notifyNewData }) => {
-        notifyNewData(agentId, sid!, totalLines);
+        notifyNewData(agentId, sid!, totalLines, intervalMs);
       }).catch((e) => {
         console.warn("[ChatStore] Failed to import PollingManager:", e);
       });

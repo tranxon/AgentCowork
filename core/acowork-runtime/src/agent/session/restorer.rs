@@ -396,6 +396,8 @@ mod tests {
         CompactionEventMeta, ConversationSession, SessionConfig,
     };
     use std::path::PathBuf;
+    use std::sync::atomic::AtomicUsize;
+    use std::sync::Arc;
 
     fn temp_workdir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -424,6 +426,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "hi", None);
@@ -453,6 +456,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "q", None);
@@ -480,6 +484,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "list files", None);
@@ -537,6 +542,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         // tool_result with no preceding tool_call → orphan
@@ -569,6 +575,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         // Pre-compaction noise
@@ -623,6 +630,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "ok1", None);

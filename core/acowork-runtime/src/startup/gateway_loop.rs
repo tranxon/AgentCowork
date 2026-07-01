@@ -25,6 +25,7 @@ pub(crate) async fn phase_d_run(
     let SessionBootContext {
         initial_session_id,
         mut session_manager,
+        committed_lines: _committed_lines,
     } = session_ctx;
 
     let SubsystemHandles {
@@ -82,6 +83,7 @@ pub(crate) async fn phase_d_run(
         ctx.workspace_resolver.clone(),
         initial_session_id,
         config.session_idle_timeout_secs,
+        config.max_sessions,
         ctx.mcp_notifier.subscribe(),
         mcp_startup_rx,
         mcp_runtime_tx,

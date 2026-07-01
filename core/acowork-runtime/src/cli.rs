@@ -473,7 +473,7 @@ async fn run_chat_loop(
             return Ok(());
         }
 
-        match agent_loop.run(trimmed, context_builder, None).await {
+        match agent_loop.run(trimmed, context_builder, None, None).await {
             Ok(response) => {
                 println!(
                     "
@@ -526,7 +526,8 @@ pub(crate) async fn run_gateway_loop(
     skill_registry: crate::skills::parser::SkillRegistry,
     resolver: crate::tools::workspace_resolver::SharedResolver,
     _initial_session_id: String,
-    session_idle_timeout_secs: u64,
+    _session_idle_timeout_secs: u64,
+    max_sessions: usize,
     mut mcp_config_rx: tokio::sync::watch::Receiver<()>,
     mut mcp_startup_rx: Option<
         tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
@@ -561,7 +562,7 @@ pub(crate) async fn run_gateway_loop(
                         &skill_registry,
                         &budget_provider,
                         &log_reload_handle,
-                        session_idle_timeout_secs,
+                        max_sessions,
                         &mcp_runtime_tx,
                     ).await {
                         LoopAction::Continue => continue,
@@ -755,7 +756,7 @@ pub(crate) async fn run_gateway_loop(
                 &skill_registry,
                 &budget_provider,
                 &log_reload_handle,
-                session_idle_timeout_secs,
+                max_sessions,
                 &mcp_runtime_tx,
             )
             .await
@@ -814,7 +815,7 @@ async fn process_gateway_recv(
     skill_registry: &crate::skills::parser::SkillRegistry,
     budget_provider: &str,
     log_reload_handle: &Option<LogReloadHandle>,
-    _session_idle_timeout_secs: u64,
+    max_sessions: usize,
     mcp_runtime_tx: &tokio::sync::mpsc::Sender<crate::tools::mcp_manager::McpConnectResult>,
 ) -> LoopAction {
     use acowork_core::protocol::GatewayResponse;
@@ -858,6 +859,7 @@ async fn process_gateway_recv(
                         let initial_model = params.get("model").and_then(|v| v.as_str());
                         let initial_provider = params.get("provider").and_then(|v| v.as_str());
                         let new_session_id = crate::conversation::generate_session_id();
+                        let committed_lines = session_manager.committed_lines_obj();
                         match crate::conversation::ConversationSession::new(
                             std::path::Path::new(work_dir),
                             &new_session_id,
@@ -867,6 +869,8 @@ async fn process_gateway_recv(
                                 model: initial_model.map(|s| s.to_string()),
                                 provider: initial_provider.map(|s| s.to_string()),
                             },
+                            max_sessions,
+                            committed_lines,
                         ) {
                             Ok(new_session) => {
                                 if let Err(e) = session_manager
@@ -923,42 +927,17 @@ async fn process_gateway_recv(
                             }
                         };
 
-                        // Check if session is already in memory
-                        if session_manager.get_session(&session_id).is_none() {
-                            // Session is not in memory — try lazy resume from disk.
-                            match crate::conversation::ConversationSession::resume(
-                                std::path::Path::new(work_dir),
-                                &session_id,
-                            ) {
-                                Ok(conv) => {
-                                    match session_manager
-                                        .create_session_with_id_and_conversation(
-                                            session_id.clone(),
-                                            Some(conv),
-                                        )
-                                        .await
-                                    {
-                                        Ok(_) => {
-                                            tracing::info!(session_id = %session_id, "Lazy-resumed session from disk on activate");
-                                        }
-
-                                        Err(e) => {
-                                            tracing::error!(session_id = %session_id, error = %e, "Failed to create session task for lazy-resumed session");
-                                            let data = serde_json::json!({ "error": format!("Failed to activate session: {}", e) });
-                                            send_session_response(grpc_client, &request_id, data)
-                                                .await;
-                                            return LoopAction::Continue;
-                                        }
-                                    }
-                                }
-
-                                Err(e) => {
-                                    tracing::warn!(session_id = %session_id, error = %e, "Session JSONL not found on disk, cannot activate");
-                                    let data = serde_json::json!({ "error": format!("Session not found: {}", session_id) });
-                                    send_session_response(grpc_client, &request_id, data).await;
-                                    return LoopAction::Continue;
-                                }
-                            }
+                        // Ensure session is in memory — lazy-resume from disk if needed.
+                        // Uses the unified session recovery path (same as chat_message,
+                        // model_switch, etc.) to avoid duplicated resume logic.
+                        if let Err(e) = session_manager
+                            .ensure_session_in_memory(&session_id, std::path::Path::new(work_dir))
+                            .await
+                        {
+                            tracing::warn!(session_id = %session_id, error = %e, "Cannot activate session");
+                            let data = serde_json::json!({ "error": format!("Session not found: {}", session_id) });
+                            send_session_response(grpc_client, &request_id, data).await;
+                            return LoopAction::Continue;
                         }
 
                         // P1: Enable real-time push for the activated session.
@@ -1119,6 +1098,17 @@ async fn process_gateway_recv(
                                 return LoopAction::Continue;
                             }
                         };
+                        // Ensure session is in memory (may have been evicted or Runtime restarted).
+                        if let Err(e) = session_manager
+                            .ensure_session_in_memory(&target_sid, std::path::Path::new(work_dir))
+                            .await
+                        {
+                            tracing::warn!(session_id = %target_sid, error = %e, "Cannot update session title");
+                            let data = serde_json::json!({ "error": format!("Session not found: {}", target_sid) });
+                            send_session_response(grpc_client, &request_id, data).await;
+                            return LoopAction::Continue;
+                        }
+
                         if let Err(e) = session_manager.send_to_session(
                             &target_sid,
                             SessionMessage::UpdateSessionTitle {
@@ -1166,6 +1156,16 @@ async fn process_gateway_recv(
                                 .get("session_id")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(&target_session_id);
+
+                            // Ensure session is in memory after potential Runtime restart.
+                            if let Err(e) = session_manager
+                                .ensure_session_in_memory(switch_session_id, std::path::Path::new(work_dir))
+                                .await
+                            {
+                                tracing::warn!(session_id = %switch_session_id, error = %e, "Cannot route model_switch");
+                                return LoopAction::Continue;
+                            }
+
                             if let Err(e) = session_manager.route_model_switch(
                                 switch_session_id,
                                 model.to_string(),
@@ -1200,6 +1200,16 @@ async fn process_gateway_recv(
                                 .get("session_id")
                                 .and_then(|v| v.as_str())
                                 .unwrap_or(&target_session_id);
+
+                            // Ensure session is in memory after potential Runtime restart.
+                            if let Err(e) = session_manager
+                                .ensure_session_in_memory(effort_session_id, std::path::Path::new(work_dir))
+                                .await
+                            {
+                                tracing::warn!(session_id = %effort_session_id, error = %e, "Cannot route reasoning_effort");
+                                return LoopAction::Continue;
+                            }
+
                             if let Err(e) = session_manager.route_reasoning_effort(
                                 effort_session_id,
                                 effort.to_string(),
@@ -1370,6 +1380,15 @@ async fn process_gateway_recv(
 
                         // Route directly to AgentLoop's inbound channel to
                         // unblock `await_question_answer()` immediately.
+                        // Ensure session is in memory after potential Runtime restart.
+                        if let Err(e) = session_manager
+                            .ensure_session_in_memory(&target_session_id, std::path::Path::new(work_dir))
+                            .await
+                        {
+                            tracing::warn!(session_id = %target_session_id, error = %e, "Cannot route question_answer");
+                            return LoopAction::Continue;
+                        }
+
                         match session_manager.get_session(&target_session_id) {
                             Some(handle) => {
                                 if let Err(e) =
@@ -1399,6 +1418,16 @@ async fn process_gateway_recv(
                             session_id = %target_session_id,
                             "Routing compact_context to session"
                         );
+
+                        // Ensure session is in memory after potential Runtime restart.
+                        if let Err(e) = session_manager
+                            .ensure_session_in_memory(&target_session_id, std::path::Path::new(work_dir))
+                            .await
+                        {
+                            tracing::warn!(session_id = %target_session_id, error = %e, "Cannot route compact_context");
+                            return LoopAction::Continue;
+                        }
+
                         if let Err(e) = session_manager
                             .send_to_session(&target_session_id, SessionMessage::CompactContext)
                         {
@@ -1487,6 +1516,29 @@ async fn process_gateway_recv(
                         params
                             .get("attached_context")
                             .and_then(|v| serde_json::from_value(v.clone()).ok());
+
+                    // Ensure session is in memory after potential Runtime restart.
+                    // This is the unified lazy-resume path — if the Runtime crashed and
+                    // was restarted, or the session was evicted due to idle timeout,
+                    // this call restores the session from its JSONL file on disk.
+                    if let Err(e) = session_manager
+                        .ensure_session_in_memory(&target_session_id, std::path::Path::new(work_dir))
+                        .await
+                    {
+                        tracing::error!(
+                            session_id = %target_session_id,
+                            error = %e,
+                            "Failed to ensure session in memory for chat_message"
+                        );
+                        let error_params = serde_json::json!({
+                            "content": format!("Session not found: {}", target_session_id),
+                            "message_id": message_id,
+                        });
+                        let _ = grpc_client
+                            .send_intent(&from, "agent_error", error_params, false)
+                            .await;
+                        return LoopAction::Continue;
+                    }
 
                     // Pure routing: send to session's inbound channel, immediately return
                     if let Err(e) = session_manager.send_to_session(
@@ -2870,7 +2922,7 @@ async fn handle_get_session_messages(
             co,
             &session_manager.streaming_lines(),
             &session_id,
-            session_manager.total_lines(),
+            session_manager.committed_lines(),
         ) {
             Ok(result) => {
                 let message_dtos: Vec<acowork_core::protocol::ConversationEntryDto> = result

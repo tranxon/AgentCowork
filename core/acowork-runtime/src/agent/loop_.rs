@@ -146,6 +146,11 @@ pub enum ChunkEvent {
     /// Sent via control channel to notify the frontend that the StreamingStateMap
     /// or JSONL has new content. The frontend should trigger an HTTP poll to
     /// `GET /messages?line_number=N&line_char_offset=M`.
+    ///
+    /// `interval_ms` is the configured notify throttle interval (from
+    /// `DataFlowConfig.notify_interval_ms`).  The frontend uses it as both
+    /// its polling interval and typewriter animation duration, ensuring
+    /// the animation completes before the next poll arrives.
     NewDataAvailable {
         session_id: String,
         /// Total lines in the JSONL file (including metadata line 0).
@@ -153,6 +158,9 @@ pub enum ChunkEvent {
         /// The line number of the current streaming line (same as total_lines
         /// when a streaming line exists, since it will become the next line).
         streaming_line: usize,
+        /// Notify throttle interval in ms (from DataFlowConfig).
+        /// Frontend uses this as polling interval + animation duration.
+        interval_ms: u64,
     },
 }
 
@@ -392,6 +400,14 @@ impl AgentLoop {
 
     /// Run the agent loop for a single user message.
     ///
+    /// Appends the user message to history and persists to JSONL,
+    /// then runs the LLM loop until done, paused, or stopped.
+    ///
+    /// `message_id` is the frontend-generated ID for the user message.
+    /// When `Some`, it is used as the JSONL entry ID so the frontend can
+    /// deduplicate by ID when polling session messages.  When `None`,
+    /// a UUID is generated (backward-compatible fallback).
+    ///
     /// When `replay` is true, the user message is NOT appended to history
     /// or persisted to JSONL (it is assumed to already be present, e.g.
     /// after a debug rewind + resume).  Memory retrieval is still performed
@@ -401,8 +417,9 @@ impl AgentLoop {
         user_message: &str,
         context_builder: &mut ContextBuilder,
         content_parts: Option<Vec<acowork_core::providers::traits::ContentPart>>,
+        message_id: Option<String>,
     ) -> Result<String> {
-        self.run_inner(user_message, context_builder, false, content_parts)
+        self.run_inner(user_message, context_builder, false, content_parts, message_id)
             .await
     }
 
@@ -415,7 +432,7 @@ impl AgentLoop {
         context_builder: &mut ContextBuilder,
         content_parts: Option<Vec<acowork_core::providers::traits::ContentPart>>,
     ) -> Result<String> {
-        self.run_inner(user_message, context_builder, true, content_parts)
+        self.run_inner(user_message, context_builder, true, content_parts, None)
             .await
     }
 
@@ -426,6 +443,7 @@ impl AgentLoop {
         context_builder: &mut ContextBuilder,
         replay: bool,
         content_parts: Option<Vec<acowork_core::providers::traits::ContentPart>>,
+        message_id: Option<String>,
     ) -> Result<String> {
         // ADR-014: Idle → Streaming
         self.transition_status(SessionStatus::Streaming { message_id: None });
@@ -442,9 +460,10 @@ impl AgentLoop {
                 self.session.history.append(ChatMessage::user(user_message));
             }
 
-            // Persist user message to JSONL
+            // Persist user message to JSONL with frontend-generated ID
+            // so the frontend can deduplicate by ID when polling.
             if let Some(ref conversation) = self.session.conversation {
-                conversation.append_message("user", user_message, None);
+                conversation.append_message_with_id("user", user_message, None, message_id);
                 // Set session title from first user message (first 100 chars)
                 conversation.set_title(user_message);
             }
@@ -1174,7 +1193,7 @@ mod tests {
         let (mut agent_loop, _inbound_tx) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Hello from standalone!");
     }
@@ -1193,7 +1212,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Accumulated content here");
     }
@@ -1212,7 +1231,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("You are a test agent.".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
     }
 
@@ -1227,7 +1246,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Final response");
         // Verify usage was tracked (budget guard should have been updated)
@@ -1248,7 +1267,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_err());
         // Error from chat_stream propagates as Core(AcoworkError::Provider(...))
         // because Provider trait returns acowork_core::AcoworkError
@@ -1275,7 +1294,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "All done");
     }
@@ -1290,7 +1309,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "");
     }
@@ -1306,7 +1325,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let _ = agent_loop.run("Hi", &mut context_builder, None).await;
+        let _ = agent_loop.run("Hi", &mut context_builder, None, None).await;
         let messages = agent_loop.history().messages();
         // Should have: user message + assistant message
         let assistant_msgs: Vec<_> = messages
@@ -1327,7 +1346,7 @@ mod tests {
         let (mut agent_loop, _) =
             AgentLoop::new(config, manifest, provider, tools, budget, None, None);
         let mut context_builder = ContextBuilder::new("System".to_string());
-        let _ = agent_loop.run("Hi", &mut context_builder, None).await;
+        let _ = agent_loop.run("Hi", &mut context_builder, None, None).await;
         // Budget guard should have been updated with usage from the stream
         // (MockProvider returns usage with total_tokens=150)
         // We can't directly check budget_guard, but we verify no error occurred
@@ -1351,7 +1370,7 @@ mod tests {
             .try_send(InboundMessage::UserMessage("Injected question".to_string()))
             .unwrap();
 
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         // Verify the injected message appeared in history
         let messages = agent_loop.history().messages();
@@ -1383,7 +1402,7 @@ mod tests {
             })
             .unwrap();
 
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let notif: Vec<_> = messages
@@ -1415,7 +1434,7 @@ mod tests {
             })
             .unwrap();
 
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let intent: Vec<_> = messages
@@ -1446,7 +1465,7 @@ mod tests {
                 .unwrap();
         }
 
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         assert!(result.is_ok());
         let messages = agent_loop.history().messages();
         let injected: Vec<_> = messages
@@ -1498,7 +1517,7 @@ mod tests {
 
         // Run without any inbound messages — drain should return immediately
         let start = std::time::Instant::now();
-        let result = agent_loop.run("Hi", &mut context_builder, None).await;
+        let result = agent_loop.run("Hi", &mut context_builder, None, None).await;
         let elapsed = start.elapsed();
         assert!(result.is_ok());
         // Drain should not block — core path is sub-100ms, but allow up to 2s
@@ -1612,7 +1631,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result = agent_loop
-            .run("Run parallel", &mut context_builder, None)
+            .run("Run parallel", &mut context_builder, None, None)
             .await;
         let elapsed = start.elapsed();
 
@@ -1739,7 +1758,7 @@ mod tests {
         let mut context_builder = ContextBuilder::new("System".to_string());
 
         let result = agent_loop
-            .run("Test failure", &mut context_builder, None)
+            .run("Test failure", &mut context_builder, None, None)
             .await;
         assert!(result.is_ok(), "Should succeed even with one tool failure");
         assert_eq!(result.unwrap(), "Mixed results");
@@ -1813,7 +1832,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result = agent_loop
-            .run("Test timeout", &mut context_builder, None)
+            .run("Test timeout", &mut context_builder, None, None)
             .await;
         let elapsed = start.elapsed();
 
@@ -1880,7 +1899,7 @@ mod tests {
         // The tool call will fail because shell is not in the tool registry
         // (empty tools vec), so it should produce "Unknown tool: shell"
         let result = agent_loop
-            .run("Run shell", &mut context_builder, None)
+            .run("Run shell", &mut context_builder, None, None)
             .await;
         // Should still succeed — error becomes tool result message
         assert!(result.is_ok());
@@ -1999,7 +2018,7 @@ mod tests {
         let mut context_builder = ContextBuilder::new("System".to_string());
 
         let result = agent_loop
-            .run("Run ordered", &mut context_builder, None)
+            .run("Run ordered", &mut context_builder, None, None)
             .await;
         assert!(result.is_ok());
 
@@ -2151,7 +2170,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result = agent_loop
-            .run("Test iteration timeout", &mut context_builder, None)
+            .run("Test iteration timeout", &mut context_builder, None, None)
             .await;
         let elapsed = start.elapsed();
 
@@ -2259,7 +2278,7 @@ mod tests {
 
         let start = std::time::Instant::now();
         let result = agent_loop
-            .run("Test tool timeout", &mut context_builder, None)
+            .run("Test tool timeout", &mut context_builder, None, None)
             .await;
         let elapsed = start.elapsed();
 
@@ -2390,7 +2409,7 @@ mod tests {
         let mut context_builder = ContextBuilder::new("System".to_string());
 
         let result = agent_loop
-            .run("Test partial permission", &mut context_builder, None)
+            .run("Test partial permission", &mut context_builder, None, None)
             .await;
         assert!(
             result.is_ok(),

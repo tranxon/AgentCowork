@@ -5,6 +5,7 @@
 //! session's work never blocks another.
 
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use acowork_core::Budget;
@@ -627,35 +628,97 @@ impl SessionManager {
 
     /// Send a message to a specific session.
     ///
-    /// Returns an error if the session does not exist or the channel is closed.
-    /// When the channel is closed (e.g. the SessionTask panicked or was evicted
-    /// without cleanup), the dead handle is auto-removed so subsequent calls
-    /// get a clean "Session not found" instead of "channel closed".
+    /// Returns an error if the session does not exist, the channel is full
+    /// (transient backpressure — caller should retry or drop the message),
+    /// or the channel is closed (SessionTask has died).
+    ///
+    /// **Full vs Closed distinction**: when the channel is merely full,
+    /// the session handle is NOT removed — the session is healthy but
+    /// experiencing backpressure. When the channel is closed (e.g. the
+    /// SessionTask panicked), the stale handle IS auto-removed so
+    /// subsequent calls get a clean "Session not found" instead of
+    /// "channel closed".
     pub fn send_to_session(&mut self, session_id: &str, msg: SessionMessage) -> Result<()> {
         let handle = self
             .sessions
             .get(session_id)
             .ok_or_else(|| RuntimeError::Config(format!("Session not found: {}", session_id)))?;
 
-        if let Err(_send_err) = handle.send(msg) {
-            // Channel closed — the SessionTask has died (panic / eviction race).
-            // Auto-remove the stale handle so the next attempt gets a clean
-            // "Session not found" error instead of "channel closed".
-            let was_finished = handle.join_handle.is_finished();
-            self.sessions.remove(session_id);
-            self.urgent_stops.remove(session_id);
-            tracing::warn!(
-                session_id = %session_id,
-                task_finished = was_finished,
-                "Session channel closed — auto-removing dead session handle"
-            );
-            Err(RuntimeError::Config(format!(
-                "Session not found: {}",
-                session_id
-            )))
-        } else {
-            Ok(())
+        match handle.send(msg) {
+            Ok(()) => Ok(()),
+            Err(send_err) => match send_err.as_ref() {
+                tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                    // Transient backpressure — session is healthy, do NOT evict.
+                    // The caller may retry or drop the message depending on context.
+                    tracing::warn!(
+                        session_id = %session_id,
+                        "Session channel full (backpressure) — message dropped, session NOT evicted"
+                    );
+                    Err(RuntimeError::Config(format!(
+                        "Session channel full: {}",
+                        session_id
+                    )))
+                }
+                tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                    // Channel closed — the SessionTask has died (panic / eviction race).
+                    // Auto-remove the stale handle so the next attempt gets a clean
+                    // "Session not found" error instead of "channel closed".
+                    let was_finished = handle.join_handle.is_finished();
+                    self.sessions.remove(session_id);
+                    self.urgent_stops.remove(session_id);
+                    tracing::warn!(
+                        session_id = %session_id,
+                        task_finished = was_finished,
+                        "Session channel closed — auto-removing dead session handle"
+                    );
+                    Err(RuntimeError::Config(format!(
+                        "Session not found: {}",
+                        session_id
+                    )))
+                }
+            },
         }
+    }
+
+    /// Ensure a session is loaded in memory, resuming it from disk if needed.
+    ///
+    /// This is the **single entry point** for lazy session recovery. Every
+    /// handler that needs to interact with a session by ID should call this
+    /// before [`send_to_session`] or any other session-scoped method.
+    ///
+    /// When the session is already in memory, this returns immediately.
+    /// Otherwise, it reads the JSONL file from `work_dir/conversations/`,
+    /// creates a new `SessionTask`, and inserts the handle into the active
+    /// sessions map — exactly as `activate_session` does on first access.
+    ///
+    /// Returns `Ok(())` if the session is now in memory (either was already,
+    /// or was just resumed). Returns an error if the JSONL file does not
+    /// exist or cannot be read (session truly does not exist on disk).
+    pub async fn ensure_session_in_memory(
+        &mut self,
+        session_id: &str,
+        work_dir: &Path,
+    ) -> Result<()> {
+        if self.sessions.contains_key(session_id) {
+            return Ok(());
+        }
+
+        let conv = crate::conversation::ConversationSession::resume(work_dir, session_id, self.core.committed_lines.clone())
+            .map_err(|e| {
+                RuntimeError::Config(format!(
+                    "Session not found on disk: {} ({})",
+                    session_id, e
+                ))
+            })?;
+
+        self.create_session_with_id_and_conversation(session_id.to_string(), Some(conv))
+            .await?;
+
+        tracing::info!(
+            session_id = %session_id,
+            "SessionManager: lazy-resumed session from disk"
+        );
+        Ok(())
     }
 
     /// Broadcast a message to all active sessions.
@@ -1151,6 +1214,19 @@ After installation, ask the user to re-enable the MCP server.",
     /// will scan the file as fallback when passed 0).
     pub fn total_lines(&self) -> usize {
         self.core.total_lines.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// ADR-022: Committed line count — updated by writer thread after each
+    /// disk write.  Used by `read_messages_since` to avoid returning a count
+    /// ahead of the actual file.
+    pub fn committed_lines(&self) -> usize {
+        self.core.committed_lines.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// ADR-022: Return the shared `committed_lines` Arc for passing to
+    /// `ConversationSession::new()` / `resume()`.
+    pub fn committed_lines_obj(&self) -> Arc<std::sync::atomic::AtomicUsize> {
+        self.core.committed_lines.clone()
     }
 
     /// Get the name of the first available provider from the global cache.

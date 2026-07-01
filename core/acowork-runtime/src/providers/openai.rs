@@ -893,6 +893,11 @@ impl OpenAIProvider {
             // emit a single Finished event at stream end with both.
             let mut tracked_usage: Option<UsageInfo> = None;
             let mut tracked_finish_reason: Option<String> = None;
+            // ADR-022: Think tag parser — splits `delta.content` containing
+            // `<!think>...willReturn` tags into ReasoningContent + Content
+            // events. This makes role boundaries structural at the provider
+            // layer, so the Runtime never needs to parse tag strings.
+            let mut think_parser = ThinkTagParser::new();
 
             use futures_util::StreamExt;
             loop {
@@ -926,8 +931,17 @@ impl OpenAIProvider {
                                 tracked_finish_reason = finish_reason;
                             }
                             for event in events {
-                                if tx.send(Some(event)).await.is_err() {
-                                    return; // receiver dropped
+                                // ADR-022: Run Content events through the think
+                                // tag parser. It may split one Content event
+                                // into multiple ReasoningContent/Content events.
+                                let split_events = match &event {
+                                    StreamEvent::Content(text) => think_parser.feed(text),
+                                    _ => vec![event],
+                                };
+                                for split_event in split_events {
+                                    if tx.send(Some(split_event)).await.is_err() {
+                                        return; // receiver dropped
+                                    }
                                 }
                             }
                         }
@@ -962,6 +976,12 @@ impl OpenAIProvider {
             }
             // Stream ended without [DONE] — emit Finished with accumulated data
             // (common with OpenAI-compatible APIs like MiniMax).
+            // ADR-022: Flush any remaining content in the think tag parser.
+            for leftover_event in think_parser.flush() {
+                if tx.send(Some(leftover_event)).await.is_err() {
+                    return;
+                }
+            }
             let _ = tx
                 .send(Some(StreamEvent::Finished(ChatResponse {
                     content: String::new(),
@@ -1322,5 +1342,327 @@ mod tests {
             native[0].function.parameters,
             serde_json::json!({"type": "object", "properties": {}})
         );
+    }
+}
+
+// ── ADR-022: Think tag parser ──────────────────────────────────────────────
+//
+// Some OpenAI-compatible providers embed thinking content inside tags within
+// `delta.content`, rather than using the separate `delta.reasoning_content`
+// field.  Two formats are supported:
+//
+//   (1) MiniMax-M3: `<!think>...willReturn`
+//   (2) Standard:    `<think>...</think>`  (used by various API proxies
+//       that merge reasoning_content into content with HTML-like tags)
+//
+// `ThinkTagParser` is a small state machine that splits an incoming
+// `delta.content` string into a sequence of `StreamEvent::ReasoningContent`
+// (inside think blocks) and `StreamEvent::Content` (outside think blocks)
+// events. It handles tag boundaries that span across multiple SSE chunks via
+// a scratch buffer.
+//
+// The parser is per-stream (created fresh in `sse_to_stream`), so no state
+// leaks between conversations.
+
+/// Think tag pairs supported by the parser.
+const THINK_TAG_PAIRS: &[(usize, &str, &str)] = &[
+    // (priority, open_tag, close_tag) — lower priority = checked first
+    // Keep <!think> before <think> so the more-specific tag wins.
+    (0, "<!think>", "willReturn"),
+    (1, "<think>", "</think>"),
+];
+
+/// State machine for parsing think tags from `delta.content`.
+struct ThinkTagParser {
+    /// Whether we are currently inside a think block.
+    inside_think: bool,
+    /// Scratch buffer for detecting tags that span chunk boundaries.
+    scratch: String,
+    /// The close tag we're looking for (set when a specific open tag matched).
+    active_close_tag: &'static str,
+    /// The open tag that was active (for partial suffix detection).
+    active_open_tag: &'static str,
+}
+
+impl ThinkTagParser {
+    fn new() -> Self {
+        Self {
+            inside_think: false,
+            scratch: String::new(),
+            active_close_tag: "",
+            active_open_tag: "",
+        }
+    }
+
+    /// Feed a content chunk and return the resulting stream events.
+    ///
+    /// The input `chunk` is the raw `delta.content` from one SSE line. It may
+    /// contain zero, one, or multiple think tags, and tags may span across
+    /// multiple chunks.
+    fn feed(&mut self, chunk: &str) -> Vec<StreamEvent> {
+        self.scratch.push_str(chunk);
+        let mut events = Vec::new();
+
+        loop {
+            if self.inside_think {
+                // Inside a think block — look for the closing tag.
+                let close_tag = self.active_close_tag;
+                if let Some(end_idx) = self.scratch.find(close_tag) {
+                    // Complete think block — emit the inner content (excluding
+                    // the closing tag itself) as ReasoningContent.
+                    let inner = &self.scratch[..end_idx];
+                    if !inner.is_empty() {
+                        events.push(StreamEvent::ReasoningContent(inner.to_string()));
+                    }
+                    self.inside_think = false;
+                    self.scratch = self.scratch[end_idx + close_tag.len()..].to_string();
+                    self.active_close_tag = "";
+                    self.active_open_tag = "";
+                    // Continue loop to process remaining content as Content.
+                } else {
+                    // No closing tag found — emit the safe portion (excluding
+                    // any partial closing-tag suffix) as ReasoningContent.
+                    let keep = partial_tag_suffix(&self.scratch, close_tag);
+                    let send_len = self.scratch.len() - keep;
+                    if send_len > 0 {
+                        events.push(StreamEvent::ReasoningContent(
+                            self.scratch[..send_len].to_string(),
+                        ));
+                    }
+                    self.scratch = self.scratch[send_len..].to_string();
+                    break;
+                }
+            } else {
+                // Outside a think block — look for any opening tag.
+                let mut earliest = None; // (index, open_tag, close_tag)
+                for &(_prio, open_tag, close_tag) in THINK_TAG_PAIRS {
+                    if let Some(idx) = self.scratch.find(open_tag) {
+                        match earliest {
+                            None => earliest = Some((idx, open_tag, close_tag)),
+                            Some((best_idx, _, _)) if idx < best_idx => {
+                                earliest = Some((idx, open_tag, close_tag))
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                if let Some((start_idx, open_tag, close_tag)) = earliest {
+                    // Emit content before the tag as Content.
+                    if start_idx > 0 {
+                        events.push(StreamEvent::Content(
+                            self.scratch[..start_idx].to_string(),
+                        ));
+                    }
+                    self.inside_think = true;
+                    self.active_close_tag = close_tag;
+                    self.active_open_tag = open_tag;
+                    self.scratch = self.scratch[start_idx + open_tag.len()..].to_string();
+                    // Continue loop to process inner content as ReasoningContent.
+                } else {
+                    // No opening tag found — check all open tags for partial suffix
+                    let mut max_keep: usize = 0;
+                    for &(_prio, open_tag, _close_tag) in THINK_TAG_PAIRS {
+                        let keep = partial_tag_suffix(&self.scratch, open_tag);
+                        max_keep = max_keep.max(keep);
+                    }
+                    let send_len = self.scratch.len() - max_keep;
+                    if send_len > 0 {
+                        events.push(StreamEvent::Content(self.scratch[..send_len].to_string()));
+                    }
+                    self.scratch = self.scratch[send_len..].to_string();
+                    break;
+                }
+            }
+        }
+
+        events
+    }
+
+    /// Flush any remaining content in the scratch buffer at stream end.
+    fn flush(&mut self) -> Vec<StreamEvent> {
+        if self.scratch.is_empty() {
+            return Vec::new();
+        }
+        let event = if self.inside_think {
+            StreamEvent::ReasoningContent(std::mem::take(&mut self.scratch))
+        } else {
+            StreamEvent::Content(std::mem::take(&mut self.scratch))
+        };
+        vec![event]
+    }
+}
+
+/// Returns the length of the longest suffix of `text` that is a prefix of `tag`.
+///
+/// Used to detect partial tags that span across SSE chunk boundaries.
+/// E.g. `text="abc<!thi"`, `tag="<!think>"` → returns 5 (`<!thi`).
+fn partial_tag_suffix(text: &str, tag: &str) -> usize {
+    let text_bytes = text.as_bytes();
+    let tag_bytes = tag.as_bytes();
+    let max_len = text_bytes.len().min(tag_bytes.len());
+    for len in (1..=max_len).rev() {
+        let suffix = &text_bytes[text_bytes.len() - len..];
+        let prefix = &tag_bytes[..len];
+        if suffix == prefix {
+            return len;
+        }
+    }
+    0
+}
+
+#[cfg(test)]
+mod think_tag_parser_tests {
+    use super::*;
+
+    #[test]
+    fn test_no_tags() {
+        let mut p = ThinkTagParser::new();
+        let events = p.feed("Hello, world!");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::Content(t) if t == "Hello, world!"));
+    }
+
+    #[test]
+    fn test_complete_think_block() {
+        let mut p = ThinkTagParser::new();
+        let events = p.feed("before<!think>inner contentwillReturnafter");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(&events[0], StreamEvent::Content(t) if t == "before"));
+        assert!(matches!(&events[1], StreamEvent::ReasoningContent(t) if t == "inner content"));
+        assert!(matches!(&events[2], StreamEvent::Content(t) if t == "after"));
+    }
+
+    #[test]
+    fn test_think_spanning_chunks() {
+        let mut p = ThinkTagParser::new();
+        let events1 = p.feed("Hello<!thi");
+        // "Hello" emitted as Content, "<!thi" kept in scratch
+        assert_eq!(events1.len(), 1);
+        assert!(matches!(&events1[0], StreamEvent::Content(t) if t == "Hello"));
+
+        let events2 = p.feed("nk>thinking...willReturnreply");
+        // "<!think>" completed, "thinking..." as ReasoningContent, "reply" as Content
+        assert_eq!(events2.len(), 2);
+        assert!(matches!(&events2[0], StreamEvent::ReasoningContent(t) if t == "thinking..."));
+        assert!(matches!(&events2[1], StreamEvent::Content(t) if t == "reply"));
+    }
+
+    #[test]
+    fn test_close_tag_spanning_chunks() {
+        let mut p = ThinkTagParser::new();
+        // First chunk: opening tag + partial close tag suffix
+        let events1 = p.feed("<!think>some thinkingwillRet");
+        // "some thinking" emitted as ReasoningContent, "willRet" retained
+        assert_eq!(events1.len(), 1);
+        assert!(matches!(&events1[0], StreamEvent::ReasoningContent(t) if t == "some thinking"));
+
+        // Second chunk: completes the close tag + reply
+        let events2 = p.feed("urn>reply text");
+        // "willReturn" completed → flush empty think, then "reply text" as Content
+        // Actually ">reply text" (the > after the tag)
+        assert_eq!(events2.len(), 1);
+        assert!(matches!(&events2[0], StreamEvent::Content(t) if t == ">reply text"));
+    }
+
+    #[test]
+    fn test_flush_inside_think() {
+        let mut p = ThinkTagParser::new();
+        // feed() emits eagerly — content is already returned
+        let events = p.feed("<!think>unfinished thinking");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::ReasoningContent(t) if t == "unfinished thinking"));
+        // flush() has nothing left (scratch was cleared by eager emission)
+        let flushed = p.flush();
+        assert_eq!(flushed.len(), 0);
+    }
+
+    #[test]
+    fn test_flush_outside_think() {
+        let mut p = ThinkTagParser::new();
+        // Complete think block then trailing text
+        let events = p.feed("<!think>done thinkingwillReturnremaining text");
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], StreamEvent::ReasoningContent(t) if t == "done thinking"));
+        assert!(matches!(&events[1], StreamEvent::Content(t) if t == "remaining text"));
+        // flush() has nothing left
+        let flushed = p.flush();
+        assert_eq!(flushed.len(), 0);
+    }
+
+    #[test]
+    fn test_tag_in_user_discussion() {
+        // A user discussing the tag literally should still be parsed —
+        // this is an inherent limitation of tag-based detection. The
+        // persistence layer (extract_think_block) has the same behavior,
+        // so this is consistent.
+        let mut p = ThinkTagParser::new();
+        let events = p.feed("I saw a <!think> tag in the code");
+        assert_eq!(events.len(), 2);
+        assert!(matches!(&events[0], StreamEvent::Content(t) if t == "I saw a "));
+        assert!(matches!(&events[1], StreamEvent::ReasoningContent(t) if t == " tag in the code"));
+    }
+
+    // ── Standard <think>...</think> tags ──────────────────────────────
+
+    #[test]
+    fn test_standard_complete_think_block() {
+        let mut p = ThinkTagParser::new();
+        let events = p.feed("before<think>inner content</think>after");
+        assert_eq!(events.len(), 3);
+        assert!(matches!(&events[0], StreamEvent::Content(t) if t == "before"));
+        assert!(matches!(&events[1], StreamEvent::ReasoningContent(t) if t == "inner content"));
+        assert!(matches!(&events[2], StreamEvent::Content(t) if t == "after"));
+    }
+
+    #[test]
+    fn test_standard_think_spanning_chunks() {
+        let mut p = ThinkTagParser::new();
+        let events1 = p.feed("Hello<thi");
+        // "Hello" emitted as Content, "<thi" kept in scratch
+        assert_eq!(events1.len(), 1);
+        assert!(matches!(&events1[0], StreamEvent::Content(t) if t == "Hello"));
+
+        let events2 = p.feed("nk>thinking...</thin");
+        // "<think>" completed, "thinking..." as ReasoningContent, "</thin" partial kept
+        assert_eq!(events2.len(), 1);
+        assert!(matches!(&events2[0], StreamEvent::ReasoningContent(t) if t == "thinking..."));
+
+        let events3 = p.feed("k>reply text");
+        // "</think>" completed, "reply text" as Content
+        assert_eq!(events3.len(), 1);
+        assert!(matches!(&events3[0], StreamEvent::Content(t) if t == "reply text"));
+    }
+
+    #[test]
+    fn test_standard_flush_inside_think() {
+        let mut p = ThinkTagParser::new();
+        let events = p.feed("<think>unfinished thinking");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(&events[0], StreamEvent::ReasoningContent(t) if t == "unfinished thinking"));
+        let flushed = p.flush();
+        assert_eq!(flushed.len(), 0);
+    }
+
+    #[test]
+    fn test_standard_and_minimax_interleaved() {
+        // Both tag formats may appear in the same stream (e.g. if routing
+        // switches providers mid-stream, though rare). The parser should
+        // handle each independently since the active close tag is set by
+        // whichever open tag matched first.
+        let mut p = ThinkTagParser::new();
+        // Start with standard <think>
+        let events1 = p.feed("A<think>think A</think>B");
+        assert_eq!(events1.len(), 3);
+        assert!(matches!(&events1[0], StreamEvent::Content(t) if t == "A"));
+        assert!(matches!(&events1[1], StreamEvent::ReasoningContent(t) if t == "think A"));
+        assert!(matches!(&events1[2], StreamEvent::Content(t) if t == "B"));
+
+        // Then MiniMax format
+        let events2 = p.feed("C<!think>think DwillReturnE");
+        assert_eq!(events2.len(), 3);
+        assert!(matches!(&events2[0], StreamEvent::Content(t) if t == "C"));
+        assert!(matches!(&events2[1], StreamEvent::ReasoningContent(t) if t == "think D"));
+        assert!(matches!(&events2[2], StreamEvent::Content(t) if t == "E"));
     }
 }

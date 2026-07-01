@@ -83,6 +83,12 @@ pub struct RuntimeConfig {
     /// Session idle timeout in seconds before eviction
     #[serde(default = "default_session_idle_timeout_secs")]
     pub session_idle_timeout_secs: u64,
+    /// Maximum number of session files (JSONL) to keep on disk.
+    /// When this limit is exceeded at session creation, the oldest
+    /// sessions (by `last_active_at`) are permanently deleted.
+    /// Set to 0 to disable the limit.
+    #[serde(default = "default_max_sessions")]
+    pub max_sessions: usize,
     /// Minimum character length of formatted conversation text before we
     /// bother running LLM summarization on session close. Shorter sessions
     /// use the raw text directly as their episode summary.
@@ -119,6 +125,12 @@ pub struct DataFlowConfig {
     /// channel write frequency during thinking mode. Default: 200.
     #[serde(default = "default_reasoning_flush_interval_ms")]
     pub reasoning_flush_interval_ms: u64,
+    /// Minimum interval in milliseconds between NewDataAvailable
+    /// notifications.  Also used by the frontend PollingManager as the
+    /// initial polling interval and typewriter animation duration.
+    /// Default: 500 (max ~2 notifications/sec, matching polling rate).
+    #[serde(default = "default_notify_interval_ms")]
+    pub notify_interval_ms: u64,
 }
 
 fn default_chunk_capacity() -> usize {
@@ -130,6 +142,9 @@ fn default_outbound_ctrl_capacity() -> usize {
 fn default_reasoning_flush_interval_ms() -> u64 {
     200
 }
+fn default_notify_interval_ms() -> u64 {
+    500
+}
 
 impl Default for DataFlowConfig {
     fn default() -> Self {
@@ -137,6 +152,7 @@ impl Default for DataFlowConfig {
             chunk_capacity: default_chunk_capacity(),
             outbound_ctrl_capacity: default_outbound_ctrl_capacity(),
             reasoning_flush_interval_ms: default_reasoning_flush_interval_ms(),
+            notify_interval_ms: default_notify_interval_ms(),
         }
     }
 }
@@ -197,6 +213,10 @@ fn default_session_idle_timeout_secs() -> u64 {
     300 // 5 min
 }
 
+fn default_max_sessions() -> usize {
+    1000
+}
+
 fn default_min_distill_chars() -> usize {
     8000
 }
@@ -229,6 +249,7 @@ impl Default for RuntimeConfig {
             provider_stream_read_timeout_ms: default_provider_stream_read_timeout_ms(),
             tool_http_timeout_ms: default_tool_http_timeout_ms(),
             session_idle_timeout_secs: default_session_idle_timeout_secs(),
+            max_sessions: default_max_sessions(),
             min_distill_chars: default_min_distill_chars(),
             distill_max_tokens: default_distill_max_tokens(),
             data_flow: DataFlowConfig::default(),

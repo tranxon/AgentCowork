@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
@@ -181,6 +182,10 @@ pub struct ConversationWriter {
     /// metadata on the next `UpdateMetadata` command.  `None` if no
     /// compaction has been written during this writer's lifetime.
     last_compaction_offset: Option<u64>,
+    /// ADR-022: Committed line count — incremented after each successful
+    /// disk write so `read_messages_since` never sees a count ahead of
+    /// the actual file.
+    committed_lines: Arc<AtomicUsize>,
 }
 
 impl ConversationWriter {
@@ -190,6 +195,7 @@ impl ConversationWriter {
         path: PathBuf,
         receiver: mpsc::UnboundedReceiver<WriterCommand>,
         meta_end: u64,
+        committed_lines: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             file,
@@ -197,6 +203,7 @@ impl ConversationWriter {
             receiver,
             meta_end,
             last_compaction_offset: None,
+            committed_lines,
         }
     }
 
@@ -222,18 +229,22 @@ impl ConversationWriter {
                     if let Err(e) = self.write_entry(&entry, abs_offset.is_some())
                     {
                         tracing::error!("Failed to write conversation entry: {}", e);
-                    } else if let Some(abs) = abs_offset {
-                        // Entry successfully written — record the relative offset.
-                        // The entry body + newline will be written *after* the
-                        // seek, so `abs` is the exact byte position of the
-                        // compaction marker in the file.
-                        self.last_compaction_offset = Some(abs - self.meta_end);
-                        tracing::debug!(
-                            abs_offset = abs,
-                            meta_end = self.meta_end,
-                            relative = abs - self.meta_end,
-                            "Recorded compaction offset"
-                        );
+                    } else {
+                        // ADR-022: Increment committed_lines AFTER the entry
+                        // is physically written to disk.  This guarantees
+                        // that read_messages_since never sees a line count
+                        // ahead of the actual file contents.
+                        self.committed_lines.fetch_add(1, Ordering::Relaxed);
+                        if let Some(abs) = abs_offset {
+                            // Entry successfully written — record the relative offset.
+                            self.last_compaction_offset = Some(abs - self.meta_end);
+                            tracing::debug!(
+                                abs_offset = abs,
+                                meta_end = self.meta_end,
+                                relative = abs - self.meta_end,
+                                "Recorded compaction offset"
+                            );
+                        }
                     }
                 }
                 WriterCommand::UpdateMetadata(mut meta) => {
@@ -368,10 +379,25 @@ pub struct ConversationSession {
     /// "context usage" indicator after a session resume.
     /// `None` means no LLM call has been made (or persisted) yet.
     last_tokens: std::sync::Mutex<Option<(u64, u64)>>,
+    /// Running message count, incremented on every `append_message`.
+    /// Used by the session index for fast UI display without reading JSONL.
+    message_count: AtomicU64,
+    /// Last time `update_index_entry` was written to disk.
+    /// Guards against excessive I/O from rapid `append_message` calls.
+    last_index_update: std::sync::Mutex<Instant>,
     sender: mpsc::UnboundedSender<WriterCommand>,
     /// Path to the JSONL file (for session-level distillation on close).
     session_file_path: PathBuf,
+    /// Path to the conversations directory (for index.json updates).
+    conversations_dir: PathBuf,
 }
+
+/// Minimum interval between index.json writes triggered by `append_message`.
+///
+/// Metadata-only mutations (title, model, provider, workspace) always write
+/// immediately.  Only the high-frequency `append_message` path respects this
+/// cooldown, capping index write I/O regardless of conversation speed.
+const INDEX_COOLDOWN_MS: u64 = 3000; // 3 seconds
 
 impl ConversationSession {
     /// Create a new session with optional initial metadata.
@@ -379,7 +405,7 @@ impl ConversationSession {
     /// Creates `{work_dir}/conversations/{session_id}.jsonl`, writes the
     /// `SessionMetadata` header (including initial model/provider/workspace_id),
     /// and starts the background writer thread.
-    pub fn new(work_dir: &Path, session_id: &str, config: SessionConfig) -> Result<Self> {
+    pub fn new(work_dir: &Path, session_id: &str, config: SessionConfig, max_sessions: usize, committed_lines: Arc<AtomicUsize>) -> Result<Self> {
         let conversations_dir = work_dir.join("conversations");
         std::fs::create_dir_all(&conversations_dir)?;
 
@@ -421,10 +447,10 @@ impl ConversationSession {
 
         let meta_end = line.len() as u64;
         let (tx, rx) = mpsc::unbounded_channel::<WriterCommand>();
-        let writer = ConversationWriter::new(file, file_path.clone(), rx, meta_end);
+        let writer = ConversationWriter::new(file, file_path.clone(), rx, meta_end, committed_lines);
         std::thread::spawn(move || writer.run());
 
-        Ok(Self {
+        let session = Self {
             session_id: session_id.to_string(),
             agent_id: config.agent_id,
             created_at: now_for_self,
@@ -436,16 +462,31 @@ impl ConversationSession {
             reasoning_effort: std::sync::Mutex::new(None),
             temperature: std::sync::Mutex::new(None),
             last_tokens: std::sync::Mutex::new(None),
+            message_count: AtomicU64::new(0),
+            last_index_update: std::sync::Mutex::new(Instant::now()),
             sender: tx,
             session_file_path: file_path,
-        })
+            conversations_dir: conversations_dir.clone(),
+        };
+
+        // Persist the new session to index.json immediately so it appears
+        // in session lists without waiting for a directory scan.
+        session.update_index_entry(true); // force: new session must appear immediately
+
+        // Enforce max-sessions limit: prune the oldest sessions if the
+        // index now exceeds the configured threshold.
+        if max_sessions > 0 {
+            prune_excess_sessions(&conversations_dir, max_sessions);
+        }
+
+        Ok(session)
     }
 
     /// Resume an existing session.
     ///
     /// Opens the existing JSONL file in append mode and starts the
     /// background writer thread.
-    pub fn resume(work_dir: &Path, session_id: &str) -> Result<Self> {
+    pub fn resume(work_dir: &Path, session_id: &str, committed_lines: Arc<AtomicUsize>) -> Result<Self> {
         let conversations_dir = work_dir.join("conversations");
         let file_path = conversations_dir.join(format!("{}.jsonl", session_id));
 
@@ -460,8 +501,10 @@ impl ConversationSession {
         let meta_end = metadata_end_offset(&mut file)?;
 
         let (tx, rx) = mpsc::unbounded_channel::<WriterCommand>();
-        let writer = ConversationWriter::new(file, file_path.clone(), rx, meta_end);
+        let writer = ConversationWriter::new(file, file_path.clone(), rx, meta_end, committed_lines);
         std::thread::spawn(move || writer.run());
+
+        let msg_count = meta.message_count.unwrap_or(0) as u64;
 
         Ok(Self {
             session_id: session_id.to_string(),
@@ -482,8 +525,11 @@ impl ConversationSession {
                     (None, None) => None,
                 },
             ),
+            message_count: AtomicU64::new(msg_count),
+            last_index_update: std::sync::Mutex::new(Instant::now()),
             sender: tx,
             session_file_path: file_path,
+            conversations_dir,
         })
     }
 
@@ -492,8 +538,25 @@ impl ConversationSession {
     /// This is non-blocking: the message is sent via channel to the
     /// background writer thread.
     pub fn append_message(&self, role: &str, content: &str, metadata: Option<serde_json::Value>) {
+        self.append_message_with_id(role, content, metadata, None);
+    }
+
+    /// Append a message with an explicit ID.
+    ///
+    /// When `id` is `Some`, the entry is stored with that ID instead of
+    /// generating a new UUID. This is used for user messages where the
+    /// frontend generates a deterministic ID (`msg-{uuid}`) and sends it
+    /// via `message_id` — the backend stores it as-is so the frontend
+    /// can deduplicate by ID when polling session messages.
+    pub fn append_message_with_id(
+        &self,
+        role: &str,
+        content: &str,
+        metadata: Option<serde_json::Value>,
+        id: Option<String>,
+    ) {
         let entry = ConversationEntry {
-            id: uuid::Uuid::new_v4().to_string(),
+            id: id.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             ts: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             role: role.to_string(),
             content: content.to_string(),
@@ -503,6 +566,10 @@ impl ConversationSession {
         if let Err(e) = self.sender.send(WriterCommand::AppendEntry(entry)) {
             tracing::error!("Failed to send message to conversation writer: {}", e);
         }
+        // Update message count and index so the frontend sees the latest
+        // active-at timestamp without a directory scan.
+        self.message_count.fetch_add(1, Ordering::Relaxed);
+        self.update_index_entry(false); // throttled: high-frequency message path
     }
 
     /// Append a compaction event to the JSONL.
@@ -627,6 +694,7 @@ impl ConversationSession {
         if let Ok(mut current) = self.current_title.lock() {
             *current = Some(title);
         }
+        self.update_index_entry(true); // force: title is a user-visible metadata change
         tracing::info!(session_id = %self.session_id, "Session title set");
     }
 
@@ -676,6 +744,7 @@ impl ConversationSession {
         if let Ok(mut current) = self.current_title.lock() {
             *current = Some(truncated.clone());
         }
+        self.update_index_entry(true);
         tracing::info!(session_id = %self.session_id, title = %truncated, "Session title force-updated via API");
         true
     }
@@ -713,6 +782,7 @@ impl ConversationSession {
             last_compaction_offset: None,
         };
         self.update_metadata(metadata);
+        self.update_index_entry(true);
         tracing::info!(
             session_id = %self.session_id,
             workspace_id = %workspace_id,
@@ -770,6 +840,7 @@ impl ConversationSession {
             last_compaction_offset: None,
         };
         self.update_metadata(metadata);
+        self.update_index_entry(true);
         tracing::info!(
             session_id = %self.session_id,
             model = %model,
@@ -898,12 +969,70 @@ impl ConversationSession {
         };
         self.update_metadata(metadata);
     }
+
+    // ── Session index helpers ───────────────────────────────────────────
+
+    /// Update this session's entry in `conversations/index.json`.
+    ///
+    /// Performs a load-modify-write cycle.  Concurrent writes from
+    /// different sessions can race (last writer wins), which is
+    /// acceptable because the affected fields (`last_active_at`,
+    /// `message_count`) are eventually consistent — the next write
+    /// from this session will correct any stale values.
+    ///
+    /// When `force` is `true` the write always happens immediately.
+    /// When `force` is `false` (used by `append_message`), writes are
+    /// throttled to at most one per `INDEX_COOLDOWN_MS` per session.
+    fn update_index_entry(&self, force: bool) {
+        if !force
+            && let Ok(last) = self.last_index_update.lock()
+            && last.elapsed().as_millis() < INDEX_COOLDOWN_MS as u128
+        {
+            return; // skip — in-memory counters are already up to date
+        }
+
+        let (mut index, _rebuilt) = ensure_index(&self.conversations_dir);
+        let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+        let entry = SessionIndexEntry {
+            title: self.current_title.lock().ok().and_then(|t| t.clone()),
+            created_at: self.created_at.clone(),
+            last_active_at: now,
+            message_count: self.message_count.load(Ordering::Relaxed),
+            workspace_id: self.workspace_id.lock().ok().and_then(|w| w.clone()),
+            model: self.model.lock().ok().and_then(|m| m.clone()),
+            provider: self.provider.lock().ok().and_then(|p| p.clone()),
+            corrupted: false,
+        };
+        index
+            .sessions
+            .insert(self.session_id.clone(), entry);
+        if let Err(e) = write_index_atomic(&self.conversations_dir, &index) {
+            tracing::warn!(
+                session_id = %self.session_id,
+                error = %e,
+                "Failed to update session index"
+            );
+        }
+
+        if let Ok(mut last) = self.last_index_update.lock() {
+            *last = Instant::now();
+        }
+    }
 }
 
 // Safety: ConversationSession only contains String and UnboundedSender,
 // both of which are Send + Sync.
 unsafe impl Send for ConversationSession {}
 unsafe impl Sync for ConversationSession {}
+
+impl Drop for ConversationSession {
+    fn drop(&mut self) {
+        // Force-flush the final state to index.json so the frontend sees
+        // the correct message_count and last_active_at even if the last
+        // `append_message` fell within the cooldown window.
+        self.update_index_entry(true);
+    }
+}
 
 /// Generate a new session ID.
 ///
@@ -938,6 +1067,239 @@ pub struct SessionInfo {
     pub workspace_id: Option<String>,
 }
 
+// ── Session Index (fast O(1) lookup, avoids per-file metadata reads) ───────
+
+/// Per-session entry in the conversations index file.
+///
+/// Stored in `conversations/index.json` as a fast lookup source,
+/// eliminating the need for directory scans and per-file metadata reads
+/// when listing sessions or finding the most recently active session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionIndexEntry {
+    /// Optional session title.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    /// ISO 8601 creation timestamp.
+    created_at: String,
+    /// ISO 8601 timestamp of the most recent message append.
+    /// Updated on every `append_message` call; used by `find_latest_session`
+    /// to select the session the user was most recently active in.
+    last_active_at: String,
+    /// Number of messages appended to this session.
+    message_count: u64,
+    /// Per-session workspace selection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    workspace_id: Option<String>,
+    /// Per-session model name (ADR-012).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<String>,
+    /// Per-session provider name (ADR-012).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    provider: Option<String>,
+    /// Whether this session's JSONL metadata was recovered from a corrupted
+    /// first line.  Only ever `true` for entries produced by
+    /// `rebuild_index_from_disk`; live sessions never set this.
+    #[serde(default)]
+    corrupted: bool,
+}
+
+/// In-memory representation of `conversations/index.json`.
+///
+/// A flat map from `session_id` → `SessionIndexEntry`, designed for
+/// fast lookups without touching individual JSONL files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionIndex {
+    sessions: HashMap<String, SessionIndexEntry>,
+}
+
+impl SessionIndex {
+    fn new() -> Self {
+        Self {
+            sessions: HashMap::new(),
+        }
+    }
+}
+
+/// Atomically write the session index to `{conversations_dir}/index.json`.
+///
+/// Uses write-to-temp + rename to prevent corruption on crash.
+/// Returns the number of sessions written on success.
+fn write_index_atomic(conversations_dir: &Path, index: &SessionIndex) -> std::io::Result<usize> {
+    let index_path = conversations_dir.join("index.json");
+    let temp_path = conversations_dir.join("index.json.tmp");
+    let json = serde_json::to_string_pretty(index)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let count = index.sessions.len();
+    std::fs::write(&temp_path, json)?;
+    std::fs::rename(&temp_path, &index_path)?;
+    Ok(count)
+}
+
+/// Load the session index from disk.
+///
+/// Returns `None` if the index file does not exist or is corrupted.
+fn load_index(conversations_dir: &Path) -> Option<SessionIndex> {
+    let index_path = conversations_dir.join("index.json");
+    let data = std::fs::read_to_string(&index_path).ok()?;
+    match serde_json::from_str::<SessionIndex>(&data) {
+        Ok(index) => Some(index),
+        Err(e) => {
+            tracing::warn!(
+                path = %index_path.display(),
+                error = %e,
+                "Session index is corrupted, will rebuild from disk"
+            );
+            None
+        }
+    }
+}
+
+/// Rebuild the index from scratch by scanning all JSONL files.
+///
+/// Used as a fallback when `index.json` is missing or corrupted.
+/// Reads the metadata line from every `.jsonl` file in the directory.
+/// The rebuilt index is persisted to disk so subsequent calls use the fast path.
+fn rebuild_index_from_disk(conversations_dir: &Path) -> SessionIndex {
+    let mut index = SessionIndex::new();
+    let Ok(rd) = std::fs::read_dir(conversations_dir) else {
+        return index;
+    };
+    for entry in rd.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        if path
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
+            && let Some(sid) = path.file_stem().and_then(|s| s.to_str())
+            && let Ok(meta) = read_session_metadata(&path)
+        {
+            // Reconstructed sessions use `updated_at` (set on metadata rewrites)
+            // as a best-effort `last_active_at`.  Once the session is loaded
+            // in memory and `append_message` is called, it will be corrected.
+            let entry = SessionIndexEntry {
+                title: meta.title,
+                created_at: meta.created_at.clone(),
+                last_active_at: meta.updated_at.unwrap_or(meta.created_at),
+                message_count: meta.message_count.unwrap_or(0) as u64,
+                workspace_id: meta.workspace_id,
+                model: meta.model,
+                provider: meta.provider,
+                corrupted: meta.corrupted,
+            };
+            index.sessions.insert(sid.to_string(), entry);
+        }
+    }
+    if let Err(e) = write_index_atomic(conversations_dir, &index) {
+        tracing::warn!(
+            "Failed to persist rebuilt session index ({} entries): {}",
+            index.sessions.len(),
+            e
+        );
+    } else {
+        tracing::info!(
+            count = index.sessions.len(),
+            "Rebuilt and persisted session index from disk"
+        );
+    }
+    index
+}
+
+/// Ensure the session index exists, loading or rebuilding as needed.
+///
+/// Returns the index and a boolean indicating whether it was freshly rebuilt
+/// (useful for callers that want to log or react to a rebuild).
+fn ensure_index(conversations_dir: &Path) -> (SessionIndex, bool) {
+    if let Some(index) = load_index(conversations_dir) {
+        (index, false)
+    } else {
+        (rebuild_index_from_disk(conversations_dir), true)
+    }
+}
+
+/// Prune excess sessions when the index exceeds `max_sessions`.
+///
+/// Sessions are ordered by `last_active_at` (oldest first) and removed
+/// until the count is within the limit.  Each pruned session has its JSONL
+/// file permanently deleted.
+///
+/// Returns the number of sessions pruned.
+///
+/// # Safety
+///
+/// This function only looks at the index file; it does NOT interact with
+/// `SessionManager`.  By design it can only prune sessions that have been
+/// evicted from memory (idle timeout), because active sessions constantly
+/// update their `last_active_at` and will never be the oldest.
+pub(crate) fn prune_excess_sessions(
+    conversations_dir: &Path,
+    max_sessions: usize,
+) -> usize {
+    if max_sessions == 0 {
+        return 0;
+    }
+
+    let mut index = match load_index(conversations_dir) {
+        Some(idx) => idx,
+        None => return 0, // index missing — nothing to prune
+    };
+
+    if index.sessions.len() <= max_sessions {
+        return 0;
+    }
+
+    // Sort by last_active_at ascending (oldest first).
+    let mut sorted: Vec<(String, String)> = index
+        .sessions
+        .iter()
+        .map(|(sid, e)| (sid.clone(), e.last_active_at.clone()))
+        .collect();
+    sorted.sort_by(|a, b| a.1.cmp(&b.1));
+
+    let to_remove = index.sessions.len() - max_sessions;
+    let mut pruned = 0usize;
+
+    for (session_id, _) in sorted.iter().take(to_remove) {
+        // Delete the JSONL file.
+        let path = conversations_dir.join(format!("{}.jsonl", session_id));
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                index.sessions.remove(session_id);
+                pruned += 1;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // File already gone — still remove from index.
+                index.sessions.remove(session_id);
+                pruned += 1;
+            }
+            Err(e) => {
+                tracing::warn!(
+                    session_id = %session_id,
+                    path = %path.display(),
+                    error = %e,
+                    "Failed to delete JSONL file during session pruning"
+                );
+            }
+        }
+    }
+
+    if pruned > 0 {
+        if let Err(e) = write_index_atomic(conversations_dir, &index) {
+            tracing::warn!(
+                pruned,
+                error = %e,
+                "Failed to write pruned session index"
+            );
+        } else {
+            tracing::info!(
+                pruned,
+                remaining = index.sessions.len(),
+                "Pruned excess sessions"
+            );
+        }
+    }
+
+    pruned
+}
+
 /// Paginated message result.
 #[derive(Debug, Clone)]
 pub struct PaginatedMessages {
@@ -966,6 +1328,9 @@ pub struct StreamingLine {
     pub accumulated_content: String,
     /// ISO 8601 timestamp when streaming started.
     pub started_at: String,
+    /// Unix epoch milliseconds when streaming started (for timing metadata
+    /// in metadata: {startTime, endTime} written to JSONL on flush).
+    pub started_at_ms: i64,
 }
 
 /// Delta portion of a streaming line returned to the frontend.
@@ -1318,85 +1683,62 @@ fn metadata_end_offset(file: &mut std::fs::File) -> std::io::Result<u64> {
 /// Scans for `*.jsonl` files, sorts by filename descending (timestamp
 /// prefix guarantees chronological order), and returns the session ID
 /// without the `.jsonl` extension.
+/// Find the most recently active session.
+///
+/// Reads `conversations/index.json` and returns the session with the
+/// highest `last_active_at` value.  Falls back to a directory scan +
+/// index rebuild if `index.json` is missing or corrupted.
 pub fn find_latest_session(conversations_dir: &Path) -> Option<String> {
-    let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(conversations_dir)
-        .ok()?
-        .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-        })
-        .collect();
-
-    if entries.is_empty() {
-        return None;
-    }
-
-    // Sort descending by filename (timestamp prefix => newest first)
-    entries.sort_by(|a, b| {
-        b.file_name()
-            .to_string_lossy()
-            .cmp(&a.file_name().to_string_lossy())
-    });
-
-    entries.first().and_then(|e| {
-        e.path()
-            .file_stem()
-            .map(|s| s.to_string_lossy().to_string())
-    })
+    let (index, _rebuilt) = ensure_index(conversations_dir);
+    index
+        .sessions
+        .iter()
+        .max_by(|(_, a), (_, b)| a.last_active_at.cmp(&b.last_active_at))
+        .map(|(sid, _)| sid.clone())
 }
 
-/// Asynchronously scan all sessions in the conversations directory.
+/// Asynchronously scan all sessions from the index file.
 ///
-/// Reads the first line of each `.jsonl` file to extract `SessionMetadata`
-/// and builds a `Vec<SessionInfo>`. Results are sorted newest-first.
+/// Reads `conversations/index.json` and returns a paginated list of
+/// `SessionInfo` sorted by `last_active_at` descending (newest first).
+/// Falls back to a full directory scan + index rebuild if the index
+/// file is missing or corrupted.
 pub fn scan_sessions_async(
     conversations_dir: PathBuf,
     page: Option<u32>,
     size: Option<u32>,
 ) -> tokio::task::JoinHandle<(Vec<SessionInfo>, usize)> {
     tokio::task::spawn_blocking(move || {
-        let mut entries: Vec<std::fs::DirEntry> = match std::fs::read_dir(&conversations_dir) {
-            Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
-            Err(_) => return (Vec::new(), 0),
-        };
+        let (index, rebuilt) = ensure_index(&conversations_dir);
+        if rebuilt {
+            tracing::info!("Session index was rebuilt from disk during scan");
+        }
 
-        // Sort descending by filename
-        entries.sort_by(|a, b| {
-            b.file_name()
-                .to_string_lossy()
-                .cmp(&a.file_name().to_string_lossy())
-        });
+        let mut entries: Vec<(String, SessionIndexEntry)> = index.sessions.into_iter().collect();
+
+        // Sort descending by last_active_at (newest first).
+        entries.sort_by(|(_, a), (_, b)| b.last_active_at.cmp(&a.last_active_at));
 
         let total = entries.len();
         let page = page.unwrap_or(1).max(1) as usize;
         let size = size.unwrap_or(20).max(1) as usize;
         let start = (page - 1) * size;
-        let end = start + size;
+        let end = (start + size).min(total);
 
-        let entries_page = entries.into_iter().skip(start).take(end);
+        let sessions = entries[start..end]
+            .iter()
+            .map(|(sid, e)| SessionInfo {
+                session_id: sid.clone(),
+                created_at: e.created_at.clone(),
+                message_count: e.message_count as u32,
+                title: e.title.clone(),
+                corrupted: e.corrupted,
+                model: e.model.clone(),
+                provider: e.provider.clone(),
+                workspace_id: e.workspace_id.clone(),
+            })
+            .collect();
 
-        let mut sessions = Vec::new();
-        for entry in entries_page {
-            let path = entry.path();
-            if path
-                .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl"))
-                && let Ok(meta) = read_session_metadata(&path)
-            {
-                sessions.push(SessionInfo {
-                    session_id: meta.session_id,
-                    created_at: meta.created_at,
-                    message_count: meta.message_count.unwrap_or(0),
-                    title: meta.title,
-                    corrupted: meta.corrupted,
-                    model: meta.model,
-                    provider: meta.provider,
-                    workspace_id: meta.workspace_id,
-                });
-            }
-        }
         (sessions, total)
     })
 }
@@ -1714,6 +2056,11 @@ pub fn read_messages_since(
     session_id: &str,
     cached_total_lines: usize,
 ) -> Result<ReadMessagesSinceResult> {
+    // ADR-022: Use `cached_total_lines` (committed_lines from the writer
+    // thread) as the authoritative count.  Unlike the old `total_lines`
+    // which was incremented before the async disk write, `committed_lines`
+    // is only incremented AFTER the write — so it never lies about what's
+    // actually on disk.
     let total_lines = if cached_total_lines > 0 {
         cached_total_lines
     } else {
@@ -1755,12 +2102,24 @@ pub fn read_messages_since(
             role: sl.role.clone(),
             accumulated_content: sl.accumulated_content.clone(),
             started_at: sl.started_at.clone(),
+            started_at_ms: sl.started_at_ms,
         })
     };
     let streaming = streaming.map(|sl| {
         let current_len = sl.accumulated_content.chars().count();
-        let offset = line_char_offset.min(current_len);
-        let delta_content: String = sl.accumulated_content.chars().skip(offset).collect();
+        // ADR-022: If the frontend's `line_number` is behind this streaming
+        // line's own `line_number`, then the `line_char_offset` it sent
+        // belonged to a *previous* streaming line that has since been flushed
+        // to JSONL (role transition triggers flush + new line). Applying that
+        // stale offset here would skip the beginning of this fresh line and
+        // permanently drop its opening characters. In that case the offset is
+        // meaningless for this line — read it from the start.
+        let effective_offset = if line_number < sl.line_number {
+            0
+        } else {
+            line_char_offset.min(current_len)
+        };
+        let delta_content: String = sl.accumulated_content.chars().skip(effective_offset).collect();
         StreamingLineDelta {
             line: sl.line_number,
             role: sl.role,
@@ -1821,6 +2180,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "Hello", None);
@@ -1881,21 +2241,36 @@ mod tests {
         let conv_dir = temp_dir.path().join("conversations");
         std::fs::create_dir_all(&conv_dir).unwrap();
 
-        // Create a few session files with different names
+        // Create a few session files with different names and timestamps.
+        // `find_latest_session` now reads from index.json (auto-rebuilt if
+        // missing) and sorts by `last_active_at` (= updated_at from JSONL
+        // metadata during rebuild).  Give each session a distinct
+        // `updated_at` so ordering is deterministic regardless of rebuild
+        // sort stability.
+        let base = chrono::Utc::now();
         let ids = vec![
-            "20260503_100000_aaaaaa",
-            "20260503_120000_bbbbbb",
-            "20260503_110000_cccccc",
+            (
+                "20260503_100000_aaaaaa",
+                (base - chrono::Duration::hours(3)).to_rfc3339(),
+            ),
+            (
+                "20260503_120000_bbbbbb",
+                base.to_rfc3339(), // newest
+            ),
+            (
+                "20260503_110000_cccccc",
+                (base - chrono::Duration::hours(1)).to_rfc3339(),
+            ),
         ];
-        for id in &ids {
+        for (id, updated) in &ids {
             let path = conv_dir.join(format!("{}.jsonl", id));
             let meta = SessionMetadata {
-                version: 1,
+                version: CONVERSATION_FORMAT_VERSION,
                 session_id: id.to_string(),
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: updated.clone(),
                 agent_id: "com.test".to_string(),
                 title: None,
-                updated_at: None,
+                updated_at: Some(updated.clone()),
                 message_count: Some(0),
                 corrupted: false,
                 workspace_id: None,
@@ -2036,6 +2411,7 @@ mod tests {
                 model: None,
                 provider: None,
             },
+            0, Arc::new(AtomicUsize::new(0)), // unlimited in tests
         )
         .unwrap();
         session.append_message("user", "First message", None);
@@ -2047,7 +2423,7 @@ mod tests {
         });
 
         // Resume session
-        let resumed = ConversationSession::resume(work_dir, session_id).unwrap();
+        let resumed = ConversationSession::resume(work_dir, session_id, Arc::new(AtomicUsize::new(0))).unwrap();
         assert_eq!(resumed.session_id(), session_id);
         assert_eq!(resumed.agent_id(), agent_id);
 
@@ -2629,5 +3005,75 @@ mod tests {
         let page = read_messages_paginated(&path, None, 50, "backward").unwrap();
         assert_eq!(page.messages.len(), 4);
         assert!(!page.has_more);
+    }
+
+    /// Build a StreamingStateMap with a single streaming line for `session_id`.
+    fn make_streaming_map(
+        session_id: &str,
+        line_number: usize,
+        role: &str,
+        content: &str,
+    ) -> StreamingStateMap {
+        let map: StreamingStateMap = Arc::new(RwLock::new(HashMap::new()));
+        map.write().unwrap().insert(
+            session_id.to_string(),
+            StreamingLine {
+                line_number,
+                role: role.to_string(),
+                accumulated_content: content.to_string(),
+                started_at: chrono::Utc::now().to_rfc3339(),
+                started_at_ms: chrono::Utc::now().timestamp_millis(),
+            },
+        );
+        map
+    }
+
+    /// ADR-022: streaming delta uses the requested `line_char_offset` when the
+    /// frontend is already caught up to this streaming line's `line_number`.
+    #[test]
+    fn test_read_since_streaming_same_line_uses_offset() {
+        let dir = TempDir::new().unwrap();
+        let entries = vec![make_entry("1", "user", "hi")];
+        let path = write_test_jsonl(&dir, "sess-same-line", &entries);
+        // JSONL now has: line 0 = metadata, line 1 = user. total_lines = 2.
+        // Streaming line will become line 2. Frontend already saw line 2 chars 0..3.
+        let map = make_streaming_map("sess-same-line", 2, "assistant", "hello world");
+
+        // Frontend line_number=2 (caught up), offset=3 → expect "lo world".
+        let result = read_messages_since(&path, 2, 3, &map, "sess-same-line", 0).unwrap();
+        let streaming = result.streaming.expect("streaming line expected");
+        assert_eq!(streaming.line, 2);
+        assert_eq!(streaming.content, "lo world");
+        assert_eq!(streaming.char_offset, "hello world".chars().count());
+    }
+
+    /// ADR-022 regression: when a role transition flushed the previous
+    /// streaming line to JSONL and started a NEW streaming line at a higher
+    /// line_number, the frontend's stale `line_char_offset` (from the old
+    /// line) must NOT be applied to the new line — otherwise the opening
+    /// characters of the new line are silently dropped.
+    #[test]
+    fn test_read_since_streaming_new_line_ignores_stale_offset() {
+        let dir = TempDir::new().unwrap();
+        // Frontend last saw up to line 2 (an assistant line just flushed).
+        let entries = vec![
+            make_entry("1", "user", "hi"),
+            make_entry("2", "assistant", "previous assistant text"),
+        ];
+        let path = write_test_jsonl(&dir, "sess-new-line", &entries);
+        // New streaming line is a thought that will become line 3.
+        let map = make_streaming_map("sess-new-line", 3, "thought", "reasoning...");
+
+        // Frontend sends line_number=2 (has NOT yet seen line 3) with a stale
+        // offset of 10 that belonged to the old assistant line. The new thought
+        // line must be returned in full, not skipped by 10 chars.
+        let result = read_messages_since(&path, 2, 10, &map, "sess-new-line", 0).unwrap();
+        let streaming = result.streaming.expect("streaming line expected");
+        assert_eq!(streaming.line, 3);
+        assert_eq!(
+            streaming.content, "reasoning...",
+            "stale offset from a flushed line must not truncate the new streaming line"
+        );
+        assert_eq!(streaming.char_offset, "reasoning...".chars().count());
     }
 }

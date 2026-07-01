@@ -10,7 +10,7 @@
 //! Phase 2: wrapped in Arc for multi-session Actor sharing.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
 use acowork_core::protocol::{ModelCapabilitiesInfo, ProviderListItem};
@@ -97,6 +97,17 @@ pub struct AgentCore {
     /// Updated atomically on each flush_streaming_line. Eliminates O(N) file
     /// scans in notify_new_data_available() and ensure_streaming_line().
     pub(crate) total_lines: Arc<AtomicUsize>,
+    /// ADR-022: Committed JSONL line count — updated by the writer thread
+    /// AFTER each entry is physically written to disk. This is the
+    /// authoritative count for `read_messages_since` and
+    /// `notify_new_data_available`.  `total_lines` (above) may be ahead
+    /// of disk due to async writer; `committed_lines` never is.
+    pub(crate) committed_lines: Arc<AtomicUsize>,
+    /// ADR-022: Number of streaming flushes that occurred during the current
+    /// LLM stream. Reset to 0 at the start of each `consume_stream` call.
+    /// When > 0, `handle_text_response` and `prepare_tool_calls` skip their
+    /// legacy persistence paths (content was already flushed on role transitions).
+    pub(crate) streaming_flush_count: Arc<AtomicU64>,
     /// Grafeo memory store (shared across all sessions of this agent).
     /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
     /// None if initialization failed (memory features degraded gracefully).
@@ -227,6 +238,8 @@ impl AgentCore {
             notify_enabled: Arc::new(AtomicBool::new(false)),
             last_notify_ts: Arc::new(AtomicI64::new(0)),
             total_lines: Arc::new(AtomicUsize::new(0)),
+            committed_lines: Arc::new(AtomicUsize::new(0)),
+            streaming_flush_count: Arc::new(AtomicU64::new(0)),
             memory_store: None,
             memory_session: None,
             debug_observer: observer,
@@ -380,11 +393,14 @@ impl AgentCore {
     /// The `line_number` is set to the current JSONL total line count so the
     /// frontend knows which line this will become after flush.
     ///
-    /// If a streaming line already exists for this session but with a different
-    /// role, the role is updated to reflect the current content type. This
-    /// prevents `flush_streaming_line` from writing content under a stale role
-    /// (e.g., writing assistant reply content as "thought" because reasoning
-    /// arrived first and created the streaming line).
+    /// ADR-022: The streaming line's role is immutable for its lifetime. If a
+    /// line already exists with a *different* role, this method does NOT
+    /// overwrite the role. Callers must use `flush_and_new_streaming_line` to
+    /// transition between roles. Reaching the mismatch branch here indicates a
+    /// caller bug (forgetting to flush before switching roles), so we assert
+    /// in debug builds and silently keep the existing role in release builds
+    /// (the subsequent `append_streaming_delta` write will go to the old line,
+    /// which is wrong but non-crashing — the test suite catches it in debug).
     fn ensure_streaming_line(&self, role: &str) {
         let sid = match &self.session_id {
             Some(s) => s.clone(),
@@ -392,14 +408,15 @@ impl AgentCore {
         };
         let mut map = self.streaming_lines.write().unwrap();
         if let Some(existing) = map.get_mut(&sid) {
-            // Role transition: update to current role so flush_streaming_line
-            // writes with the correct role. The accumulated content may contain
-            // a mix of both roles' output, but the final persistence
-            // (persist_think_to_conversation + handle_text_response) writes
-            // clean separated entries that supersede this temporary line.
-            if existing.role != role {
-                existing.role = role.to_string();
-            }
+            debug_assert_eq!(
+                existing.role, role,
+                "ADR-022 violation: append_streaming_delta called with role `{}` \
+                 but current streaming line has role `{}`. \
+                 Call flush_and_new_streaming_line before switching roles.",
+                role, existing.role
+            );
+            // ADR-022: do NOT overwrite `existing.role`. The line keeps its
+            // original role; role transitions must go through flush_and_new.
             return;
         }
         // Use cached total_lines; initialize from file on first access.
@@ -411,6 +428,7 @@ impl AgentCore {
                 role: role.to_string(),
                 accumulated_content: String::new(),
                 started_at: chrono::Utc::now().to_rfc3339(),
+                started_at_ms: chrono::Utc::now().timestamp_millis(),
             },
         );
     }
@@ -453,14 +471,52 @@ impl AgentCore {
         };
         let sl = removed?;
         let content = sl.accumulated_content.clone();
+        tracing::info!(
+            role = %sl.role,
+            content_len = content.len(),
+            has_conversation = conversation.is_some(),
+            "ADR-022 flush_streaming_line: flushing line"
+        );
         if !content.is_empty()
             && let Some(conv) = conversation
         {
-            conv.append_message(&sl.role, &content, None);
+            // ADR-022: For thought streaming lines, include timing metadata
+            // so the frontend receives startTime/endTime and can correctly
+            // display the ThinkBlock as collapsed ("Thought") rather than
+            // expanded ("Thinking...") after the thought completes.
+            let metadata = if sl.role == "thought" {
+                Some(serde_json::json!({
+                    "startTime": sl.started_at_ms,
+                    "endTime": chrono::Utc::now().timestamp_millis(),
+                }))
+            } else {
+                None
+            };
+            conv.append_message(&sl.role, &content, metadata);
             // Increment cached line count — one new line written to JSONL.
             self.total_lines.fetch_add(1, Ordering::Relaxed);
+            // ADR-022: Track that streaming flush occurred so
+            // handle_text_response / prepare_tool_calls can skip
+            // their legacy persistence paths.
+            self.streaming_flush_count.fetch_add(1, Ordering::Relaxed);
+            tracing::info!(
+                role = %sl.role,
+                content_len = content.len(),
+                "ADR-022 flush_streaming_line: wrote to JSONL"
+            );
+        } else if content.is_empty() {
+            tracing::warn!(
+                role = %sl.role,
+                "ADR-022 flush_streaming_line: content is EMPTY, skipping write"
+            );
         }
         Some(content)
+    }
+
+    /// ADR-022: Reset the streaming flush counter at the start of each
+    /// LLM stream. Called by `consume_stream` in `loop_llm.rs`.
+    pub(crate) fn reset_streaming_flush_count(&self) {
+        self.streaming_flush_count.store(0, Ordering::Relaxed);
     }
 
     /// Remove the streaming line for this session without persisting to JSONL.
@@ -473,6 +529,64 @@ impl AgentCore {
             None => return,
         };
         self.streaming_lines.write().unwrap().remove(&sid);
+    }
+
+    /// ADR-022: Flush the current streaming line to JSONL (if non-empty),
+    /// then ensure a new streaming line exists with the given role.
+    ///
+    /// This is the single point where role transitions cause JSONL writes
+    /// during streaming. Callers detect role changes (Content event after
+    /// ReasoningContent, or vice versa) and invoke this method.
+    ///
+    /// The new streaming line starts with an empty `accumulated_content`;
+    /// the caller follows up with `append_streaming_delta` to populate it.
+    pub(crate) fn flush_and_new_streaming_line(
+        &self,
+        new_role: &str,
+        conversation: Option<&crate::conversation::ConversationSession>,
+    ) {
+        // Check if a streaming line exists and what its current role is.
+        // Only flush when the role is changing AND there is content to
+        // persist. Consecutive same-role events accumulate in one line;
+        // empty lines with a stale role are silently discarded (ADR §5.1).
+        let sid = match &self.session_id {
+            Some(s) => s.clone(),
+            None => {
+                // No session — just ensure a new line (no-op without session)
+                return;
+            }
+        };
+
+        let need_flush = {
+            let map = self.streaming_lines.read().unwrap();
+            if let Some(sl) = map.get(&sid) {
+                // Flush only when role is changing AND content is non-empty.
+                sl.role != new_role && !sl.accumulated_content.is_empty()
+            } else {
+                false // No existing line — nothing to flush
+            }
+        };
+
+        if need_flush {
+            self.flush_streaming_line(conversation);
+        } else {
+            // ADR §5.1: If the existing line has a different role but is
+            // empty, discard it so ensure_streaming_line won't hit the
+            // debug_assert for role mismatch.
+            let map = self.streaming_lines.read().unwrap();
+            if let Some(sl) = map.get(&sid)
+                && sl.role != new_role
+                && sl.accumulated_content.is_empty()
+            {
+                drop(map);
+                self.remove_streaming_line();
+            }
+        }
+
+        // Ensure a new streaming line with the target role.
+        // If the line already exists with the same role, this is a no-op.
+        // If we just flushed, this creates a fresh empty line.
+        self.ensure_streaming_line(new_role);
     }
 
     /// Increment the cached total JSONL line count.
@@ -521,8 +635,9 @@ impl AgentCore {
             None => return,
         };
 
-        // Use cached total_lines — O(1) atomic read, no file I/O.
-        let total_lines = self.get_total_lines(&sid);
+        // Use committed_lines — O(1) atomic read, updated by writer thread
+        // after each physical disk write.  Never ahead of the actual file.
+        let total_lines = self.get_committed_lines(&sid);
 
         let map = self.streaming_lines.read().unwrap();
         let streaming_line = map.get(&sid).map(|sl| sl.line_number).unwrap_or(0);
@@ -532,6 +647,7 @@ impl AgentCore {
             session_id: sid,
             total_lines,
             streaming_line,
+            interval_ms: self.config.data_flow.notify_interval_ms,
         });
     }
 
@@ -557,6 +673,28 @@ impl AgentCore {
             })
             .unwrap_or(0);
         self.total_lines.store(count, Ordering::Relaxed);
+        count
+    }
+
+    /// Get the committed JSONL line count (updated by writer thread after
+    /// each physical disk write).  Initializes from file on first access.
+    fn get_committed_lines(&self, session_id: &str) -> usize {
+        let cached = self.committed_lines.load(Ordering::Relaxed);
+        if cached > 0 {
+            return cached;
+        }
+        // Cold start: scan file once to initialize.
+        let count = self
+            .current_work_dir
+            .as_ref()
+            .map(|wd| {
+                let jsonl_path = std::path::PathBuf::from(wd)
+                    .join("conversations")
+                    .join(format!("{}.jsonl", session_id));
+                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
+            })
+            .unwrap_or(0);
+        self.committed_lines.store(count, Ordering::Relaxed);
         count
     }
 
@@ -966,6 +1104,8 @@ impl AgentCore {
             notify_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnableNotify
             last_notify_ts: Arc::new(AtomicI64::new(0)),    // per-session throttle, restarts at 0
             total_lines: Arc::new(AtomicUsize::new(0)),     // per-session, initialized on first use
+            committed_lines: Arc::new(AtomicUsize::new(0)), // per-session, updated by writer thread
+            streaming_flush_count: Arc::new(AtomicU64::new(0)), // per-stream, reset in consume_stream
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),
             // Debug observer is NOT cloned — each session gets a fresh
@@ -1311,6 +1451,7 @@ mod tests {
                 accumulated_content: String::new(),
                 role: "assistant".to_string(),
                 started_at: String::new(),
+                started_at_ms: 0,
             },
         );
         core.notify_new_data_available();
@@ -1329,6 +1470,7 @@ mod tests {
                 accumulated_content: String::new(),
                 role: "assistant".to_string(),
                 started_at: String::new(),
+                started_at_ms: 0,
             },
         );
         core.notify_new_data_available();
@@ -1353,5 +1495,223 @@ mod tests {
             evt.event,
             crate::agent::loop_::ChunkEvent::Done { .. }
         ));
+    }
+
+    // ── ADR-022 §9: Runtime role transition & flush tests ──────────────
+
+    use crate::conversation::{ConversationSession, SessionConfig};
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// Helper: create an AgentCore + ConversationSession pair for ADR-022 tests.
+    fn make_core_with_session(
+        session_id: &str,
+    ) -> (
+        AgentCore,
+        ConversationSession,
+        TempDir,
+    ) {
+        let temp_dir = TempDir::new().unwrap();
+        let work_dir = temp_dir.path().to_path_buf();
+        let (tx, _rx) = mpsc::channel(16);
+        let manifest = acowork_core::AgentManifest::from_toml(
+            r#"
+            agent_id = "com.test.adr022"
+            version = "1.0.0"
+            name = "ADR-022 Test Agent"
+            description = "Test"
+            author = "test"
+            runtime_version = "0.1.0"
+            [llm]
+            provider = "mock"
+            model = "mock-model"
+            "#,
+        )
+        .unwrap();
+        let config = RuntimeConfig::default();
+        let provider = Arc::new(MockProvider::single_text("OK"));
+        let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
+        core.session_id = Some(session_id.to_string());
+        core.notify_enabled.store(true, Ordering::Relaxed);
+
+        let session = ConversationSession::new(
+            &work_dir,
+            session_id,
+            SessionConfig {
+                agent_id: "com.test.adr022".to_string(),
+                workspace_id: None,
+                model: None,
+                provider: None,
+            },
+            0,
+            Arc::new(AtomicUsize::new(0)),
+        )
+        .unwrap();
+
+        (core, session, temp_dir)
+    }
+
+    /// Helper: read all ConversationEntry lines from a session JSONL file
+    /// (skipping the metadata header on line 0).
+    fn read_jsonl_entries(
+        work_dir: &Path,
+        session_id: &str,
+    ) -> Vec<crate::conversation::ConversationEntry> {
+        let path = work_dir
+            .join("conversations")
+            .join(format!("{}.jsonl", session_id));
+        let content = std::fs::read_to_string(&path).unwrap();
+        content
+            .lines()
+            .skip(1) // skip metadata header
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect()
+    }
+
+    /// ADR-022 §9 test 3: Runtime role transition produces three single-role
+    /// JSONL lines.
+    ///
+    /// Simulates the event sequence:
+    ///   Content("我先看一下")          → assistant line
+    ///   ReasoningContent("分析路径")    → flush assistant, thought line
+    ///   Content("然后搜索")            → flush thought, assistant line
+    ///   Finished                       → flush assistant
+    ///
+    /// Expected JSONL:
+    ///   line 1: {"role":"assistant","content":"我先看一下"}
+    ///   line 2: {"role":"thought","content":"分析路径"}
+    ///   line 3: {"role":"assistant","content":"然后搜索"}
+    #[test]
+    fn test_adr022_role_transition_produces_single_role_lines() {
+        let session_id = "adr022-transition";
+        let (core, session, temp_dir) = make_core_with_session(session_id);
+
+        // Content("我先看一下") — starts assistant streaming line
+        core.flush_and_new_streaming_line("assistant", Some(&session));
+        core.append_streaming_delta("assistant", "我先看一下");
+
+        // ReasoningContent("分析路径") — role change, flush assistant, start thought
+        core.flush_and_new_streaming_line("thought", Some(&session));
+        core.append_streaming_delta("thought", "分析路径");
+
+        // Content("然后搜索") — role change, flush thought, start assistant
+        core.flush_and_new_streaming_line("assistant", Some(&session));
+        core.append_streaming_delta("assistant", "然后搜索");
+
+        // Finished — flush final assistant line
+        core.flush_streaming_line(Some(&session));
+
+        // Give writer thread time to process
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let entries = read_jsonl_entries(temp_dir.path(), session_id);
+        assert_eq!(
+            entries.len(),
+            3,
+            "Should have 3 single-role lines: assistant, thought, assistant"
+        );
+        assert_eq!(entries[0].role, "assistant");
+        assert_eq!(entries[0].content, "我先看一下");
+        assert_eq!(entries[1].role, "thought");
+        assert_eq!(entries[1].content, "分析路径");
+        assert_eq!(entries[2].role, "assistant");
+        assert_eq!(entries[2].content, "然后搜索");
+    }
+
+    /// ADR-022 §9 test 4: assistant text + tool_call preserves order.
+    ///
+    /// Simulates:
+    ///   Content("我来查一下")          → assistant line
+    ///   ToolCallStart                  → flush assistant, then tool_call JSONL row
+    ///
+    /// Expected JSONL:
+    ///   line 1: {"role":"assistant","content":"我来查一下"}
+    ///   line 2: {"role":"tool_call",...}
+    #[test]
+    fn test_adr022_assistant_text_then_tool_call_preserves_order() {
+        let session_id = "adr022-text-tool";
+        let (core, session, temp_dir) = make_core_with_session(session_id);
+
+        // Content("我来查一下") — assistant streaming line
+        core.flush_and_new_streaming_line("assistant", Some(&session));
+        core.append_streaming_delta("assistant", "我来查一下");
+
+        // ToolCallStart arrives — Runtime must flush assistant text first,
+        // then write tool_call row. Here we simulate the flush part.
+        core.flush_streaming_line(Some(&session));
+
+        // Simulate prepare_tool_calls writing the tool_call JSONL row
+        session.append_message(
+            "tool_call",
+            r#"{"name":"grep","arguments":{"pattern":"foo"}}"#,
+            None,
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let entries = read_jsonl_entries(temp_dir.path(), session_id);
+        assert_eq!(entries.len(), 2, "assistant text + tool_call = 2 lines");
+        assert_eq!(entries[0].role, "assistant");
+        assert_eq!(entries[0].content, "我来查一下");
+        assert_eq!(entries[1].role, "tool_call");
+    }
+
+    /// ADR-022 §9 test 5: Finished event with tool_calls flushes text first.
+    ///
+    /// Some providers don't send ToolCallStart during streaming; they return
+    /// complete tool_calls in the Finished response. Runtime must still flush
+    /// any accumulated assistant text before writing tool_call rows.
+    ///
+    /// Simulates:
+    ///   Content("开始搜索")  → assistant line accumulates
+    ///   Finished(response with tool_calls) → flush assistant, then tool_call rows
+    #[test]
+    fn test_adr022_finished_with_tool_calls_flushes_text_first() {
+        let session_id = "adr022-finished-tool";
+        let (core, session, temp_dir) = make_core_with_session(session_id);
+
+        // Content("开始搜索") — assistant streaming line accumulates
+        core.flush_and_new_streaming_line("assistant", Some(&session));
+        core.append_streaming_delta("assistant", "开始搜索");
+
+        // Finished arrives with tool_calls — prepare_tool_calls path:
+        // 1. flush_streaming_line (captures assistant text)
+        // 2. append_message tool_call rows
+        core.flush_streaming_line(Some(&session));
+        session.append_message(
+            "tool_call",
+            r#"{"name":"search","arguments":{"q":"test"}}"#,
+            None,
+        );
+
+        std::thread::sleep(std::time::Duration::from_millis(50));
+
+        let entries = read_jsonl_entries(temp_dir.path(), session_id);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].role, "assistant");
+        assert_eq!(entries[0].content, "开始搜索");
+        assert_eq!(entries[1].role, "tool_call");
+    }
+
+    /// ADR-022 invariant: ensure_streaming_line does NOT overwrite role.
+    ///
+    /// If a caller forgets to call flush_and_new_streaming_line and directly
+    /// calls append_streaming_delta with a different role, the streaming line
+    /// keeps its original role. In debug builds this triggers a debug_assert.
+    ///
+    /// This test verifies the debug assertion fires (expected behavior — we
+    /// want to catch caller bugs loudly during development). In release builds
+    /// the assertion is compiled out and the role stays unchanged silently.
+    #[test]
+    #[should_panic(expected = "ADR-022 violation: append_streaming_delta called with role")]
+    fn test_adr022_ensure_streaming_line_does_not_overwrite_role() {
+        let (core, _session, _temp_dir) = make_core_with_session("adr022-no-overwrite");
+
+        // Create an assistant streaming line
+        core.append_streaming_delta("assistant", "hello");
+
+        // Attempt to append thought content without flushing first.
+        // This is a caller bug — debug_assert_eq! must fire.
+        core.append_streaming_delta("thought", "should be thought but stays assistant");
     }
 }

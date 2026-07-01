@@ -12,6 +12,7 @@ pub async fn send_message(
     state: State<'_, AppState>,
     agent_id: String,
     content: String,
+    message_id: Option<String>,
     session_id: Option<String>,
     command: Option<String>,
     document_ids: Option<Vec<String>>,
@@ -22,6 +23,7 @@ pub async fn send_message(
         .send_message(
             &agent_id,
             &content,
+            message_id.as_deref(),
             session_id.as_deref(),
             command.as_deref(),
             document_ids.as_deref(),

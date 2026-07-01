@@ -135,6 +135,7 @@ import { DocumentChip } from "./DocumentChip";
 import { AttachedContextChips } from "./AttachedContextChips";
 import { ToolbarDropdownTrigger } from "../common/ToolbarDropdown";
 import { Tooltip } from "../common/Tooltip";
+import { getPollingIntervalMs } from "../../lib/polling";
 
 // Module-level: persists across ChatPanel mount/unmount cycles
 // so nav-back (Settings→Chat) doesn't trigger full reinit
@@ -147,6 +148,20 @@ export function ChatPanel() {
   const { t } = useTranslation();
   const { selectedAgentId, startAgent } = useAgentStore();
   const selectedAgent = useAgentStore((s) => selectedAgentId ? s.agents[selectedAgentId]?.meta : undefined);
+
+  // ── Streaming typewriter animation ────────────────────────────────
+  // Each delta arrives in a ~500ms poll cycle.  We reveal the new
+  // characters progressively over that window so the text appears to
+  // type out rather than flash into existence all at once.
+  //
+  // animStateRef:  Map<msgId, { displayedLen }>  — persists across renders
+  // animTick:      number  — tick counter, incremented each RAF frame to
+  //                trigger re-render.  A state (not ref) is needed because
+  //                React must re-render to show the next set of characters.
+  // rafRef:        RAF handle for cleanup on unmount / streaming-end.
+  const animStateRef = useRef<Map<string, { displayedLen: number }>>(new Map());
+  const [animTick, setAnimTick] = useState(0);
+  const rafRef = useRef<number>(0);
 
   // Per-agent + per-session state selectors
   // Two-level mapping: agentStates[agentId].sessionStates[sessionId]
@@ -282,6 +297,9 @@ export function ChatPanel() {
       if (msg.type === 'tool_call' || msg.type === 'tool_result') {
         exploreBuffer.push(msg);
       } else if (msg.type === 'thought') {
+        // ADR-022: No tag stripping needed — the provider layer already
+        // split think tags, and the runtime flushes on role change.
+        // Each JSONL row has a single, clean role.
         exploreBuffer.push(msg);
       } else if (msg.type === 'document_upload' || msg.type === 'system' || msg.type === 'compaction') {
         // Document upload, system messages, and compaction summary cards:
@@ -291,29 +309,11 @@ export function ChatPanel() {
         flushExplore();
         grouped.push(msg);
       } else if (msg.type === 'assistant') {
-        // ADR-021: Messages arrive complete via HTTP poll — no streaming state.
-
-        const { thinkContent, replyContent } = parseThinkContent(msg.content);
-        if (thinkContent) {
-          exploreBuffer.push({ ...msg, type: 'thought' as any, content: thinkContent });
-        }
-        if (replyContent.trim()) {
-          // Only flush if exploreBuffer already has tool-call/result items
-          // (previous round complete). If thinkContent was just pushed into
-          // an otherwise empty (or thought-only) buffer, keep it — subsequent
-          // tool calls from this round should join the same explore group.
-          const hasToolsInBuffer = exploreBuffer.some(
-            (m) => m.type === 'tool_call' || m.type === 'tool_result'
-          );
-          if (hasToolsInBuffer || !thinkContent) {
-            flushExplore();
-          }
-          grouped.push({ ...msg, content: replyContent });
-        } else if (!thinkContent) {
-          // Empty message (streaming)
-          flushExplore();
-          grouped.push(msg);
-        }
+        // ADR-022: No think tag parsing needed. The provider layer split
+        // think content into separate ReasoningContent events, and the
+        // runtime flushed each role change to JSONL. Each row is clean.
+        flushExplore();
+        grouped.push(msg);
       } else {
         // user message or other
         flushExplore();
@@ -325,13 +325,25 @@ export function ChatPanel() {
     return grouped;
   }, [messages]);
 
-  // ADR-021: No more streaming indicators — messages arrive complete via HTTP poll.
   // Show compacting indicator below messages when compaction is in progress
   const isCompacting = sessionState?.isCompacting ?? false;
   const showCompactingItem = isCompacting;
 
-  // Virtual scrolling: only render visible items (messages + optional thinking/compacting indicator)
-  const virtualCount = displayMessages.length + (showCompactingItem ? 1 : 0);
+  // ADR-021+fix: Working indicator — shown when the session is "streaming" but
+  // no streaming placeholder message exists yet.  This covers the gap between
+  // session_status → streaming and the first new_data_available poll response,
+  // which can take 500–2000ms (LLM call startup).
+  const hasStreamingPlaceholder = displayMessages.some(
+    (m) => 'id' in m && typeof m.id === 'string' && m.id.startsWith('msg-streaming-')
+  );
+  const showWorkingItem = sending && !hasStreamingPlaceholder;
+
+  // Virtual scrolling: only render visible items (messages + optional compacting indicator).
+  // Working indicator is rendered OUTSIDE the virtual list (below it) to avoid messing up
+  // virtualCount and causing other messages to disappear when working is shown.
+  let extraItems = 0;
+  if (showCompactingItem) extraItems++;
+  const virtualCount = displayMessages.length + extraItems;
   const virtualizer = useVirtualizer({
     count: virtualCount,
     getScrollElement: () => messagesContainerRef.current,
@@ -391,6 +403,80 @@ export function ChatPanel() {
   useEffect(() => {
     loadModels();
   }, [gatewayStatus, loadModels]);
+
+  // ── Streaming typewriter animation ───────────────────────────���────
+  // Each delta arrives in a ~500ms poll cycle.  We reveal the new
+  // characters progressively over that window so the text appears to
+  // type out rather than flash into existence all at once.
+  //
+  // The animation duration is driven by `interval_ms` from backend
+  // (DataFlowConfig.notify_interval_ms), read via getPollingIntervalMs().
+  // This ensures the animation completes before the next poll arrives.
+  //
+  // Drives animStateRef (map of msgId → { displayedLen }) via RAF,
+  // advancing by enough characters per frame to finish in ~intervalMs.
+  //
+  // NOTE: animTick is in the dependency array so each RAF-triggered
+  // state update re-runs this effect, which advances displayedLen and
+  // schedules the next frame.  Without it the animation stalls after
+  // the first frame because the useEffect never re-fires.
+  useEffect(() => {
+    if (!sending) {
+      animStateRef.current.clear();
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      return;
+    }
+
+    // Find the last streaming placeholder (the one being typed).
+    const lastMsg = displayMessages[displayMessages.length - 1];
+    if (!lastMsg || 'items' in lastMsg || !lastMsg.id.startsWith('msg-streaming-')) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      return;
+    }
+
+    // Skip animation for thought-type messages — ThinkBlock has its own
+    // streaming indicators (auto-expand/collapse + pulse).  Slicing thought
+    // content by character count can cut through <think> tags if they
+    // survive to the frontend (e.g. non-ADR-022 providers), causing raw
+    // tag text to flash before the full tag arrives.
+    if (lastMsg.type === "thought") {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      return;
+    }
+
+    const fullLen = lastMsg.content.length;
+    let state = animStateRef.current.get(lastMsg.id);
+    if (!state) {
+      state = { displayedLen: 0 };
+      animStateRef.current.set(lastMsg.id, state);
+    }
+
+    if (state.displayedLen >= fullLen) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      return;
+    }
+
+    // Read the configured interval from PollingManager (set by backend's
+    // notify_interval_ms). Fallback to 500ms if no manager exists.
+    const intervalMs = selectedAgentId && currentSessionId
+      ? (getPollingIntervalMs(selectedAgentId, currentSessionId) ?? 500)
+      : 500;
+    // At ~60fps (16.67ms per frame), compute chars to reveal per frame
+    // so the animation completes in intervalMs.
+    const remaining = fullLen - state.displayedLen;
+    const fps = 60;
+    const framesNeeded = Math.max(1, Math.round((intervalMs * fps) / 1000));
+    const charsPerFrame = Math.max(1, Math.ceil(remaining / framesNeeded));
+    state.displayedLen = Math.min(fullLen, state.displayedLen + charsPerFrame);
+
+    rafRef.current = requestAnimationFrame(() => {
+      setAnimTick((t) => t + 1);
+    });
+  }, [displayMessages, sending, animTick, selectedAgentId, currentSessionId]);
 
   // Listen for models-added event from AddProviderFlow
   useEffect(() => {
@@ -543,15 +629,19 @@ export function ChatPanel() {
     // If this session was already loaded, skip reload
     if (currentSessionId === lastLoadedSessionId) return;
 
-    // ADR-021: No more streaming guard needed — messages come via HTTP poll.
-    // Session switching always triggers a fresh load.
+    // ADR-021 Phase 4: Use incremental load (pass pollLineNumber) so the
+    // messages array is APPENDED to, never REPLACED.  This prevents a race
+    // where the user has already sent an optimistically-rendered message
+    // before the HTTP response returns — a full replacement would wipe it.
+    const chatStore = useChatStore.getState();
+    const sessionState = chatStore.agentStates[selectedAgentId]?.sessionStates[currentSessionId];
+    const startLine = sessionState?.pollLineNumber;
     lastLoadedSessionId = currentSessionId;
 
     // Mark as initial load to trigger scroll-to-bottom after messages are loaded
     isInitialLoadRef.current = true;
-    void useChatStore
-      .getState()
-      .loadSessionMessages(selectedAgentId, currentSessionId)
+    void chatStore
+      .loadSessionMessages(selectedAgentId, currentSessionId, undefined, 50, "backward", startLine)
       .finally(() => {
         isInitialLoadRef.current = false;
       });
@@ -599,8 +689,8 @@ export function ChatPanel() {
           userJustSentRef.current = false;
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
           pinnedToBottomRef.current = true;
-        } else if (!thinkingWasShowingRef.current && false) {
-          // ADR-021: No more streaming thinking indicator
+        } else if (false) {
+          // Working indicator scroll — disabled to avoid double-scroll with userJustSent
           virtualizer.scrollToIndex(virtualCount - 1, { align: "end" });
           pinnedToBottomRef.current = true;
         } else {
@@ -1109,8 +1199,11 @@ export function ChatPanel() {
                 }}
               >
                 {virtualizer.getVirtualItems().map((virtualRow) => {
-                  // --- Compacting indicator (extra virtual item, above thinking if both shown) ---
-                  if (showCompactingItem && virtualRow.index === displayMessages.length) {
+                  // Compacting indicator is the only extra virtual item.
+                  const compactingIdx = displayMessages.length;
+
+                  // --- Compacting indicator (extra virtual item) ---
+                  if (showCompactingItem && virtualRow.index === compactingIdx) {
                     return (
                       <div
                         key={virtualRow.key}
@@ -1131,8 +1224,6 @@ export function ChatPanel() {
                       </div>
                     );
                   }
-
-                  // ADR-021: No more thinking indicator — messages arrive complete via HTTP poll.
 
                   // --- Regular message item ---
                   const item = displayMessages[virtualRow.index];
@@ -1183,12 +1274,23 @@ export function ChatPanel() {
                           && virtualRow.index === displayMessages.length - 1
                           && msg.id.startsWith("msg-streaming-");
                         return (
-                          <MessageBubble message={msg} isStreaming={isStreamingMsg} agentId={selectedAgentId ?? ""} />
+                           <MessageBubble message={msg} isStreaming={isStreamingMsg} agentId={selectedAgentId ?? ""} displayLen={isStreamingMsg ? animStateRef.current.get(msg.id)?.displayedLen : undefined} />
                         );
                       })()}
                     </div>
                   );
                 })}
+              </div>
+            )}
+            {/* Working indicator — shown OUTSIDE the virtual list so it doesn't
+                affect virtualCount and cause other messages to disappear.
+                Shows while the session is "streaming" but no streaming placeholder
+                message exists yet (gap between session_status→streaming and the
+                first new_data_available poll response, ~500-2000ms). */}
+            {showWorkingItem && (
+              <div className="flex items-center gap-1.5 px-4 py-1.5 select-none">
+                <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
+                <span className="thinking-shimmer" style={{ fontSize: "var(--ui-font-size, 0.875rem)" }}>{t("chatPanel.working")}</span>
               </div>
             )}
             {/* Debug paused banner — shown when the agent is in dev_mode and
@@ -1552,58 +1654,6 @@ export function ChatPanel() {
   );
 }
 
-/**
- * Parse <think>...</think> tags from assistant content.
- *
- * Returns the think content, reply content, and whether the think tag is closed.
- * If the content does not start with <think>, all content is treated as reply.
- * The <think> and </think> tags are stripped from the output.
- * Handles multiple <think> blocks by extracting the first one and stripping all others.
- */
-function parseThinkContent(content: string): {
-  thinkContent: string | null;
-  replyContent: string;
-  thinkClosed: boolean;
-} {
-  // Find the first <think> block
-  const firstThinkStart = content.indexOf("<think>");
-
-  if (firstThinkStart === -1) {
-    // No <think> tag found — treat entire content as reply
-    return { thinkContent: null, replyContent: content, thinkClosed: false };
-  }
-
-  // Find the closing </think> for the first <think>
-  const firstThinkEnd = content.indexOf("</think>", firstThinkStart);
-
-  if (firstThinkEnd === -1) {
-    // <think> tag is still open — everything after <think> is think content
-    const thinkContent = content.slice(firstThinkStart + 7); // length of "<think>"
-    return { thinkContent, replyContent: "", thinkClosed: false };
-  }
-
-  // Extract think content (between first <think> and its closing </think>)
-  const thinkContent = content.slice(firstThinkStart + 7, firstThinkEnd);
-
-  // Extract reply content (after the first </think>)
-  // Also strip any remaining <think>...</think> tags from the reply
-  let replyContent = content.slice(firstThinkEnd + 8); // length of "</think>"
-
-  // Remove any remaining <think>...</think> blocks from reply content
-  const thinkRegex = new RegExp('<think>[\\s\\S]*?</think>', 'g');
-  replyContent = replyContent.replace(thinkRegex, "");
-  // Remove any unclosed <think> at the end
-  const lastUnclosedThink = replyContent.lastIndexOf("<think>");
-  if (lastUnclosedThink !== -1 && replyContent.indexOf("</think>", lastUnclosedThink + 7) === -1) {
-    replyContent = replyContent.slice(0, lastUnclosedThink);
-  }
-
-  // Trim leading whitespace/newlines from reply content
-  replyContent = replyContent.trimStart();
-
-  return { thinkContent, replyContent, thinkClosed: true };
-}
-
 /** Shell tools (bash, powershell, shell) need Terminal icon and command preview. */
 
 /** Wrapper that provides right-click context menu for copying text */
@@ -1695,7 +1745,7 @@ function MessageContentWrapper({ children }: { children: React.ReactNode }) {
 }
 
 /** Single message bubble */
-function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage; isStreaming: boolean; agentId: string }) {
+function MessageBubble({ message, isStreaming, agentId, displayLen }: { message: ChatMessage; isStreaming: boolean; agentId: string; displayLen?: number }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   // Use CSS custom property for font size — set once in store, global effect
@@ -1752,6 +1802,11 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
 
   if (message.type === "assistant") {
     const showPlaceholder = !message.content;
+    // Typewriter animation: only show the first `displayLen` characters
+    // during streaming, so text appears to type out progressively.
+    const displayContent = displayLen != null
+      ? message.content.slice(0, displayLen)
+      : message.content;
 
     return (
       <MessageContentWrapper>
@@ -1775,12 +1830,12 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
               )}
             </div>
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
-              {message.content && (
+              {displayContent && (
                 <div className="prose prose-sm prose-zinc max-w-none prose-h1:text-lg prose-h2:text-base prose-h3:text-sm prose-h4:text-sm prose-headings:font-semibold select-text break-words [&_th]:bg-chat-title [&_td]:bg-chat-body [&_tbody_tr]:!bg-transparent" style={fontSizeStyle}>
-                  <StreamMarkdown content={message.content} />
+                  <StreamMarkdown content={displayContent} />
                 </div>
               )}
-              {showPlaceholder && (
+              {!displayContent && showPlaceholder && (
                 <span className="inline-flex items-center gap-1.5">
                   <span className="shrink-0 h-1.5 w-1.5 rounded-full bg-[var(--color-accent)] animate-pulse" />
                   <span className="text-zinc-400">{t("chatPanel.thinking")}</span>
@@ -1818,7 +1873,7 @@ function MessageBubble({ message, isStreaming, agentId }: { message: ChatMessage
             </div>
             <div className="mt-[6px] max-w-[var(--content-max-width)] rounded-md rounded-bl-sm bg-chat-bubble px-4 py-2.5 dark:text-zinc-200 select-text break-words" style={fontSizeStyle}>
               <ThinkBlock
-                content={message.content}
+                content={displayLen != null ? message.content.slice(0, displayLen) : message.content}
                 isStreaming={isStreaming}
                 hasReplyStarted={!isStreaming}
                 startTime={message.startTime}

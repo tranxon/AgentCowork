@@ -34,12 +34,16 @@ pub(crate) async fn phase_b_init_session(
     let conversations_dir = work_dir_path.join("conversations");
     std::fs::create_dir_all(&conversations_dir)?;
 
+    // ADR-022: Shared counter updated by writer thread after each disk write.
+    let committed_lines = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+
     let conversation_session =
         if let Some(latest_id) = crate::conversation::find_latest_session(&conversations_dir) {
             tracing::info!(session_id = %latest_id, "Resuming latest conversation session");
             Some(crate::conversation::ConversationSession::resume(
                 work_dir_path,
                 &latest_id,
+                committed_lines.clone(),
             )?)
         } else {
             let new_id = crate::conversation::generate_session_id();
@@ -53,6 +57,8 @@ pub(crate) async fn phase_b_init_session(
                     model: None,
                     provider: None,
                 },
+                config.max_sessions,
+                committed_lines.clone(),
             )?)
         };
 
@@ -170,6 +176,10 @@ pub(crate) async fn phase_b_init_session(
         c.memory_session = Some(ctx.memory_session.clone());
         c.embedding_provider = Some(ctx.emb_provider.clone());
         c.init_memory_store(work_dir_path);
+
+        // ADR-022: Adopt the initial session's committed_lines counter
+        // so the writer thread and AgentCore share the same atomic.
+        c.committed_lines = committed_lines.clone();
     }
 
     // ── Step 9: Create SessionManager ───────────────────────────────
@@ -251,5 +261,6 @@ pub(crate) async fn phase_b_init_session(
     Ok(SessionBootContext {
         initial_session_id,
         session_manager,
+        committed_lines,
     })
 }

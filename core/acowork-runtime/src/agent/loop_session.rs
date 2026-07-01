@@ -9,6 +9,7 @@
 //! - Think block utilities (extract, strip, build metadata)
 
 use acowork_core::providers::traits::{ChatMessage, ChatResponse, MessageRole};
+use std::sync::atomic::Ordering;
 
 use crate::agent::session_state::{SessionStateSnapshot, SessionStatus};
 use crate::config::DEFAULT_TEMPERATURE;
@@ -288,8 +289,27 @@ impl super::loop_::AgentLoop {
             );
         }
 
-        // Persist think block + assistant response to JSONL
-        if let Some(ref conversation) = self.session.conversation {
+        // ADR-022: Persist response to JSONL.
+        //
+        // Two paths:
+        // 1. Streaming flush occurred (role transitions already wrote content
+        //    to JSONL during the stream). Just flush any remaining content in
+        //    the last streaming line — no legacy persistence needed.
+        // 2. No streaming flush occurred (non-streaming provider, or all
+        //    content arrived in the Finished event). Use the legacy path:
+        //    persist_think_to_conversation + strip_think_block.
+        let streamed = self.core.streaming_flush_count.load(Ordering::Relaxed) > 0;
+
+        if streamed {
+            // Path 1: Content was already flushed on role transitions.
+            // Flush the last streaming line (e.g., final assistant segment).
+            self.core.flush_streaming_line(self.session.conversation.as_ref());
+            tracing::debug!(
+                iteration,
+                "ADR-022: streaming flush path — skipping legacy persistence"
+            );
+        } else if let Some(ref conversation) = self.session.conversation {
+            // Path 2: Legacy persistence for non-streaming responses.
             super::loop_session::persist_think_to_conversation(conversation, response);
             let assistant_text = strip_think_block(&content);
             if !assistant_text.is_empty() {
@@ -305,11 +325,11 @@ impl super::loop_::AgentLoop {
             let entries_written =
                 (if thought_written { 1 } else { 0 }) + (if assistant_written { 1 } else { 0 });
             self.core.increment_total_lines(entries_written);
-        }
 
-        // ADR-021: Remove streaming line after final persistence
-        // (handle_text_response already wrote thought + assistant to JSONL)
-        self.core.remove_streaming_line();
+            // ADR-021: Remove streaming line after legacy persistence
+            // (handle_text_response already wrote thought + assistant to JSONL)
+            self.core.remove_streaming_line();
+        }
 
         self.session.history.append(ChatMessage {
             ..ChatMessage::assistant(content.clone())

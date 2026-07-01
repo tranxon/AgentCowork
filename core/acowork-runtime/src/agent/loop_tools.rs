@@ -12,6 +12,7 @@
 //! - Tool result persistence and emission
 
 use std::collections::HashSet;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use acowork_core::providers::traits::{ChatMessage, ToolCall};
@@ -622,15 +623,49 @@ impl AgentLoop {
         &mut self,
         response: &acowork_core::providers::traits::ChatResponse,
     ) -> Vec<ToolCall> {
-        // Persist think block to JSONL (D2 dedup)
-        if let Some(ref conversation) = self.session.conversation {
-            crate::agent::loop_session::persist_think_to_conversation(conversation, response);
-            // Bypasses flush_streaming_line — increment cached total_lines.
-            let thought_written =
-                response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
-                || crate::agent::loop_session::extract_think_block(&response.content).is_some();
-            if thought_written {
-                self.core.increment_total_lines(1);
+        // ADR-022: Flush the current streaming line to JSONL.
+        //
+        // During streaming, the provider layer split think tags into
+        // ReasoningContent + Content events, and each role transition
+        // already flushed the previous line via flush_and_new_streaming_line.
+        // This final flush captures any remaining content in the last
+        // streaming line (e.g., the assistant text that preceded the
+        // tool_call).
+        let flushed = self.core.flush_streaming_line(self.session.conversation.as_ref());
+        tracing::info!(
+            flushed_role = flushed.as_ref().map(|c| {
+                // We can't easily get the role here, but we can log content length
+                c.len()
+            }).unwrap_or(0),
+            flushed_len = flushed.as_ref().map(|c| c.len()).unwrap_or(0),
+            "ADR-022 prepare_tool_calls: flush_streaming_line result"
+        );
+
+        // ADR-022: Only use legacy persistence if no streaming flush occurred.
+        // When streaming already flushed thought content on role transitions,
+        // persist_think_to_conversation would create a duplicate entry.
+        let streamed = self.core.streaming_flush_count.load(Ordering::Relaxed) > 0;
+        tracing::info!(
+            streamed,
+            streaming_flush_count = self.core.streaming_flush_count.load(Ordering::Relaxed),
+            has_reasoning = response.reasoning_content.is_some(),
+            reasoning_len = response.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
+            "ADR-022 prepare_tool_calls: streamed={}",
+            streamed
+        );
+
+        if !streamed {
+            // Legacy path: persist think block from the final response.
+            // Handles providers that use reasoning_content field (DeepSeek)
+            // or  thinking... response tags without streaming them.
+            if let Some(ref conversation) = self.session.conversation {
+                crate::agent::loop_session::persist_think_to_conversation(conversation, response);
+                let thought_written =
+                    response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
+                    || crate::agent::loop_session::extract_think_block(&response.content).is_some();
+                if thought_written {
+                    self.core.increment_total_lines(1);
+                }
             }
         }
 

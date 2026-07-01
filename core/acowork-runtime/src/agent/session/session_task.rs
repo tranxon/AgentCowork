@@ -986,7 +986,7 @@ impl SessionTask {
                     agent_loop.core.debug_observer.check_pending_injection();
 
                     match agent_loop
-                        .run(&enriched_content, &mut context_builder, content_parts)
+                        .run(&enriched_content, &mut context_builder, content_parts, Some(message_id.clone()))
                         .await
                     {
                         Ok(response) => {

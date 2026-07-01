@@ -74,6 +74,11 @@ pub fn chat_routes() -> Router<AppState> {
 pub struct SendMessageRequest {
     /// The message content
     pub content: String,
+    /// Frontend-generated message ID for dedup (e.g. "msg-{uuid}").
+    /// When set, forwarded to Runtime as-is so JSONL entry ID matches
+    /// the frontend's optimistic message ID.
+    #[serde(default)]
+    pub message_id: Option<String>,
     /// Optional conversation ID for multi-turn
     #[serde(default)]
     pub conversation_id: Option<String>,
@@ -152,6 +157,11 @@ struct WsClientMessage {
     #[serde(rename = "type")]
     msg_type: String,
     content: Option<String>,
+    /// Frontend-generated message ID for dedup (e.g. "msg-{uuid}").
+    /// When set, the Gateway forwards it to the Runtime as-is so the
+    /// JSONL entry ID matches the frontend's optimistic message ID.
+    #[serde(default)]
+    message_id: Option<String>,
     /// Model name for model_switch messages
     model: Option<String>,
     /// Provider name for model_switch messages
@@ -237,8 +247,11 @@ pub async fn send_message(
         )));
     }
 
-    // Generate message ID
-    let message_id = format!("msg-{}", uuid::Uuid::new_v4());
+    // Use frontend-generated message_id when provided (for ID-based dedup).
+    // Only fall back to Gateway-generated ID for legacy clients.
+    let message_id = body.message_id.clone().unwrap_or_else(|| {
+        format!("msg-{}", uuid::Uuid::new_v4())
+    });
 
     // Push message to agent via SessionManager (if available)
     // S1.6 will implement the full response bridge
@@ -856,7 +869,11 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
         return;
     }
 
-    let message_id = format!("msg-{}", uuid::Uuid::new_v4());
+    // Use frontend-generated message_id when provided (for ID-based dedup).
+    // Only fall back to Gateway-generated ID for legacy clients.
+    let message_id = client_msg.message_id.clone().unwrap_or_else(|| {
+        format!("msg-{}", uuid::Uuid::new_v4())
+    });
 
     // Push to agent via SessionManager
     let mut pushed_ok = false;
