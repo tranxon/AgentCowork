@@ -2975,7 +2975,7 @@ async fn handle_get_session_messages(
             // initialize its line coordinate on the first full load. Without this,
             // pollLineNumber stays at 0 and the backoff logic kills the poller
             // after 3 "empty" cycles (lineNumber === prevLineNumber === 0).
-            let total_lines = session_manager.total_lines();
+            let total_lines = session_manager.committed_lines_for(&session_id);
             let data = serde_json::json!({
                 "messages": message_dtos,
                 "cursor": paginated.cursor,

@@ -58,7 +58,7 @@ impl AgentLoop {
         );
 
         // Emit ChunkEvent::AskQuestion
-        let _ = self.core.try_send_chunk(ChunkEvent::AskQuestion {
+        let _ = self.session_core.try_send_chunk(ChunkEvent::AskQuestion {
             request_id: request_id.clone(),
             question: parsed.question.clone(),
             options: parsed.options,
@@ -158,7 +158,7 @@ impl AgentLoop {
         context_builder.set_todo_context(self.session.format_todos());
 
         // Emit TodoListUpdated event to frontend for UI rendering
-        let _ = self.core.try_send_chunk(ChunkEvent::TodoListUpdated {
+        let _ = self.session_core.try_send_chunk(ChunkEvent::TodoListUpdated {
             todos: self.session.todos.clone(),
         });
 

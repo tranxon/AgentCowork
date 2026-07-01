@@ -195,10 +195,14 @@ pub(crate) enum IterationResult {
     Paused,
 }
 
+use crate::agent::session_core::SessionCore;
+
 /// Agent loop runner
 pub struct AgentLoop {
     /// Cross-session shared state (config, provider, tools, capabilities)
     pub(crate) core: AgentCore,
+    /// Per-session state (session_id, chunk channel, streaming, workspace, retry, approval)
+    pub(crate) session_core: SessionCore,
     /// Per-session state (history, conversation, loop detector, budget)
     pub(crate) session: SessionState,
     /// Inbound message receiver for external message injection
@@ -257,10 +261,22 @@ impl AgentLoop {
             mpsc::channel::<(ApprovalRequest, oneshot::Sender<ApprovalDecision>)>(16);
         let max_tokens = config.history_max_tokens;
         let approval_handle = ApprovalHandle::new(approval_tx);
+        let core = AgentCore::new_with_observer(
+            config.clone(), manifest, provider, tools, observer,
+        );
+        let streaming_lines: crate::conversation::StreamingStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let session_core = SessionCore::new(
+            String::new(), // session_id set later
+            chunk_tx,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)), // committed_lines placeholder
+            config.data_flow.notify_interval_ms,
+            Some(config.work_dir.clone()),
+            streaming_lines,
+        );
         let mut loop_ = Self {
-            core: AgentCore::new_with_observer(
-                config, manifest, provider, tools, chunk_tx, observer,
-            ),
+            core,
+            session_core,
             session: SessionState::new(max_tokens, budget, conversation),
             inbound_rx,
             approval_rx,
@@ -274,8 +290,8 @@ impl AgentLoop {
         // Initialize persistent model ratio store from agent config dir.
         let ratio_config_dir = Path::new(&loop_.core.config.work_dir).join("config");
         loop_.session.history.init_model_ratios(&ratio_config_dir);
-        // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
-        loop_.core.approval_handle = Some(approval_handle);
+        // Inject approval_handle into SessionCore so execute_tools_parallel can detect Gateway mode
+        loop_.session_core.approval_handle = Some(approval_handle.clone());
         (loop_, inbound_tx)
     }
 
@@ -313,16 +329,11 @@ impl AgentLoop {
 
     /// Create an AgentLoop from pre-built components (for multi-session Actor model).
     ///
-    /// This constructor accepts an owned `AgentCore` and `SessionState`,
-    /// used by `SessionTask` to spawn independent sessions that share
-    /// provider/tools/config via Arc but have independent history,
-    /// budget, and loop detection.
-    ///
-    /// The caller typically clones `AgentCore` data from a shared `Arc<AgentCore>`
-    /// template before passing it here, so each session gets its own owned copy
-    /// while the heavy fields (provider, tools) remain Arc-shared behind the scenes.
+    /// This constructor accepts an `Arc<AgentCore>` template, a `SessionCore`,
+    /// and `SessionState`, used by `SessionTask` to spawn independent sessions.
     pub(crate) fn from_core_and_session(
         core: AgentCore,
+        session_core: SessionCore,
         session: SessionState,
     ) -> (Self, tokio::sync::mpsc::Sender<InboundMessage>) {
         let (inbound_tx, inbound_rx) = tokio::sync::mpsc::channel(64);
@@ -331,6 +342,7 @@ impl AgentLoop {
         let approval_handle = ApprovalHandle::new(approval_tx);
         let mut session_loop = Self {
             core,
+            session_core,
             session,
             inbound_rx,
             approval_rx,
@@ -341,8 +353,8 @@ impl AgentLoop {
             last_thinking_mode: None,
             pending_interrupt: None,
         };
-        // Inject approval_handle into AgentCore so execute_tools_parallel can detect Gateway mode
-        session_loop.core.approval_handle = Some(approval_handle);
+        // Inject approval_handle into SessionCore so execute_tools_parallel can detect Gateway mode
+        session_loop.session_core.approval_handle = Some(approval_handle);
         (session_loop, inbound_tx)
     }
 
@@ -372,7 +384,7 @@ impl AgentLoop {
             .ok_or_else(|| format!("Tool not found: {}", name))?;
 
         match tool
-            .execute(params, self.core.current_work_dir.as_deref())
+            .execute(params, self.session_core.current_work_dir.as_deref())
             .await
         {
             Ok(result) if result.ok => Ok(result.content),
@@ -509,7 +521,7 @@ impl AgentLoop {
                     max_iterations: Some(self.core.config.max_iterations),
                     retry_info: None,
                 });
-                let _ = self.core.try_send_chunk(ChunkEvent::IterationLimitPaused {
+                let _ = self.session_core.try_send_chunk(ChunkEvent::IterationLimitPaused {
                     iteration,
                     max_iterations: self.core.config.max_iterations,
                 });
@@ -2544,24 +2556,27 @@ mod tests {
     #[test]
     fn test_try_send_chunk_single_channel() {
         // ADR-021: All events go through the single chunk_tx channel.
-        let config = RuntimeConfig::default();
-        let manifest = test_manifest();
-        let provider = Arc::new(MockProvider::single_text("ok"));
-        let tools: Vec<Arc<dyn Tool>> = vec![];
-
         let (chunk_tx, mut chunk_rx) = mpsc::channel::<SessionChunkEvent>(16);
 
-        let mut core = AgentCore::new(config, manifest, provider, tools, Some(chunk_tx));
-        core.session_id = Some("test-session".to_string());
+        let streaming_lines: crate::conversation::StreamingStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let session_core = SessionCore::new(
+            "test-session".to_string(),
+            Some(chunk_tx),
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            500,
+            None,
+            streaming_lines,
+        );
 
         // All events go through the single channel
-        assert!(core.try_send_chunk(ChunkEvent::Stopped {
+        assert!(session_core.try_send_chunk(ChunkEvent::Stopped {
             content: "stopped".to_string(),
         }));
         let evt = chunk_rx.try_recv().expect("Stopped should arrive");
         assert!(matches!(evt.event, ChunkEvent::Stopped { .. }));
 
-        assert!(core.try_send_chunk(ChunkEvent::Done {
+        assert!(session_core.try_send_chunk(ChunkEvent::Done {
             content: "done".to_string(),
             message_id: "msg-1".to_string(),
         }));
@@ -2572,15 +2587,18 @@ mod tests {
     #[test]
     fn test_try_send_chunk_standalone_mode() {
         // In standalone mode, chunk_tx is None → try_send_chunk returns false.
-        let config = RuntimeConfig::default();
-        let manifest = test_manifest();
-        let provider = Arc::new(MockProvider::single_text("ok"));
-        let tools: Vec<Arc<dyn Tool>> = vec![];
+        let streaming_lines: crate::conversation::StreamingStateMap =
+            Arc::new(std::sync::RwLock::new(std::collections::HashMap::new()));
+        let session_core = SessionCore::new(
+            "test-session".to_string(),
+            None,
+            Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            500,
+            None,
+            streaming_lines,
+        );
 
-        let mut core = AgentCore::new(config, manifest, provider, tools, None);
-        core.session_id = Some("test-session".to_string());
-
-        assert!(!core.try_send_chunk(ChunkEvent::Stopped {
+        assert!(!session_core.try_send_chunk(ChunkEvent::Stopped {
             content: "stopped".to_string(),
         }));
     }

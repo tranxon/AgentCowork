@@ -18,6 +18,7 @@ use crate::agent::context::ContextBuilder;
 use crate::agent::inbound::InboundMessage;
 use crate::agent::loop_::{AgentLoop, ChunkEvent, SessionChunkEvent};
 use crate::agent::session::session_manager::RuntimeConfigOverrides;
+use crate::agent::session_core::SessionCore;
 use crate::agent::session_state::SessionState;
 use crate::debug::DebugHandles;
 use crate::debug::DebugObserverImpl;
@@ -403,90 +404,74 @@ impl SessionTask {
         initial_work_dir: Option<String>,
         // Per-session committed_lines counter, shared with the writer thread.
         committed_lines: Arc<std::sync::atomic::AtomicUsize>,
+        // Shared streaming lines map, cloned into SessionCore.
+        streaming_lines: crate::conversation::StreamingStateMap,
     ) -> (Self, mpsc::Sender<InboundMessage>) {
-        // Build the AgentLoop eagerly so its inbound sender can be exposed.
-        // Heavy fields (provider, tools) are Arc-cloned (refcount only).
-        let mut core_for_session =
-            core.clone_for_session(chunk_tx.clone(), session_id.clone(), committed_lines);
-        // Set MCP tools and rebuild the merged dispatch list
-        core_for_session.mcp_tools = mcp_tools;
-        core_for_session.rebuild_all_tools();
+        // Create per-session SessionCore from the shared AgentCore template.
+        let notify_interval_ms = core.config.data_flow.notify_interval_ms;
+        let work_dir_for_session = initial_work_dir
+            .clone()
+            .unwrap_or_else(|| core.config.work_dir.clone());
+        let mut session_core = SessionCore::new(
+            session_id.clone(),
+            chunk_tx.clone(),
+            committed_lines,
+            notify_interval_ms,
+            Some(work_dir_for_session),
+            streaming_lines,
+        );
 
-        // Inject the shared pending-debug-handles channel so SessionManager
-        // can bypass the message queue when enabling debug mode on a running
-        // session (whose message loop is blocked on agent_loop.run().await).
-        core_for_session.set_debug_pending_injection(pending_debug_handles);
+        // Build per-session AgentCore clone from the shared template.
+        let mut core_mut = (*core).clone();
+        // Set MCP tools and rebuild
+        core_mut.mcp_tools = mcp_tools;
+        core_mut.rebuild_all_tools();
 
-        // Inject runtime debug handles into the session's core if provided.
-        // This enables debug mode on sessions created AFTER Gateway pushes
-        // EnableDebugMode, without requiring a process restart.
+        // Inject pending debug handles
+        core_mut.set_debug_pending_injection(pending_debug_handles);
+
+        // Inject runtime debug handles
         if let Some(handles) = runtime_debug {
             let observer = DebugObserverImpl::new(handles);
-            core_for_session.set_debug_mode(observer);
+            core_mut.set_debug_mode(observer);
         }
 
-        // ── Per-session field initialization ──
-        // All fields that are per-session (not globally shared) must be
-        // initialized from session creation context here, not patched later
-        // via message replay.
-
-        // ── 429 retry UX setup ──
-        // Create shared state that bridges ReliableProvider (inside the
-        // LLM call) with SessionTask (handling ContinueExecution from the
-        // user via Gateway). Without this, the ReliableProvider has no way
-        // to emit session status changes or listen for user skip signals.
-        let retry_session_status = Arc::new(std::sync::RwLock::new(
-            crate::agent::session_state::SessionStatus::Streaming { message_id: None },
-        ));
-        let retry_wait_handle = crate::providers::reliable::RetryWaitHandle::new();
-        core_for_session.retry_session_status = Some(retry_session_status);
-        core_for_session.retry_wait_handle = Some(retry_wait_handle);
-
-        // ADR-012: Rebuild LLM Provider from SessionState.provider so the
-        // session always sends requests to the correct API endpoint.
-        // Without this, clone_for_session inherits the global startup provider.
-        //
-        // The rebuilt provider is wrapped in ReliableProvider (retry logic)
-        // AND wired up with 429-retry UX (countdown + skip button) via
-        // `build_provider_for`, which checks `retry_session_status` and
-        // `retry_wait_handle` set above.
+        // Rebuild LLM Provider for this session
         if let Some(ref provider_id) = session.provider
-            && let Some(new_provider) = core_for_session.build_provider_for(provider_id) {
-                let model = session.model.clone().unwrap_or_default();
-                core_for_session.update_provider(new_provider, model);
-            } else {
-                // For new sessions (no per-session provider override),
-                // re-wrap the startup provider with ReliableProvider + UX.
-                let raw = core_for_session.provider.clone();
-                let retry_config = crate::providers::reliable::RetryConfig::default();
-                let mut reliable = crate::providers::reliable::ReliableProvider::new(
-                    raw,
-                    retry_config,
+            && let Some(new_provider) = session_core.build_provider_for(
+                provider_id,
+                &core_mut.config,
+                &core_mut.global_provider_list,
+                &core_mut.provider_key_vault,
+            )
+        {
+            let model = session.model.clone().unwrap_or_default();
+            core_mut.update_provider(new_provider, model);
+        } else {
+            let raw = core_mut.provider.clone();
+            let retry_config = crate::providers::reliable::RetryConfig::default();
+            let mut reliable = crate::providers::reliable::ReliableProvider::new(raw, retry_config);
+            if let Some(status) = &session_core.retry_session_status
+                && let Some(handle) = &session_core.retry_wait_handle
+                && let Some(tx) = &session_core.chunk_tx
+                && let Some(sid) = &session_core.session_id
+            {
+                reliable = reliable.with_retry_ux(
+                    crate::providers::reliable::RetryWaitHandle {
+                        state: handle.state.clone(),
+                        skip_notify: handle.skip_notify.clone(),
+                    },
+                    status.clone(),
+                    tx.clone(),
+                    sid.clone(),
                 );
-                // Wire up UX if shared state is available
-                if let Some(status) = &core_for_session.retry_session_status
-                    && let Some(handle) = &core_for_session.retry_wait_handle
-                    && let Some(tx) = &core_for_session.chunk_tx
-                    && let Some(sid) = &core_for_session.session_id
-                {
-                    reliable = reliable.with_retry_ux(
-                        crate::providers::reliable::RetryWaitHandle {
-                            state: handle.state.clone(),
-                            skip_notify: handle.skip_notify.clone(),
-                        },
-                        status.clone(),
-                        tx.clone(),
-                        sid.clone(),
-                    );
-                }
-                let model = session.model.clone().unwrap_or_default();
-                core_for_session.update_provider(Arc::new(reliable), model);
             }
+            let model = session.model.clone().unwrap_or_default();
+            core_mut.update_provider(Arc::new(reliable), model);
+        }
 
-        // Apply accumulated runtime config overrides from Gateway pushes.
-        // (temperature_override, system_prompt_override, shell_approval_threshold,
-        //  max_iterations, max_output_tokens)
-        core_for_session.apply_runtime_config(
+        // Apply accumulated runtime config overrides
+        core_mut.apply_runtime_config(
             runtime_overrides.max_output_tokens,
             runtime_overrides.max_iterations,
             runtime_overrides.temperature,
@@ -494,20 +479,20 @@ impl SessionTask {
             runtime_overrides.shell_approval_threshold,
         );
 
-        // Sync agent-level temperature override to per-session state so it
-        // appears in session_state_changed events and is visible in the frontend.
+        // Sync temperature override
         let mut session = session;
-        if core_for_session.temperature_override.is_some() {
-            session.set_temperature(core_for_session.temperature_override);
+        if core_mut.temperature_override.is_some() {
+            session.set_temperature(core_mut.temperature_override);
         }
 
-        // Set initial workspace directory for tool execution.
+        // Set initial workspace (SessionCore constructor already set it, but
+        // this call ensures it matches the resolved work_dir from SessionManager).
         if let Some(dir) = initial_work_dir {
-            core_for_session.current_work_dir = Some(dir);
+            session_core.current_work_dir = Some(dir);
         }
 
         let (agent_loop, agent_inbound_tx) =
-            AgentLoop::from_core_and_session(core_for_session, session);
+            AgentLoop::from_core_and_session(core_mut, session_core, session);
 
         let task = Self {
             agent_loop,
@@ -529,7 +514,7 @@ impl SessionTask {
         &mut self,
         tx: tokio::sync::watch::Sender<crate::agent::session_state::SessionStatus>,
     ) {
-        self.agent_loop.core.status_tx = Some(tx);
+        self.agent_loop.session_core.status_tx = Some(tx);
     }
 
     /// Set the shared snapshot slot for the Gateway pull API.
@@ -542,14 +527,14 @@ impl SessionTask {
         &mut self,
         slot: Arc<std::sync::RwLock<Option<crate::agent::session_state::SessionStateSnapshot>>>,
     ) {
-        self.agent_loop.core.snapshot_slot = Some(slot);
+        self.agent_loop.session_core.snapshot_slot = Some(slot);
     }
 
     /// Return the per-session urgent_stop Notify so SessionManager can
     /// route fire_urgent_stop() to only the target session.
     /// Returns None in standalone mode (where urgent_stop is not initialized).
     pub(crate) fn urgent_stop_notify(&self) -> Option<Arc<Notify>> {
-        self.agent_loop.core.urgent_stop.clone()
+        self.agent_loop.session_core.urgent_stop.clone()
     }
 
     /// Run the session task, processing messages until Stop or channel close.
@@ -1047,7 +1032,7 @@ impl SessionTask {
                     );
                     // 429 retry UX: if the ReliableProvider is currently in a
                     // long retry wait, wake it immediately via skip_notify.
-                    if let Some(ref handle) = agent_loop.core.retry_wait_handle {
+                    if let Some(ref handle) = agent_loop.session_core.retry_wait_handle {
                         handle.skip_notify.notify_one();
                         tracing::info!(
                             session_id = %session_id,
@@ -1080,7 +1065,12 @@ impl SessionTask {
                     // instance from the shared global cache (set by
                     // ProviderListUpdate / AgentHello). No per-session vault.
                     if let Some(ref provider_id) = provider {
-                        if let Some(new_provider) = agent_loop.core.build_provider_for(provider_id)
+                        if let Some(new_provider) = agent_loop.session_core.build_provider_for(
+                            provider_id,
+                            &agent_loop.core.config,
+                            &agent_loop.core.global_provider_list,
+                            &agent_loop.core.provider_key_vault,
+                        )
                         {
                             agent_loop.update_provider(
                                 new_provider,
@@ -1198,7 +1188,7 @@ impl SessionTask {
                         path = %path,
                         "SessionTask: updating work_dir for tool execution"
                     );
-                    agent_loop.core.current_work_dir = Some(path);
+                    agent_loop.session_core.current_work_dir = Some(path);
                 }
                 Some(SessionMessage::SetWorkspacePromptFile { content }) => {
                     tracing::info!(
@@ -1419,7 +1409,7 @@ impl SessionTask {
                         session_id = %session_id,
                         "SessionTask: enabling NewDataAvailable notifications (session activated)"
                     );
-                    agent_loop.core.notify_enabled.store(true, Ordering::Relaxed);
+                    agent_loop.session_core.notify_enabled.store(true, Ordering::Relaxed);
                     // Immediately emit current session state so the frontend
                     // can render the latest status, model, provider, etc.
                     agent_loop.emit_session_state();
@@ -1429,7 +1419,7 @@ impl SessionTask {
                         session_id = %session_id,
                         "SessionTask: disabling NewDataAvailable notifications (session deactivated)"
                     );
-                    agent_loop.core.notify_enabled.store(false, Ordering::Relaxed);
+                    agent_loop.session_core.notify_enabled.store(false, Ordering::Relaxed);
                 }
                 None => {
                     tracing::info!(

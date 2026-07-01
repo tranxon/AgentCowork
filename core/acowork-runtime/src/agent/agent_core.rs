@@ -1,17 +1,18 @@
 //! Cross-session shared state for Agent Runtime.
 //!
 //! `AgentCore` holds all resources that are shared across sessions:
-//! runtime config, manifest, LLM provider, tool registry, streaming channel,
-//! Gateway model capabilities, and Grafeo memory store. These resources
-//! persist for the lifetime of the agent process and are independent of
-//! any individual session.
+//! runtime config, manifest, LLM provider, tool registry,
+//! Gateway model capabilities, Grafeo memory store, and the shared
+//! streaming-lines map. These resources persist for the lifetime of
+//! the agent process and are independent of any individual session.
 //!
-//! Phase 1: direct ownership inside AgentLoop.
-//! Phase 2: wrapped in Arc for multi-session Actor sharing.
+//! Per-session state (session_id, chunk channel, notification control,
+//! JSONL counters, workspace, retry UX, approval) lives in
+//! [`SessionCore`](super::session_core::SessionCore).
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
+use std::sync::RwLock;
 
 use acowork_core::protocol::{ModelCapabilitiesInfo, ProviderListItem};
 use acowork_core::providers::traits::Provider;
@@ -22,11 +23,7 @@ use acowork_grafeo::retrieval_metrics::MetricsAggregator;
 use acowork_grafeo::types::GrafeoConfig;
 use acowork_grafeo::types::{AutobioCategory, AutobiographicalNode, NodeStatus};
 use chrono::Utc;
-use tokio::sync::Notify;
-use tokio::sync::mpsc;
 
-use crate::agent::loop_::{ChunkEvent, SessionChunkEvent};
-use crate::agent::loop_approval::ApprovalHandle;
 use crate::config::RuntimeConfig;
 use crate::debug::DebugObserverSlot;
 use crate::embedding::EmbeddingProvider;
@@ -39,6 +36,7 @@ use acowork_core::ShellApprovalThreshold;
 ///
 /// Fields here are immutable or rarely mutated at runtime (e.g. provider swap
 /// via model_switch), and are shared across all sessions of the same agent.
+/// Per-session state lives in [`super::session_core::SessionCore`].
 pub struct AgentCore {
     /// Runtime configuration
     pub(crate) config: RuntimeConfig,
@@ -52,171 +50,49 @@ pub struct AgentCore {
     /// have been connected. These are merged into [`all_tools`] at rebuild time.
     pub(crate) mcp_tools: Option<Vec<Arc<dyn Tool>>>,
     /// Merged tool list for dispatch — always contains built-in + MCP tools.
-    /// Rebuilt once when MCP tools change, instead of per-dispatch merge.
     pub(crate) all_tools: Vec<Arc<dyn Tool>>,
     /// Global provider list — full metadata including models, capabilities,
     /// base_url, protocol_type, compact_model for all configured providers.
-    /// Populated at AgentHello, updated by ProviderListUpdate pushes.
-    /// Wrapped in Arc<RwLock> for cross-session shared read access.
-    pub(crate) global_provider_list: Arc<std::sync::RwLock<Vec<ProviderListItem>>>,
+    pub(crate) global_provider_list: Arc<RwLock<Vec<ProviderListItem>>>,
     /// Provider list version for diff sync with Gateway.
     pub(crate) provider_list_version: u64,
     /// Provider key vault (in-memory only, never persisted).
-    /// Keyed by provider_id → api_key for O(1) lookup.
-    /// Wrapped in Arc<RwLock> for cross-session shared read access.
-    pub(crate) provider_key_vault: Arc<std::sync::RwLock<HashMap<String, String>>>,
+    pub(crate) provider_key_vault: Arc<RwLock<HashMap<String, String>>>,
     /// Provider→compact_model mapping from provider_list at AgentHello.
-    /// Keyed by Vault provider ID.  Static after init — provider changes
-    /// (add/remove model, compact_model) require agent restart.
     pub(crate) provider_compact_models: HashMap<String, Option<String>>,
     /// LLM temperature override (from Gateway config).
-    /// None = use model/provider default.
     pub(crate) temperature_override: Option<f32>,
     /// System prompt override (from Gateway config).
-    /// None = use manifest-compiled system prompt.
     pub(crate) system_prompt_override: Option<String>,
-    /// Session ID of the owning session (set by SessionTask at creation).
-    /// Used to annotate all ChunkEvents with their origin session, eliminating
-    /// the need for external relay-side injection (which had a race condition).
-    pub(crate) session_id: Option<String>,
-    /// ADR-021: Single chunk sender for control events (Stopped, Done, Error,
-    /// SessionStateChanged, ToolApprovalNeeded, AskQuestion, IterationLimitPaused,
-    /// NewDataAvailable, ContextUsage, CompactingStarted, CompactingEnded).
-    /// Data events (Delta, ReasoningDelta, ToolCall, ToolResult) are no longer
-    /// pushed via channel — the frontend polls them via HTTP.
-    /// None in standalone mode.
-    pub(crate) chunk_tx: Option<mpsc::Sender<crate::agent::loop_::SessionChunkEvent>>,
-    /// Whether this session is allowed to send NewDataAvailable notifications.
-    /// Defaults to false — set to true by EnableNotify message on session activation.
-    /// Uses Arc<AtomicBool> so SessionTask can modify it externally.
-    pub(crate) notify_enabled: Arc<AtomicBool>,
-    /// Unix timestamp (milliseconds) of the last `NewDataAvailable` notification.
-    /// Used for 500ms throttle — ADR-021 §难点 1.
-    pub(crate) last_notify_ts: Arc<AtomicI64>,
-    /// ADR-021: Cached total JSONL line count (including metadata line 0).
-    /// Updated atomically on each flush_streaming_line. Eliminates O(N) file
-    /// scans in notify_new_data_available() and ensure_streaming_line().
-    pub(crate) total_lines: Arc<AtomicUsize>,
-    /// ADR-022: Committed JSONL line count — updated by the writer thread
-    /// AFTER each entry is physically written to disk. This is the
-    /// authoritative count for `read_messages_since` and
-    /// `notify_new_data_available`.  `total_lines` (above) may be ahead
-    /// of disk due to async writer; `committed_lines` never is.
-    pub(crate) committed_lines: Arc<AtomicUsize>,
-    /// ADR-022: Number of streaming flushes that occurred during the current
-    /// LLM stream. Reset to 0 at the start of each `consume_stream` call.
-    /// When > 0, `handle_text_response` and `prepare_tool_calls` skip their
-    /// legacy persistence paths (content was already flushed on role transitions).
-    pub(crate) streaming_flush_count: Arc<AtomicU64>,
     /// Grafeo memory store (shared across all sessions of this agent).
-    /// Opened at agent startup from `{work_dir}/memory/private.grafeo`.
-    /// None if initialization failed (memory features degraded gracefully).
     pub(crate) memory_store: Option<Arc<GrafeoStore>>,
     /// Debug observer slot — Production (no-op) or Dev (real observer).
-    ///
-    /// Consolidates the previous 6 `Option<T>` debug fields (debug_ctrl,
-    /// pending_debug_handles, debug_rewind_notify, debug_resume_notify,
-    /// debug_event_tx) into a single pluggable observer. See ADR-013.
     pub(crate) debug_observer: DebugObserverSlot,
-    /// Urgent stop notify — fired by Gateway gRPC (Stop / Restart-in-Debug)
-    /// to cancel tool execution immediately without waiting for 500ms poll.
-    /// Each session gets its own independent Notify; fire_urgent_stop() only
-    /// wakes the target session's tokio::select! branches.
-    pub(crate) urgent_stop: Option<Arc<Notify>>,
     /// Approval gate for shell command risk confirmation.
-    /// None in standalone/CLI mode (uses CliApprovalGate).
-    /// Some(Arc<dyn ApprovalGate>) in CLI mode with non-default gate.
-    /// Note: In Gateway mode, `approval_handle` is used instead
-    /// (unified pause architecture via AgentLoop).
     pub(crate) approval_gate: Option<Arc<dyn ApprovalGate>>,
-    /// Approval handle for shell command risk confirmation (Gateway mode).
-    /// When set, spawned tool tasks use this handle to route approval
-    /// requests through the AgentLoop main loop (unified pause architecture).
-    /// None in CLI mode (uses `approval_gate` directly).
-    pub(crate) approval_handle: Option<ApprovalHandle>,
     /// Shell approval threshold: Low / Medium / High / Never.
-    /// Default: "medium" — Medium and High risk commands need approval.
     pub(crate) shell_approval_threshold: ShellApprovalThreshold,
-    /// Watch sender for session status (ADR-014).
-    /// The AgentLoop writes to this via `transition_status()`;
-    /// the SessionHandle holds the Receiver for non-blocking reads.
-    /// None for CLI-only sessions (no SessionHandle).
-    pub(crate) status_tx:
-        Option<tokio::sync::watch::Sender<crate::agent::session_state::SessionStatus>>,
-    /// Shared session state snapshot for the Gateway pull API.
-    ///
-    /// Written by `AgentLoop::emit_session_state` on every status transition.
-    /// Read by `SessionManager::snapshot_session_state` to serve
-    /// `GET /api/agents/{id}/sessions/{session_id}/state` without
-    /// sending a new gRPC message to the Runtime.
-    /// None for CLI-only sessions.
-    pub(crate) snapshot_slot:
-        Option<Arc<std::sync::RwLock<Option<crate::agent::session_state::SessionStateSnapshot>>>>,
     /// Memory session handle — shared between agent loop and memory tools.
-    /// Created at tool registry time, store initialized lazily.
     pub(crate) memory_session: Option<Arc<crate::memory::MemorySessionHandle>>,
     /// Embedding provider for vector-based memory retrieval.
-    /// Built from LLM provider registry; shared across all sessions.
-    /// Used by [`init_memory_store`] to determine Grafeo vector dimension.
     pub(crate) embedding_provider: Option<Arc<dyn EmbeddingProvider>>,
     /// P3-1: Retrieval quality metrics aggregator (shared across sessions).
-    /// Tracks NRR, abstention rate, degradation, conflict accuracy, and
-    /// LLM Judge scores. Wrapped in Arc<Mutex> so it can be shared with
-    /// background tokio::spawn tasks (e.g., LLM Judge evaluation).
     pub(crate) metrics_aggregator: Arc<std::sync::Mutex<MetricsAggregator>>,
     /// P3: Consolidation scheduler — decides when to run offline consolidation.
-    /// Created after memory store initialization, shared across all sessions.
-    /// None if memory store is not initialized.
     pub(crate) consolidation_scheduler: Option<Arc<ConsolidationScheduler>>,
     /// P3: Background consolidation task handle.
-    /// Dropping this cancels the background task.
-    /// None if memory store is not initialized or embedding provider is unavailable.
     pub(crate) consolidation_bg_task: Option<ConsolidationBgTask>,
-    /// Current workspace directory for tool execution.
-    /// Set by SessionTask before run(), updated via SetWorkDir message.
-    /// Filesystem tools use this as the base directory for relative path resolution.
-    pub(crate) current_work_dir: Option<String>,
-    /// Shared session status for 429 retry UX.
-    ///
-    /// Written by both [`AgentLoop::transition_status`] (normal flow) and
-    /// [`crate::providers::reliable::ReliableProvider`] (retry pause/resume).
-    /// A clone is passed to the ReliableProvider so it can emit
-    /// `SessionStateChanged` events during long retry waits.
-    pub(crate) retry_session_status:
-        Option<Arc<std::sync::RwLock<crate::agent::session_state::SessionStatus>>>,
-    /// Active retry-wait handle for 429 UX.
-    ///
-    /// Set when the ReliableProvider is wired up with UX support.
-    /// [`crate::agent::session::SessionTask`] checks this when handling
-    /// `ContinueExecution` to trigger `skip_notify` and wake the retry loop.
-    pub(crate) retry_wait_handle:
-        Option<crate::providers::reliable::RetryWaitHandle>,
-    /// ADR-021: Shared map of in-progress streaming lines, keyed by session ID.
-    ///
-    /// Written by AgentLoop on each Delta/ReasoningDelta; read by the HTTP
-    /// handler (`read_messages_since`) on poll. Wrapped in `Arc<RwLock>` for
-    /// concurrent access across tokio tasks.
-    pub(crate) streaming_lines: crate::conversation::StreamingStateMap,
 }
 
 impl AgentCore {
-    /// Create a new AgentCore with the given shared resources and a
-    /// pre-configured debug observer.
-    ///
-    /// This constructor supports integration testing and advanced embedding
-    /// scenarios where the caller needs to control the observer lifecycle.
-    /// For normal usage, prefer [`AgentCore::new()`] which defaults to
-    /// Production mode (zero-cost no-ops). See ADR-013.
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_observer(
         config: RuntimeConfig,
         manifest: acowork_core::AgentManifest,
         provider: Arc<dyn Provider>,
         tools: Vec<Arc<dyn Tool>>,
-        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
-        observer: crate::debug::DebugObserverSlot,
+        observer: DebugObserverSlot,
     ) -> Self {
-        let initial_work_dir = config.work_dir.clone();
         let shell_approval_threshold =
             ShellApprovalThreshold::from_str_loose(&config.shell_approval_threshold)
                 .unwrap_or_default();
@@ -227,67 +103,35 @@ impl AgentCore {
             tools: tools.clone(),
             mcp_tools: None,
             all_tools: tools,
-            global_provider_list: Arc::new(std::sync::RwLock::new(Vec::new())),
+            global_provider_list: Arc::new(RwLock::new(Vec::new())),
             provider_list_version: 0,
-            provider_key_vault: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            provider_key_vault: Arc::new(RwLock::new(HashMap::new())),
             provider_compact_models: HashMap::new(),
             temperature_override: None,
             system_prompt_override: None,
-            session_id: None,
-            chunk_tx,
-            notify_enabled: Arc::new(AtomicBool::new(false)),
-            last_notify_ts: Arc::new(AtomicI64::new(0)),
-            total_lines: Arc::new(AtomicUsize::new(0)),
-            committed_lines: Arc::new(AtomicUsize::new(0)),
-            streaming_flush_count: Arc::new(AtomicU64::new(0)),
             memory_store: None,
             memory_session: None,
             debug_observer: observer,
-            urgent_stop: Some(Arc::new(Notify::new())),
             approval_gate: None,
-            approval_handle: None,
             shell_approval_threshold,
-            status_tx: None,
-            snapshot_slot: None,
             embedding_provider: None,
             metrics_aggregator: Arc::new(std::sync::Mutex::new(MetricsAggregator::with_defaults(
                 1.0,
             ))),
             consolidation_scheduler: None,
             consolidation_bg_task: None,
-            current_work_dir: Some(initial_work_dir),
-            retry_session_status: None,
-            retry_wait_handle: None,
-            streaming_lines: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Create a new AgentCore with the given shared resources.
-    ///
-    /// Defaults to Production mode (zero-cost debug no-ops).
-    /// Use [`AgentCore::new_with_observer()`] to inject a DevMode observer.
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         config: RuntimeConfig,
         manifest: acowork_core::AgentManifest,
         provider: Arc<dyn Provider>,
         tools: Vec<Arc<dyn Tool>>,
-        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
     ) -> Self {
-        Self::new_with_observer(
-            config,
-            manifest,
-            provider,
-            tools,
-            chunk_tx,
-            DebugObserverSlot::production(),
-        )
+        Self::new_with_observer(config, manifest, provider, tools, DebugObserverSlot::production())
     }
 
-    /// Rebuild the merged `all_tools` list from built-in `tools` + `mcp_tools`.
-    ///
-    /// Call this after MCP tools change (connect/disconnect) so that
-    /// `all_tools` is always up-to-date for dispatch without per-call merging.
     pub(crate) fn rebuild_all_tools(&mut self) {
         let mut merged = self.tools.clone();
         if let Some(ref mcp) = self.mcp_tools {
@@ -296,30 +140,12 @@ impl AgentCore {
         self.all_tools = merged;
     }
 
-    /// Access the runtime configuration.
-    pub fn config(&self) -> &RuntimeConfig {
-        &self.config
-    }
+    pub fn config(&self) -> &RuntimeConfig { &self.config }
+    pub fn manifest(&self) -> &acowork_core::AgentManifest { &self.manifest }
+    pub fn provider(&self) -> &Arc<dyn Provider> { &self.provider }
+    pub fn tools(&self) -> &[Arc<dyn Tool>] { &self.tools }
 
-    /// Access the agent manifest.
-    pub fn manifest(&self) -> &acowork_core::AgentManifest {
-        &self.manifest
-    }
-
-    /// Access the LLM provider.
-    pub fn provider(&self) -> &Arc<dyn Provider> {
-        &self.provider
-    }
-
-    /// Access the tool registry.
-    pub fn tools(&self) -> &[Arc<dyn Tool>] {
-        &self.tools
-    }
-
-    /// Access Gateway model capabilities.
-    /// Deprecated: use get_model_capabilities(model_id) instead.
     pub fn gateway_model_capabilities(&self) -> HashMap<String, ModelCapabilitiesInfo> {
-        // Build a HashMap view from global_provider_list for backward compat.
         let list = self.global_provider_list.read().unwrap();
         let mut map = HashMap::new();
         for provider in list.iter() {
@@ -330,8 +156,6 @@ impl AgentCore {
         map
     }
 
-    /// Get the max output tokens limit for a given model from its provider entry.
-    /// Falls back to the system default (32768) if not found.
     pub fn max_output_tokens_limit_for_model(&self, model_id: &str) -> u64 {
         let list = self.global_provider_list.read().unwrap();
         for provider in list.iter() {
@@ -344,37 +168,6 @@ impl AgentCore {
         32_768
     }
 
-    /// Wrap a ChunkEvent into a SessionChunkEvent using this core's session_id.
-    ///
-    /// Returns None if session_id is not set (should not happen in Gateway mode).
-    /// This is the single point where session_id is attached to events, replacing
-    /// the old watch-channel relay injection that had a race condition.
-    pub fn make_chunk_event(&self, event: ChunkEvent) -> Option<SessionChunkEvent> {
-        self.session_id.as_ref().map(|sid| SessionChunkEvent {
-            session_id: sid.clone(),
-            event,
-        })
-    }
-
-    /// Try-send a ChunkEvent via the chunk channel, wrapped with session_id.
-    ///
-    /// ADR-021: All events go through the single chunk channel. Data events
-    /// (Delta, ReasoningDelta, ToolCall, ToolResult) are no longer sent via
-    /// channel — the frontend polls them via HTTP.
-    pub fn try_send_chunk(&self, event: ChunkEvent) -> bool {
-        if let Some(wrapped) = self.make_chunk_event(event) {
-            self.chunk_tx
-                .as_ref()
-                .map(|tx| tx.try_send(wrapped).is_ok())
-                .unwrap_or(false)
-        } else {
-            tracing::debug!("Cannot send chunk event: session_id not set on AgentCore");
-            false
-        }
-    }
-
-    /// Update the LLM provider at runtime (e.g., after receiving a
-    /// model_switch from Gateway).
     pub fn update_provider(&mut self, new_provider: Arc<dyn Provider>, model: String) {
         let old_name = self.provider.name().to_string();
         self.provider = new_provider;
@@ -386,339 +179,17 @@ impl AgentCore {
         );
     }
 
-    // ── ADR-021: StreamingStateMap helpers ─────────────────────────────────
-
-    /// Ensure a `StreamingLine` exists for this session, creating one if needed.
-    ///
-    /// The `line_number` is set to the current JSONL total line count so the
-    /// frontend knows which line this will become after flush.
-    ///
-    /// ADR-022: The streaming line's role is immutable for its lifetime. If a
-    /// line already exists with a *different* role, this method does NOT
-    /// overwrite the role. Callers must use `flush_and_new_streaming_line` to
-    /// transition between roles. Reaching the mismatch branch here indicates a
-    /// caller bug (forgetting to flush before switching roles), so we assert
-    /// in debug builds and silently keep the existing role in release builds
-    /// (the subsequent `append_streaming_delta` write will go to the old line,
-    /// which is wrong but non-crashing — the test suite catches it in debug).
-    fn ensure_streaming_line(&self, role: &str) {
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => return,
-        };
-        let mut map = self.streaming_lines.write().unwrap();
-        if let Some(existing) = map.get_mut(&sid) {
-            debug_assert_eq!(
-                existing.role, role,
-                "ADR-022 violation: append_streaming_delta called with role `{}` \
-                 but current streaming line has role `{}`. \
-                 Call flush_and_new_streaming_line before switching roles.",
-                role, existing.role
-            );
-            // ADR-022: do NOT overwrite `existing.role`. The line keeps its
-            // original role; role transitions must go through flush_and_new.
-            return;
-        }
-        // Use cached total_lines; initialize from file on first access.
-        let line_number = self.get_total_lines(&sid);
-        map.insert(
-            sid,
-            crate::conversation::StreamingLine {
-                line_number,
-                role: role.to_string(),
-                accumulated_content: String::new(),
-                started_at: chrono::Utc::now().to_rfc3339(),
-                started_at_ms: chrono::Utc::now().timestamp_millis(),
-            },
-        );
-    }
-
-    /// Append a delta to the streaming line for this session.
-    ///
-    /// Creates the streaming line if it doesn't exist yet.
-    pub(crate) fn append_streaming_delta(&self, role: &str, delta: &str) {
-        self.ensure_streaming_line(role);
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => return,
-        };
-        let mut map = self.streaming_lines.write().unwrap();
-        if let Some(sl) = map.get_mut(&sid) {
-            sl.accumulated_content.push_str(delta);
-        }
-    }
-
-    /// Flush the current streaming line to JSONL and remove it from the map.
-    ///
-    /// Called on natural boundaries (tool_call, Done, Error, Stop).
-    /// Returns the flushed content if a streaming line existed.
-    ///
-    /// Note: the JSONL write (`append_message`) is performed outside the
-    /// `RwLock` write scope to avoid blocking concurrent HTTP poll reads.
-    pub(crate) fn flush_streaming_line(
-        &self,
-        conversation: Option<&crate::conversation::ConversationSession>,
-    ) -> Option<String> {
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => return None,
-        };
-        // Extract the streaming line from the map under the write lock,
-        // then drop the lock before doing any I/O.
-        let removed = {
-            let mut map = self.streaming_lines.write().unwrap();
-            map.remove(&sid)
-        };
-        let sl = removed?;
-        let content = sl.accumulated_content.clone();
-        tracing::info!(
-            role = %sl.role,
-            content_len = content.len(),
-            has_conversation = conversation.is_some(),
-            "ADR-022 flush_streaming_line: flushing line"
-        );
-        if !content.is_empty()
-            && let Some(conv) = conversation
-        {
-            // ADR-022: For thought streaming lines, include timing metadata
-            // so the frontend receives startTime/endTime and can correctly
-            // display the ThinkBlock as collapsed ("Thought") rather than
-            // expanded ("Thinking...") after the thought completes.
-            let metadata = if sl.role == "thought" {
-                Some(serde_json::json!({
-                    "startTime": sl.started_at_ms,
-                    "endTime": chrono::Utc::now().timestamp_millis(),
-                }))
-            } else {
-                None
-            };
-            conv.append_message(&sl.role, &content, metadata);
-            // Increment cached line count — one new line written to JSONL.
-            self.total_lines.fetch_add(1, Ordering::Relaxed);
-            // ADR-022: Track that streaming flush occurred so
-            // handle_text_response / prepare_tool_calls can skip
-            // their legacy persistence paths.
-            self.streaming_flush_count.fetch_add(1, Ordering::Relaxed);
-            tracing::info!(
-                role = %sl.role,
-                content_len = content.len(),
-                "ADR-022 flush_streaming_line: wrote to JSONL"
-            );
-        } else if content.is_empty() {
-            tracing::warn!(
-                role = %sl.role,
-                "ADR-022 flush_streaming_line: content is EMPTY, skipping write"
-            );
-        }
-        Some(content)
-    }
-
-    /// ADR-022: Reset the streaming flush counter at the start of each
-    /// LLM stream. Called by `consume_stream` in `loop_llm.rs`.
-    pub(crate) fn reset_streaming_flush_count(&self) {
-        self.streaming_flush_count.store(0, Ordering::Relaxed);
-    }
-
-    /// Remove the streaming line for this session without persisting to JSONL.
-    ///
-    /// Used when the caller has already persisted the content through another
-    /// path (e.g., `handle_text_response` already wrote thought + assistant).
-    pub(crate) fn remove_streaming_line(&self) {
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => return,
-        };
-        self.streaming_lines.write().unwrap().remove(&sid);
-    }
-
-    /// ADR-022: Flush the current streaming line to JSONL (if non-empty),
-    /// then ensure a new streaming line exists with the given role.
-    ///
-    /// This is the single point where role transitions cause JSONL writes
-    /// during streaming. Callers detect role changes (Content event after
-    /// ReasoningContent, or vice versa) and invoke this method.
-    ///
-    /// The new streaming line starts with an empty `accumulated_content`;
-    /// the caller follows up with `append_streaming_delta` to populate it.
-    pub(crate) fn flush_and_new_streaming_line(
-        &self,
-        new_role: &str,
-        conversation: Option<&crate::conversation::ConversationSession>,
-    ) {
-        // Check if a streaming line exists and what its current role is.
-        // Only flush when the role is changing AND there is content to
-        // persist. Consecutive same-role events accumulate in one line;
-        // empty lines with a stale role are silently discarded (ADR §5.1).
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => {
-                // No session — just ensure a new line (no-op without session)
-                return;
-            }
-        };
-
-        let need_flush = {
-            let map = self.streaming_lines.read().unwrap();
-            if let Some(sl) = map.get(&sid) {
-                // Flush only when role is changing AND content is non-empty.
-                sl.role != new_role && !sl.accumulated_content.is_empty()
-            } else {
-                false // No existing line — nothing to flush
-            }
-        };
-
-        if need_flush {
-            self.flush_streaming_line(conversation);
-        } else {
-            // ADR §5.1: If the existing line has a different role but is
-            // empty, discard it so ensure_streaming_line won't hit the
-            // debug_assert for role mismatch.
-            let map = self.streaming_lines.read().unwrap();
-            if let Some(sl) = map.get(&sid)
-                && sl.role != new_role
-                && sl.accumulated_content.is_empty()
-            {
-                drop(map);
-                self.remove_streaming_line();
-            }
-        }
-
-        // Ensure a new streaming line with the target role.
-        // If the line already exists with the same role, this is a no-op.
-        // If we just flushed, this creates a fresh empty line.
-        self.ensure_streaming_line(new_role);
-    }
-
-    /// Increment the cached total JSONL line count.
-    ///
-    /// Must be called after each direct `conversation.append_message()` that
-    /// bypasses `flush_streaming_line()`, so that `read_messages_since` sees
-    /// the updated line count and returns newly written entries to the frontend.
-    pub(crate) fn increment_total_lines(&self, count: usize) {
-        self.total_lines.fetch_add(count, Ordering::Relaxed);
-    }
-
-    /// Send a `NewDataAvailable` notification via the control channel.
-    ///
-    /// ADR-021: This notifies the frontend that new data is available for
-    /// polling. The frontend should trigger an HTTP poll to fetch the latest
-    /// messages and streaming line delta.
-    ///
-    /// Only sends if `notify_enabled` is true (session is activated) and
-    /// at least 500ms have elapsed since the last notification (ADR-021 §难点 1).
-    pub(crate) fn notify_new_data_available(&self) {
-        if !self.notify_enabled.load(Ordering::Relaxed) {
-            return;
-        }
-
-        // ADR-021 §难点 1: Throttle to max ~2 notifications/sec.
-        // LLM streaming produces deltas at 50-200Hz; sending a WS event
-        // per delta would flood the frontend PollingManager and cause
-        // endless abort cycles. 500ms is the same as the PollingManager's
-        // initial backoff → maximum one poll per notification.
-        let now = Utc::now().timestamp_millis();
-        let last = self.last_notify_ts.load(Ordering::Relaxed);
-        if now - last < 500 {
-            return;
-        }
-        // CAS prevents races — only one concurrent delta wins the send.
-        if self
-            .last_notify_ts
-            .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
-            .is_err()
-        {
-            return;
-        }
-
-        let sid = match &self.session_id {
-            Some(s) => s.clone(),
-            None => return,
-        };
-
-        // Use committed_lines — shared with writer thread, correctly
-        // reflects per-session JSONL line count after each disk write.
-        let total_lines = self.get_committed_lines(&sid);
-
-        let map = self.streaming_lines.read().unwrap();
-        let streaming_line = map.get(&sid).map(|sl| sl.line_number).unwrap_or(0);
-        drop(map);
-
-        let _ = self.try_send_chunk(ChunkEvent::NewDataAvailable {
-            session_id: sid,
-            total_lines,
-            streaming_line,
-            interval_ms: self.config.data_flow.notify_interval_ms,
-        });
-    }
-
-    /// Get the cached total JSONL line count, initializing from file on first access.
-    ///
-    /// After the first call, subsequent reads are O(1) atomic loads.
-    /// The counter is incremented in `flush_streaming_line` after each
-    /// `append_message`, staying in sync with the JSONL file.
-    fn get_total_lines(&self, session_id: &str) -> usize {
-        let cached = self.total_lines.load(Ordering::Relaxed);
-        if cached > 0 {
-            return cached;
-        }
-        // Cold start: scan file once to initialize.
-        let count = self
-            .current_work_dir
-            .as_ref()
-            .map(|wd| {
-                let jsonl_path = std::path::PathBuf::from(wd)
-                    .join("conversations")
-                    .join(format!("{}.jsonl", session_id));
-                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
-            })
-            .unwrap_or(0);
-        self.total_lines.store(count, Ordering::Relaxed);
-        count
-    }
-
-    /// Get the committed JSONL line count from the shared writer-thread
-    /// counter.  Each session shares the same `Arc<AtomicUsize>` between
-    /// this AgentCore and the background ConversationWriter — the writer
-    /// increments it after each physical disk write, so this value never
-    /// lies about what's actually on disk.
-    ///
-    /// Falls back to cold-start file scan if the counter hasn't been
-    /// initialized yet (e.g. resuming a session that hasn't received any
-    /// new writes since startup).
-    fn get_committed_lines(&self, session_id: &str) -> usize {
-        let cached = self.committed_lines.load(Ordering::Relaxed);
-        if cached > 0 {
-            return cached;
-        }
-        // Cold start: scan file once to initialize.
-        let count = self
-            .current_work_dir
-            .as_ref()
-            .map(|wd| {
-                let jsonl_path = std::path::PathBuf::from(wd)
-                    .join("conversations")
-                    .join(format!("{}.jsonl", session_id));
-                crate::conversation::count_jsonl_lines(&jsonl_path).unwrap_or(0)
-            })
-            .unwrap_or(0);
-        self.committed_lines.store(count, Ordering::Relaxed);
-        count
-    }
-
-    /// Update the embedding provider at runtime (hot-push from Gateway
-    /// EmbeddingConfigUpdate). Replaces the current provider with a
-    /// new ONNX provider as the first entry in the FallbackEmbeddingProvider chain.
     pub fn update_embedding_provider(
         &mut self,
-        new_provider: Arc<dyn crate::embedding::EmbeddingProvider>,
+        new_provider: Arc<dyn EmbeddingProvider>,
     ) {
         let old_name = self
             .embedding_provider
             .as_ref()
             .map(|p| p.name())
             .unwrap_or("none")
-            .to_string(); // Detach from borrow before assigning
-        let new_name = new_provider.name().to_string(); // Read before move
+            .to_string();
+        let new_name = new_provider.name().to_string();
         self.embedding_provider = Some(new_provider);
         tracing::info!(
             old_provider = %old_name,
@@ -727,9 +198,6 @@ impl AgentCore {
         );
     }
 
-    /// Update gateway model capabilities at runtime.
-    /// Now inserts into the global_provider_list for the matching model.
-    /// `model_id` is the model identifier string.
     pub fn update_gateway_model_capabilities(
         &mut self,
         model_id: &str,
@@ -746,7 +214,6 @@ impl AgentCore {
             source = "gateway",
             "AgentCore received model capabilities from Gateway"
         );
-        // Update capabilities in global_provider_list for matching model.
         let mut list = self.global_provider_list.write().unwrap();
         for provider in list.iter_mut() {
             for model in provider.models.iter_mut() {
@@ -758,13 +225,8 @@ impl AgentCore {
         }
     }
 
-    /// Update the max output tokens limit from Gateway config.
-    /// Now updates per-model limits in the global_provider_list.
     pub fn update_max_output_tokens_limit(&mut self, limit: u64) {
-        tracing::info!(
-            new_limit = limit,
-            "AgentCore max_output_tokens_limit updated from Gateway (all models)"
-        );
+        tracing::info!(new_limit = limit, "AgentCore max_output_tokens_limit updated from Gateway (all models)");
         let mut list = self.global_provider_list.write().unwrap();
         for provider in list.iter_mut() {
             for model in provider.models.iter_mut() {
@@ -773,8 +235,6 @@ impl AgentCore {
         }
     }
 
-    /// Apply runtime config overrides from Gateway.
-    /// Only updates fields that are Some — None means "keep current value".
     pub fn apply_runtime_config(
         &mut self,
         max_output_tokens: Option<u64>,
@@ -784,18 +244,11 @@ impl AgentCore {
         shell_approval_threshold: Option<String>,
     ) {
         if let Some(limit) = max_output_tokens {
-            tracing::info!(
-                new = limit,
-                "runtime config: max_output_tokens updated (all models)"
-            );
+            tracing::info!(new = limit, "runtime config: max_output_tokens updated (all models)");
             self.update_max_output_tokens_limit(limit);
         }
         if let Some(n) = max_iterations {
-            tracing::info!(
-                old = self.config.max_iterations,
-                new = n,
-                "runtime config: max_iterations updated"
-            );
+            tracing::info!(old = self.config.max_iterations, new = n, "runtime config: max_iterations updated");
             self.config.max_iterations = n;
         }
         if let Some(temp) = temperature {
@@ -803,228 +256,105 @@ impl AgentCore {
             self.temperature_override = Some(temp);
         }
         if system_prompt_override.is_some() {
-            tracing::info!(
-                has_override = system_prompt_override
-                    .as_ref()
-                    .map(|s| !s.is_empty())
-                    .unwrap_or(false),
-                "runtime config: system_prompt_override updated"
-            );
+            tracing::info!(has_override = system_prompt_override.as_ref().map(|s| !s.is_empty()).unwrap_or(false), "runtime config: system_prompt_override updated");
             self.system_prompt_override = system_prompt_override;
         }
         if let Some(ref threshold) = shell_approval_threshold {
-            let new_threshold =
-                ShellApprovalThreshold::from_str_loose(threshold).unwrap_or_default();
-            tracing::info!(
-                old = ?self.shell_approval_threshold,
-                new = ?new_threshold,
-                "runtime config: shell_approval_threshold updated"
-            );
+            let new_threshold = ShellApprovalThreshold::from_str_loose(threshold).unwrap_or_default();
+            tracing::info!(old = ?self.shell_approval_threshold, new = ?new_threshold, "runtime config: shell_approval_threshold updated");
             self.shell_approval_threshold = new_threshold;
         }
     }
 
-    /// Initialize the Grafeo memory store at the given workspace path.
-    ///
-    /// Opens or creates `{work_dir}/memory/private.grafeo`.
-    /// On failure, logs a warning and leaves `memory_store` as None —
-    /// memory features degrade gracefully (no crash, no panic).
     pub fn init_memory_store(&mut self, work_dir: &std::path::Path) {
-        // Guard against double-init (called from both gRPC and standalone paths).
         if self.memory_store.is_some() {
             tracing::debug!("init_memory_store: already initialized, skipping");
             return;
         }
-
         let memory_dir = work_dir.join("memory");
         if let Err(e) = std::fs::create_dir_all(&memory_dir) {
-            tracing::warn!(
-                error = %e,
-                dir = %memory_dir.display(),
-                "Failed to create memory directory, memory features disabled"
-            );
+            tracing::warn!(error = %e, dir = %memory_dir.display(), "Failed to create memory directory, memory features disabled");
             return;
         }
-
         let db_path = memory_dir.join("private.grafeo");
-        let embedding_dim = self
-            .embedding_provider
-            .as_ref()
-            .map(|p| p.dimension())
-            .unwrap_or(acowork_grafeo::types::DEFAULT_EMBEDDING_DIM);
-        let config = GrafeoConfig {
-            db_path: db_path.clone(),
-            embedding_dim,
-        };
+        let embedding_dim = self.embedding_provider.as_ref().map(|p| p.dimension()).unwrap_or(acowork_grafeo::types::DEFAULT_EMBEDDING_DIM);
+        let config = GrafeoConfig { db_path: db_path.clone(), embedding_dim };
         match GrafeoStore::open(&config) {
             Ok(store) => {
-                // Count existing nodes to confirm data loaded from disk.
                 let graph = store.db().graph_store();
                 let existing: usize = ["Episodic", "Knowledge", "Procedural", "Autobiographical"]
-                    .iter()
-                    .map(|l| graph.nodes_by_label(l).len())
-                    .sum();
-                tracing::info!(
-                    path = %db_path.display(),
-                    existing_nodes = existing,
-                    "Grafeo memory store opened"
-                );
+                    .iter().map(|l| graph.nodes_by_label(l).len()).sum();
+                tracing::info!(path = %db_path.display(), existing_nodes = existing, "Grafeo memory store opened");
                 let store_arc = Arc::new(store);
-                // Bootstrap Autobiographical nodes from manifest on cold start.
                 self.bootstrap_autobiographical_from_manifest(&store_arc);
-                // Propagate to memory session handle so tools can use it.
                 if let Some(ref session) = self.memory_session {
                     session.set_store(store_arc.clone());
                 }
                 self.memory_store = Some(store_arc);
-
-                // Start consolidation background pipeline if embedding provider is available.
                 self.start_consolidation_pipeline();
             }
             Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    path = %db_path.display(),
-                    "Failed to open Grafeo memory store, memory features disabled"
-                );
+                tracing::warn!(error = %e, path = %db_path.display(), "Failed to open Grafeo memory store, memory features disabled");
             }
         }
     }
 
-    /// Access the Grafeo memory store, if initialized.
     pub fn memory_store(&self) -> Option<&Arc<GrafeoStore>> {
         self.memory_store.as_ref()
     }
 
-    /// Bootstrap Autobiographical nodes from the agent manifest.
-    ///
-    /// On first run (cold start), derives Identity/Capability nodes from
-    /// [`AgentManifest`] fields and writes them to Grafeo. The bootstrap is
-    /// **idempotent**: if any Autobiographical/Identity nodes already exist,
-    /// the entire bootstrap is skipped.
-    ///
-    /// This ensures the agent has searchable self-knowledge from the moment
-    /// Grafeo is initialized, without waiting for LLM-triggered
-    /// `memory_store` calls.
-    ///
-    /// ## Mapping
-    ///
-    /// | Manifest field           | → Node                              |
-    /// |--------------------------|-------------------------------------|
-    /// | `agent_id`               | `Identity: agent_id: ...`           |
-    /// | `name`                   | `Identity: name: ...`               |
-    /// | `display_name`           | `Identity: display_name: ...`       |
-    /// | `role`                   | `Identity: role: ...`               |
-    /// | `description`            | `Identity: description: ...`        |
-    /// | `capabilities.*.description` | `Capability: {key}: {desc}`     |
     fn bootstrap_autobiographical_from_manifest(&self, store: &GrafeoStore) {
-        // Idempotency: skip if any Identity nodes already exist.
         match store.find_autobiographical_by_category(AutobioCategory::Identity) {
             Ok(existing) if !existing.is_empty() => {
-                tracing::debug!(
-                    count = existing.len(),
-                    "Autobiographical nodes already exist, skipping manifest bootstrap"
-                );
+                tracing::debug!(count = existing.len(), "Autobiographical nodes already exist, skipping manifest bootstrap");
                 return;
             }
             Err(e) => {
-                // Non-fatal: graph may not have index yet on first access.
                 tracing::warn!(error = %e, "Failed to probe existing Autobiographical nodes, attempting bootstrap anyway");
             }
             _ => {}
         }
-
         let manifest = &self.manifest;
         let now = Utc::now();
-        let mut bootstrapped = 0u32;
-
-        // ── Identity nodes ──
         let identity_entries: Vec<(&str, String)> = {
             let mut v = vec![
                 ("agent_id", manifest.agent_id.clone()),
                 ("name", manifest.name.clone()),
                 ("description", manifest.description.clone()),
             ];
-            if let Some(ref dn) = manifest.display_name {
-                v.push(("display_name", dn.clone()));
-            }
-            if let Some(ref role) = manifest.role {
-                v.push(("role", role.clone()));
-            }
+            if let Some(ref dn) = manifest.display_name { v.push(("display_name", dn.clone())); }
+            if let Some(ref role) = manifest.role { v.push(("role", role.clone())); }
             v
         };
-
         for (key, value) in &identity_entries {
             let node = AutobiographicalNode {
-                id: None,
-                category: AutobioCategory::Identity,
-                key: key.to_string(),
-                value: value.clone(),
-                confidence: 1.0,
-                source_episode_id: None,
-                embedding: None,
-                status: NodeStatus::Active,
-                created_at: now,
-                updated_at: now,
-                metadata: HashMap::new(),
+                id: None, category: AutobioCategory::Identity, key: key.to_string(),
+                value: value.clone(), confidence: 1.0, source_episode_id: None,
+                embedding: None, status: NodeStatus::Active,
+                created_at: now, updated_at: now, metadata: HashMap::new(),
             };
-            match store.store_autobiographical(&node) {
-                Ok(_) => bootstrapped += 1,
-                Err(e) => {
-                    tracing::warn!(key = %key, error = %e, "Failed to bootstrap Autobiographical/Identity node")
-                }
+            if let Err(e) = store.store_autobiographical(&node) {
+                tracing::warn!(key = %key, error = %e, "Failed to bootstrap Autobiographical/Identity node");
             }
         }
-
-        // ── Capability nodes ──
         for (cap_key, cap_def) in &manifest.capabilities {
             let node = AutobiographicalNode {
-                id: None,
-                category: AutobioCategory::Capability,
-                key: cap_key.clone(),
-                value: cap_def.description.clone(),
-                confidence: 1.0,
-                source_episode_id: None,
-                embedding: None,
-                status: NodeStatus::Active,
-                created_at: now,
-                updated_at: now,
-                metadata: HashMap::new(),
+                id: None, category: AutobioCategory::Capability, key: cap_key.clone(),
+                value: cap_def.description.clone(), confidence: 1.0, source_episode_id: None,
+                embedding: None, status: NodeStatus::Active,
+                created_at: now, updated_at: now, metadata: HashMap::new(),
             };
-            match store.store_autobiographical(&node) {
-                Ok(_) => bootstrapped += 1,
-                Err(e) => {
-                    tracing::warn!(capability = %cap_key, error = %e, "Failed to bootstrap Autobiographical/Capability node")
-                }
+            if let Err(e) = store.store_autobiographical(&node) {
+                tracing::warn!(capability = %cap_key, error = %e, "Failed to bootstrap Autobiographical/Capability node");
             }
         }
-
-        tracing::info!(
-            identity_count = identity_entries.len(),
-            capability_count = manifest.capabilities.len(),
-            bootstrapped,
-            "Bootstrapped Autobiographical nodes from manifest"
-        );
+        tracing::info!(identity_count = identity_entries.len(), capability_count = manifest.capabilities.len(), "Bootstrapped Autobiographical nodes from manifest");
     }
 
-    /// Initialize and return a MemoryManager for this agent.
-    ///
-    /// The MemoryManager is a stateless orchestrator that operates on the
-    /// shared GrafeoStore. It does not own any state — it's just the
-    /// retrieve/inject/record pipeline configuration.
     pub fn init_memory_manager(&self) -> MemoryManager {
         MemoryManager::new(MemoryManagerConfig::default())
     }
 
-    /// Start the consolidation background pipeline.
-    ///
-    /// Called automatically after `init_memory_store()` succeeds and
-    /// an embedding provider is available. Creates the
-    /// ConsolidationScheduler and spawns a background tokio task
-    /// that polls for consolidation triggers.
-    ///
-    /// If the embedding provider is not set, consolidation is deferred
-    /// until it becomes available (call this method again after setting it).
     pub fn start_consolidation_pipeline(&mut self) {
         let Some(ref store) = self.memory_store else {
             tracing::debug!("Cannot start consolidation: memory store not initialized");
@@ -1034,70 +364,97 @@ impl AgentCore {
             tracing::debug!("Cannot start consolidation: embedding provider not available");
             return;
         };
-
-        // Don't restart if already running.
         if self.consolidation_scheduler.is_some() {
             tracing::debug!("Consolidation pipeline already running");
             return;
         }
-
         use crate::memory::consolidation_bg::{ConsolidationParams, start_consolidation_pipeline};
         use acowork_grafeo::consolidation::SchedulerConfig;
         use std::time::Duration;
-
-        // Resolve the model name for the LLM adapter.
-        // Try global_provider_list first model, then fall back to "default".
         let model = {
             let list = self.global_provider_list.read().unwrap();
-            list.iter()
-                .flat_map(|p| p.models.iter())
-                .next()
-                .map(|m| m.id.clone())
-                .unwrap_or_else(|| "default".to_string())
+            list.iter().flat_map(|p| p.models.iter()).next().map(|m| m.id.clone()).unwrap_or_else(|| "default".to_string())
         };
         let params = ConsolidationParams {
-            store: store.clone(),
-            provider: self.provider.clone(),
-            model,
-            embedding_provider: embedding.clone(),
-            scheduler_config: SchedulerConfig::default(),
+            store: store.clone(), provider: self.provider.clone(), model,
+            embedding_provider: embedding.clone(), scheduler_config: SchedulerConfig::default(),
             poll_interval: Duration::from_secs(60),
             work_dir: Some(std::path::PathBuf::from(&self.config.work_dir)),
         };
-
         let (scheduler, bg_task) = start_consolidation_pipeline(params);
         self.consolidation_scheduler = Some(scheduler);
         self.consolidation_bg_task = Some(bg_task);
-
         tracing::info!("Consolidation background pipeline started");
     }
 
-    /// Notify the consolidation scheduler that the agent is active.
-    ///
-    /// Should be called after each user message is processed, to reset
-    /// the idle timer so consolidation doesn't run during active use.
     pub async fn notify_consolidation_active(&self) {
         if let Some(ref scheduler) = self.consolidation_scheduler {
             scheduler.notify_active().await;
         }
     }
 
-    /// Create a cheap clone of this AgentCore for a new session.
-    ///
-    /// Heavy fields (provider, tools, memory_store) are Arc-cloned (refcount increment),
-    /// while value fields (config, manifest, capabilities) are deep-cloned.
-    /// The `chunk_tx` channel and `session_id` are replaced with the caller-provided ones,
-    /// since each session needs its own channel and identity.
-    ///
-    /// `committed_lines` must be the same Arc passed to the writer thread
-    /// (ConversationWriter) so that `notify_new_data_available` reads the
-    /// correct per-session count. Each session gets its own Arc instance.
-    pub(crate) fn clone_for_session(
-        &self,
-        chunk_tx: Option<mpsc::Sender<SessionChunkEvent>>,
-        session_id: String,
-        committed_lines: Arc<AtomicUsize>,
-    ) -> Self {
+    pub(crate) fn get_model_capabilities(&self, model_name: &str) -> Option<ModelCapabilitiesInfo> {
+        let list = self.global_provider_list.read().unwrap();
+        for provider in list.iter() {
+            for model in &provider.models {
+                if model.id == model_name {
+                    return Some(model.capabilities.clone());
+                }
+            }
+        }
+        if !list.is_empty() {
+            let available: Vec<&str> = list.iter().flat_map(|p| p.models.iter().map(|m| m.id.as_str())).collect();
+            tracing::warn!(model = %model_name, available = ?available, "Model capabilities not found for '{}'", model_name);
+        }
+        None
+    }
+
+    pub fn get_provider(&self, provider_id: &str) -> Option<ProviderListItem> {
+        let list = self.global_provider_list.read().unwrap();
+        list.iter().find(|p| p.id == provider_id).cloned()
+    }
+
+    pub fn get_provider_api_key(&self, provider_id: &str) -> Option<String> {
+        let vault = self.provider_key_vault.read().unwrap();
+        vault.get(provider_id).cloned()
+    }
+
+    pub fn set_debug_mode(&mut self, observer: crate::debug::DebugObserverImpl) {
+        tracing::info!(is_dev = crate::debug::observer::DebugObserver::is_dev_mode(&observer), "AgentCore::set_debug_mode called (observer pipeline)");
+        self.debug_observer = DebugObserverSlot::dev(observer);
+    }
+
+    pub fn set_debug_pending_injection(
+        &mut self,
+        ch: Arc<tokio::sync::Mutex<Option<crate::debug::DebugHandles>>>,
+    ) {
+        self.debug_observer.set_pending_injection(ch);
+    }
+
+    pub fn debug_observer(&self) -> &DebugObserverSlot { &self.debug_observer }
+    pub fn debug_observer_mut(&mut self) -> &mut DebugObserverSlot { &mut self.debug_observer }
+    pub fn is_dev_mode(&self) -> bool { self.debug_observer.is_dev_mode() }
+    pub fn approval_gate(&self) -> Option<&Arc<dyn ApprovalGate>> { self.approval_gate.as_ref() }
+    pub fn set_approval_gate(&mut self, gate: Arc<dyn ApprovalGate>) { self.approval_gate = Some(gate); }
+    pub fn shell_approval_threshold(&self) -> &ShellApprovalThreshold { &self.shell_approval_threshold }
+
+    pub fn context_trim_budget(&self, model_name: &str) -> u64 {
+        let max_output_limit = self.max_output_tokens_limit_for_model(model_name);
+        self.get_model_capabilities(model_name)
+            .map(|caps| {
+                let usable = caps.effective_input_budget(max_output_limit);
+                tracing::debug!(model = %model_name, context_window = caps.context_window, max_input_tokens = ?caps.max_input_tokens, max_output_tokens_limit = max_output_limit, effective_input_budget = usable, "Computed usable context budget from model capabilities");
+                usable
+            })
+            .unwrap_or_else(|| {
+                tracing::debug!(model = %model_name, "No model capabilities for '{}', using config.history_max_tokens as fallback.", model_name);
+                self.config.history_max_tokens
+            })
+    }
+}
+
+impl Clone for AgentCore {
+    fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
             manifest: self.manifest.clone(),
@@ -1111,619 +468,15 @@ impl AgentCore {
             provider_compact_models: self.provider_compact_models.clone(),
             temperature_override: self.temperature_override,
             system_prompt_override: self.system_prompt_override.clone(),
-            session_id: Some(session_id),
-            chunk_tx,
-            notify_enabled: Arc::new(AtomicBool::new(false)), // default off, enabled by EnableNotify
-            last_notify_ts: Arc::new(AtomicI64::new(0)),    // per-session throttle, restarts at 0
-            total_lines: Arc::new(AtomicUsize::new(0)),     // per-session, initialized on first use
-            committed_lines, // shared with writer thread, passed from SessionManager
-            streaming_flush_count: Arc::new(AtomicU64::new(0)), // per-stream, reset in consume_stream
             memory_store: self.memory_store.clone(),
             memory_session: self.memory_session.clone(),
-            // Debug observer is NOT cloned — each session gets a fresh
-            // Production slot; DevMode is injected via SessionManager.
-            debug_observer: DebugObserverSlot::production(),
-            // Per-session Notify — each session gets its own independent
-            // Notify so fire_urgent_stop() only wakes the target session.
-            urgent_stop: Some(Arc::new(Notify::new())),
+            debug_observer: self.debug_observer.clone_production(),
             approval_gate: self.approval_gate.clone(),
-            approval_handle: self.approval_handle.clone(),
             shell_approval_threshold: self.shell_approval_threshold,
-            status_tx: None, // set separately by SessionTask
-            snapshot_slot: None, // set separately by SessionTask
             embedding_provider: self.embedding_provider.clone(),
-            // P3-1: Metrics aggregator is shared across sessions via Arc clone.
-            // This ensures LLM Judge evaluations from background tasks are
-            // reflected across all session views.
             metrics_aggregator: self.metrics_aggregator.clone(),
-            // Consolidation scheduler is shared across sessions (Arc clone).
             consolidation_scheduler: self.consolidation_scheduler.clone(),
-            // Background task is NOT cloned — it's owned by the primary AgentCore.
-            // Session clones don't need their own bg task.
-            consolidation_bg_task: None,
-            // work_dir is set separately by SessionTask after clone;
-            // default to agent_home to avoid None window before SetWorkDir arrives.
-            current_work_dir: Some(self.config.work_dir.clone()),
-            retry_session_status: None, // set separately by SessionTask
-            retry_wait_handle: None,    // set separately by SessionTask
-            // ADR-021: StreamingStateMap is shared across all sessions (Arc clone).
-            // Each session writes to its own key; the HTTP handler reads by session_id.
-            streaming_lines: self.streaming_lines.clone(),
+            consolidation_bg_task: None, // sessions don't own bg task
         }
-    }
-
-    /// Look up model capabilities by exact model name.
-    ///
-    /// Searches across all providers in the global_provider_list.
-    /// Returns `None` when the requested model is not found — callers must
-    /// handle this case explicitly.
-    pub(crate) fn get_model_capabilities(&self, model_name: &str) -> Option<ModelCapabilitiesInfo> {
-        let list = self.global_provider_list.read().unwrap();
-        for provider in list.iter() {
-            for model in &provider.models {
-                if model.id == model_name {
-                    return Some(model.capabilities.clone());
-                }
-            }
-        }
-        if !list.is_empty() {
-            let available: Vec<&str> = list
-                .iter()
-                .flat_map(|p| p.models.iter().map(|m| m.id.as_str()))
-                .collect();
-            tracing::warn!(
-                model = %model_name,
-                available = ?available,
-                "Model capabilities not found for '{}' — \
-                 context usage reporting and compaction will be skipped. \
-                 This indicates a model name mismatch between Runtime and Gateway (e.g. case sensitivity).",
-                model_name
-            );
-        }
-        None
-    }
-
-    /// Look up a provider's full metadata from the global cache.
-    pub fn get_provider(&self, provider_id: &str) -> Option<ProviderListItem> {
-        let list = self.global_provider_list.read().unwrap();
-        list.iter().find(|p| p.id == provider_id).cloned()
-    }
-
-    /// Look up a provider's API key from the in-memory vault.
-    pub fn get_provider_api_key(&self, provider_id: &str) -> Option<String> {
-        let vault = self.provider_key_vault.read().unwrap();
-        vault.get(provider_id).cloned()
-    }
-
-    /// Rebuild Provider instance for a given provider_id from global cache.
-    /// Returns None if provider not found in cache or no API key available.
-    ///
-    /// The returned provider is wrapped in [`ReliableProvider`] so that
-    /// per-session model switches also benefit from retry logic (backoff,
-    /// retry-after, jitter). When [`retry_session_status`] and
-    /// [`retry_wait_handle`] are set on this `AgentCore`, the provider is
-    /// also wired up with 429-retry UX (countdown timer + skip button).
-    pub fn build_provider_for(&self, provider_id: &str) -> Option<Arc<dyn Provider>> {
-        let provider_meta = self.get_provider(provider_id)?;
-        let api_key = self.get_provider_api_key(provider_id);
-        let timeouts = Some(crate::providers::router::ProviderTimeouts::from(
-            &self.config,
-        ));
-        let raw = crate::providers::router::create_provider(
-            &provider_meta.id,
-            &provider_meta.protocol_type,
-            api_key.as_deref(),
-            if provider_meta.base_url.is_empty() {
-                None
-            } else {
-                Some(&provider_meta.base_url)
-            },
-            timeouts,
-        );
-        let retry_config = crate::providers::reliable::RetryConfig::default();
-        let mut reliable = crate::providers::reliable::ReliableProvider::new(raw, retry_config);
-
-        // Wire up 429 retry UX if the session has set up the shared state
-        if let Some(status) = &self.retry_session_status
-            && let Some(handle) = &self.retry_wait_handle
-            && let Some(tx) = &self.chunk_tx
-            && let Some(sid) = &self.session_id
-        {
-            reliable = reliable.with_retry_ux(
-                crate::providers::reliable::RetryWaitHandle {
-                    state: handle.state.clone(),
-                    skip_notify: handle.skip_notify.clone(),
-                },
-                status.clone(),
-                tx.clone(),
-                sid.clone(),
-            );
-        }
-
-        Some(Arc::new(reliable))
-    }
-
-    /// Set debug mode by replacing the observer slot with a DevMode observer.
-    ///
-    /// This is the primary injection point — called by SessionManager when
-    /// Gateway pushes EnableDebugMode. The DebugObserverImpl bundles all
-    /// debug state (controller, event sender, notify handles) into one
-    /// cohesive unit. See ADR-013.
-    pub fn set_debug_mode(&mut self, observer: crate::debug::DebugObserverImpl) {
-        tracing::info!(
-            is_dev = crate::debug::observer::DebugObserver::is_dev_mode(&observer),
-            "AgentCore::set_debug_mode called (observer pipeline)"
-        );
-        self.debug_observer = DebugObserverSlot::dev(observer);
-    }
-
-    /// Set the pending injection channel on the debug observer (DevMode only).
-    /// No-op for Production mode.
-    pub fn set_debug_pending_injection(
-        &mut self,
-        ch: std::sync::Arc<tokio::sync::Mutex<Option<crate::debug::DebugHandles>>>,
-    ) {
-        self.debug_observer.set_pending_injection(ch);
-    }
-
-    /// Access the debug observer slot.
-    pub fn debug_observer(&self) -> &DebugObserverSlot {
-        &self.debug_observer
-    }
-
-    /// Access the debug observer slot mutably.
-    pub fn debug_observer_mut(&mut self) -> &mut DebugObserverSlot {
-        &mut self.debug_observer
-    }
-
-    /// Check if DevMode is active.
-    pub fn is_dev_mode(&self) -> bool {
-        self.debug_observer.is_dev_mode()
-    }
-
-    /// Access the approval gate, if configured.
-    pub fn approval_gate(&self) -> Option<&Arc<dyn ApprovalGate>> {
-        self.approval_gate.as_ref()
-    }
-
-    /// Set the approval gate (for Gateway mode initialization).
-    pub fn set_approval_gate(&mut self, gate: Arc<dyn ApprovalGate>) {
-        self.approval_gate = Some(gate);
-    }
-
-    /// Access the shell approval threshold.
-    pub fn shell_approval_threshold(&self) -> &ShellApprovalThreshold {
-        &self.shell_approval_threshold
-    }
-
-    /// Get the usable context budget for history trimming.
-    /// Uses Gateway model capabilities if available: delegates to
-    /// [`ModelCapabilitiesInfo::effective_input_budget`] with the per-model
-    /// `max_output_tokens_limit` as the output cap.
-    /// Falls back to config.history_max_tokens when no capabilities are present.
-    pub fn context_trim_budget(&self, model_name: &str) -> u64 {
-        let max_output_limit = self.max_output_tokens_limit_for_model(model_name);
-        self.get_model_capabilities(model_name)
-            .map(|caps| {
-                let usable = caps.effective_input_budget(max_output_limit);
-                tracing::debug!(
-                    model = %model_name,
-                    context_window = caps.context_window,
-                    max_input_tokens = ?caps.max_input_tokens,
-                    max_output_tokens_limit = max_output_limit,
-                    effective_input_budget = usable,
-                    "Computed usable context budget from model capabilities"
-                );
-                usable
-            })
-            .unwrap_or_else(|| {
-                tracing::debug!(
-                    model = %model_name,
-                    "No model capabilities for '{}', using config.history_max_tokens as fallback.",
-                    model_name
-                );
-                self.config.history_max_tokens
-            })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::config::RuntimeConfig;
-    use acowork_core::providers::mock::MockProvider;
-
-    fn make_core_with_channel(
-        session_id: Option<&str>,
-    ) -> (
-        AgentCore,
-        mpsc::Receiver<crate::agent::loop_::SessionChunkEvent>,
-    ) {
-        let (tx, rx) = mpsc::channel(16);
-        let manifest = acowork_core::AgentManifest::from_toml(
-            r#"
-            agent_id = "com.test.core"
-            version = "1.0.0"
-            name = "Test Agent"
-            description = "Test"
-            author = "test"
-            runtime_version = "0.1.0"
-            [llm]
-            provider = "mock"
-            model = "mock-model"
-            "#,
-        )
-        .unwrap();
-        let config = RuntimeConfig::default();
-        let provider = Arc::new(MockProvider::single_text("OK"));
-        let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
-        core.session_id = session_id.map(|s| s.to_string());
-        // Default to notify-enabled for existing tests.
-        core.notify_enabled.store(true, Ordering::Relaxed);
-        (core, rx)
-    }
-
-    #[test]
-    fn test_try_send_chunk_normal() {
-        let (core, mut rx) = make_core_with_channel(Some("s1"));
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
-        let evt = rx.try_recv().unwrap();
-        assert_eq!(evt.session_id, "s1");
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::CompactingStarted
-        ));
-    }
-
-    #[test]
-    fn test_try_send_chunk_no_session_id() {
-        let (core, _rx) = make_core_with_channel(None);
-        // session_id is None — make_chunk_event returns None, try_send_chunk returns false
-        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
-    }
-
-    #[test]
-    fn test_try_send_chunk_channel_full() {
-        // Channel capacity = 1 (small), fill it then try_send_chunk should fail
-        let (tx, mut rx) = mpsc::channel(1);
-        let manifest = acowork_core::AgentManifest::from_toml(
-            r#"
-            agent_id = "com.test.full"
-            version = "1.0.0"
-            name = "Test Agent"
-            description = "Test"
-            author = "test"
-            runtime_version = "0.1.0"
-            [llm]
-            provider = "mock"
-            model = "mock-model"
-            "#,
-        )
-        .unwrap();
-        let config = RuntimeConfig::default();
-        let provider = Arc::new(MockProvider::single_text("OK"));
-        let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
-        core.session_id = Some("s1".to_string());
-        core.notify_enabled.store(true, Ordering::Relaxed);
-
-        // Fill the channel
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::CompactingStarted));
-        // Second send should fail (channel full)
-        assert!(!core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
-            content: "x".to_string(),
-            message_id: "m1".to_string(),
-        }));
-
-        // Drain and retry should work
-        let _ = rx.try_recv().unwrap();
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
-            content: "y".to_string(),
-            message_id: "m2".to_string(),
-        }));
-    }
-
-    #[test]
-    fn test_make_chunk_event_with_session_id() {
-        let (core, _rx) = make_core_with_channel(Some("abc"));
-        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::CompactingStarted);
-        assert!(wrapped.is_some());
-        assert_eq!(wrapped.unwrap().session_id, "abc");
-    }
-
-    #[test]
-    fn test_make_chunk_event_without_session_id() {
-        let (core, _rx) = make_core_with_channel(None);
-        let wrapped = core.make_chunk_event(crate::agent::loop_::ChunkEvent::CompactingStarted);
-        assert!(wrapped.is_none());
-    }
-
-    // ── ADR-021: notify_enabled controls NewDataAvailable ──────────────
-
-    /// Helper: create an AgentCore with notify_enabled explicitly set.
-    fn make_core_with_notify(
-        notify_enabled: bool,
-    ) -> (
-        AgentCore,
-        mpsc::Receiver<crate::agent::loop_::SessionChunkEvent>,
-    ) {
-        let (core, rx) = make_core_with_channel(Some("s1"));
-        core.notify_enabled.store(notify_enabled, Ordering::Relaxed);
-        (core, rx)
-    }
-
-    #[test]
-    fn test_notify_disabled_suppresses_new_data_available() {
-        // notify_enabled=false → NewDataAvailable is NOT sent
-        let (core, mut rx) = make_core_with_notify(false);
-        // Set up streaming_lines so notify_new_data_available has something to read
-        core.streaming_lines.write().unwrap().insert(
-            "s1".to_string(),
-            crate::conversation::StreamingLine {
-                line_number: 1,
-                accumulated_content: String::new(),
-                role: "assistant".to_string(),
-                started_at: String::new(),
-                started_at_ms: 0,
-            },
-        );
-        core.notify_new_data_available();
-        // Should not have sent anything
-        assert!(rx.try_recv().is_err());
-    }
-
-    #[test]
-    fn test_notify_enabled_sends_new_data_available() {
-        // notify_enabled=true → NewDataAvailable IS sent
-        let (core, mut rx) = make_core_with_notify(true);
-        core.streaming_lines.write().unwrap().insert(
-            "s1".to_string(),
-            crate::conversation::StreamingLine {
-                line_number: 1,
-                accumulated_content: String::new(),
-                role: "assistant".to_string(),
-                started_at: String::new(),
-                started_at_ms: 0,
-            },
-        );
-        core.notify_new_data_available();
-        let evt = rx.try_recv().unwrap();
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::NewDataAvailable { .. }
-        ));
-    }
-
-    #[test]
-    fn test_try_send_chunk_always_sends_regardless_of_notify() {
-        // ADR-021: try_send_chunk no longer checks notify_enabled.
-        // All events go through the single channel.
-        let (core, mut rx) = make_core_with_notify(false);
-        assert!(core.try_send_chunk(crate::agent::loop_::ChunkEvent::Done {
-            content: "test".to_string(),
-            message_id: "msg-1".to_string(),
-        }));
-        let evt = rx.try_recv().unwrap();
-        assert!(matches!(
-            evt.event,
-            crate::agent::loop_::ChunkEvent::Done { .. }
-        ));
-    }
-
-    // ── ADR-022 §9: Runtime role transition & flush tests ──────────────
-
-    use crate::conversation::{ConversationSession, SessionConfig};
-    use std::path::Path;
-    use tempfile::TempDir;
-
-    /// Helper: create an AgentCore + ConversationSession pair for ADR-022 tests.
-    fn make_core_with_session(
-        session_id: &str,
-    ) -> (
-        AgentCore,
-        ConversationSession,
-        TempDir,
-    ) {
-        let temp_dir = TempDir::new().unwrap();
-        let work_dir = temp_dir.path().to_path_buf();
-        let (tx, _rx) = mpsc::channel(16);
-        let manifest = acowork_core::AgentManifest::from_toml(
-            r#"
-            agent_id = "com.test.adr022"
-            version = "1.0.0"
-            name = "ADR-022 Test Agent"
-            description = "Test"
-            author = "test"
-            runtime_version = "0.1.0"
-            [llm]
-            provider = "mock"
-            model = "mock-model"
-            "#,
-        )
-        .unwrap();
-        let config = RuntimeConfig::default();
-        let provider = Arc::new(MockProvider::single_text("OK"));
-        let mut core = AgentCore::new(config, manifest, provider, vec![], Some(tx));
-        core.session_id = Some(session_id.to_string());
-        core.notify_enabled.store(true, Ordering::Relaxed);
-
-        let session = ConversationSession::new(
-            &work_dir,
-            session_id,
-            SessionConfig {
-                agent_id: "com.test.adr022".to_string(),
-                workspace_id: None,
-                model: None,
-                provider: None,
-            },
-            0,
-            Arc::new(AtomicUsize::new(0)),
-        )
-        .unwrap();
-
-        (core, session, temp_dir)
-    }
-
-    /// Helper: read all ConversationEntry lines from a session JSONL file
-    /// (skipping the metadata header on line 0).
-    fn read_jsonl_entries(
-        work_dir: &Path,
-        session_id: &str,
-    ) -> Vec<crate::conversation::ConversationEntry> {
-        let path = work_dir
-            .join("conversations")
-            .join(format!("{}.jsonl", session_id));
-        let content = std::fs::read_to_string(&path).unwrap();
-        content
-            .lines()
-            .skip(1) // skip metadata header
-            .map(|line| serde_json::from_str(line).unwrap())
-            .collect()
-    }
-
-    /// ADR-022 §9 test 3: Runtime role transition produces three single-role
-    /// JSONL lines.
-    ///
-    /// Simulates the event sequence:
-    ///   Content("我先看一下")          → assistant line
-    ///   ReasoningContent("分析路径")    → flush assistant, thought line
-    ///   Content("然后搜索")            → flush thought, assistant line
-    ///   Finished                       → flush assistant
-    ///
-    /// Expected JSONL:
-    ///   line 1: {"role":"assistant","content":"我先看一下"}
-    ///   line 2: {"role":"thought","content":"分析路径"}
-    ///   line 3: {"role":"assistant","content":"然后搜索"}
-    #[test]
-    fn test_adr022_role_transition_produces_single_role_lines() {
-        let session_id = "adr022-transition";
-        let (core, session, temp_dir) = make_core_with_session(session_id);
-
-        // Content("我先看一下") — starts assistant streaming line
-        core.flush_and_new_streaming_line("assistant", Some(&session));
-        core.append_streaming_delta("assistant", "我先看一下");
-
-        // ReasoningContent("分析路径") — role change, flush assistant, start thought
-        core.flush_and_new_streaming_line("thought", Some(&session));
-        core.append_streaming_delta("thought", "分析路径");
-
-        // Content("然后搜索") — role change, flush thought, start assistant
-        core.flush_and_new_streaming_line("assistant", Some(&session));
-        core.append_streaming_delta("assistant", "然后搜索");
-
-        // Finished — flush final assistant line
-        core.flush_streaming_line(Some(&session));
-
-        // Give writer thread time to process
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let entries = read_jsonl_entries(temp_dir.path(), session_id);
-        assert_eq!(
-            entries.len(),
-            3,
-            "Should have 3 single-role lines: assistant, thought, assistant"
-        );
-        assert_eq!(entries[0].role, "assistant");
-        assert_eq!(entries[0].content, "我先看一下");
-        assert_eq!(entries[1].role, "thought");
-        assert_eq!(entries[1].content, "分析路径");
-        assert_eq!(entries[2].role, "assistant");
-        assert_eq!(entries[2].content, "然后搜索");
-    }
-
-    /// ADR-022 §9 test 4: assistant text + tool_call preserves order.
-    ///
-    /// Simulates:
-    ///   Content("我来查一下")          → assistant line
-    ///   ToolCallStart                  → flush assistant, then tool_call JSONL row
-    ///
-    /// Expected JSONL:
-    ///   line 1: {"role":"assistant","content":"我来查一下"}
-    ///   line 2: {"role":"tool_call",...}
-    #[test]
-    fn test_adr022_assistant_text_then_tool_call_preserves_order() {
-        let session_id = "adr022-text-tool";
-        let (core, session, temp_dir) = make_core_with_session(session_id);
-
-        // Content("我来查一下") — assistant streaming line
-        core.flush_and_new_streaming_line("assistant", Some(&session));
-        core.append_streaming_delta("assistant", "我来查一下");
-
-        // ToolCallStart arrives — Runtime must flush assistant text first,
-        // then write tool_call row. Here we simulate the flush part.
-        core.flush_streaming_line(Some(&session));
-
-        // Simulate prepare_tool_calls writing the tool_call JSONL row
-        session.append_message(
-            "tool_call",
-            r#"{"name":"grep","arguments":{"pattern":"foo"}}"#,
-            None,
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let entries = read_jsonl_entries(temp_dir.path(), session_id);
-        assert_eq!(entries.len(), 2, "assistant text + tool_call = 2 lines");
-        assert_eq!(entries[0].role, "assistant");
-        assert_eq!(entries[0].content, "我来查一下");
-        assert_eq!(entries[1].role, "tool_call");
-    }
-
-    /// ADR-022 §9 test 5: Finished event with tool_calls flushes text first.
-    ///
-    /// Some providers don't send ToolCallStart during streaming; they return
-    /// complete tool_calls in the Finished response. Runtime must still flush
-    /// any accumulated assistant text before writing tool_call rows.
-    ///
-    /// Simulates:
-    ///   Content("开始搜索")  → assistant line accumulates
-    ///   Finished(response with tool_calls) → flush assistant, then tool_call rows
-    #[test]
-    fn test_adr022_finished_with_tool_calls_flushes_text_first() {
-        let session_id = "adr022-finished-tool";
-        let (core, session, temp_dir) = make_core_with_session(session_id);
-
-        // Content("开始搜索") — assistant streaming line accumulates
-        core.flush_and_new_streaming_line("assistant", Some(&session));
-        core.append_streaming_delta("assistant", "开始搜索");
-
-        // Finished arrives with tool_calls — prepare_tool_calls path:
-        // 1. flush_streaming_line (captures assistant text)
-        // 2. append_message tool_call rows
-        core.flush_streaming_line(Some(&session));
-        session.append_message(
-            "tool_call",
-            r#"{"name":"search","arguments":{"q":"test"}}"#,
-            None,
-        );
-
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
-        let entries = read_jsonl_entries(temp_dir.path(), session_id);
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[0].role, "assistant");
-        assert_eq!(entries[0].content, "开始搜索");
-        assert_eq!(entries[1].role, "tool_call");
-    }
-
-    /// ADR-022 invariant: ensure_streaming_line does NOT overwrite role.
-    ///
-    /// If a caller forgets to call flush_and_new_streaming_line and directly
-    /// calls append_streaming_delta with a different role, the streaming line
-    /// keeps its original role. In debug builds this triggers a debug_assert.
-    ///
-    /// This test verifies the debug assertion fires (expected behavior — we
-    /// want to catch caller bugs loudly during development). In release builds
-    /// the assertion is compiled out and the role stays unchanged silently.
-    #[test]
-    #[should_panic(expected = "ADR-022 violation: append_streaming_delta called with role")]
-    fn test_adr022_ensure_streaming_line_does_not_overwrite_role() {
-        let (core, _session, _temp_dir) = make_core_with_session("adr022-no-overwrite");
-
-        // Create an assistant streaming line
-        core.append_streaming_delta("assistant", "hello");
-
-        // Attempt to append thought content without flushing first.
-        // This is a caller bug — debug_assert_eq! must fire.
-        core.append_streaming_delta("thought", "should be thought but stays assistant");
     }
 }

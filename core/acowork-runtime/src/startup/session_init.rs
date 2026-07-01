@@ -125,14 +125,12 @@ pub(crate) async fn phase_b_init_session(
     // ── Step 9 (Gateway mode): Build AgentCore ───────────────────────
     let provider = ctx.provider.clone();
     let active_tools = ctx.active_tools.clone();
-    let chunk_tx = ctx.chunk_tx.clone();
 
     let mut core = Arc::new(AgentCore::new(
         config.clone(),
         ctx.loaded.manifest.clone(),
         provider,
         active_tools,
-        chunk_tx,
     ));
 
     // Inject global provider list, key vault, and memory into AgentCore.
@@ -176,10 +174,6 @@ pub(crate) async fn phase_b_init_session(
         c.memory_session = Some(ctx.memory_session.clone());
         c.embedding_provider = Some(ctx.emb_provider.clone());
         c.init_memory_store(work_dir_path);
-
-        // ADR-022: Adopt the initial session's committed_lines counter
-        // so the writer thread and AgentCore share the same atomic.
-        c.committed_lines = committed_lines.clone();
     }
 
     // ── Step 9: Create SessionManager ───────────────────────────────

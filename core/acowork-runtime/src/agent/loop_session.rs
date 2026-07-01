@@ -48,7 +48,7 @@ impl super::loop_::AgentLoop {
             .unwrap_or(DEFAULT_TEMPERATURE);
         // Emit chunk event to Gateway → frontend
         if !self
-            .core
+            .session_core
             .try_send_chunk(super::loop_::ChunkEvent::SessionStateChanged {
                 status: status.clone(),
                 model: self.session.model().map(|s| s.to_string()),
@@ -65,14 +65,14 @@ impl super::loop_::AgentLoop {
             );
         }
         // Update watch channel for SessionHandle reads
-        if let Some(ref tx) = self.core.status_tx {
+        if let Some(ref tx) = self.session_core.status_tx {
             let _ = tx.send(status.clone());
         }
         // Update shared snapshot slot for Gateway pull API
-        if let Some(ref slot) = self.core.snapshot_slot {
+        if let Some(ref slot) = self.session_core.snapshot_slot {
             let status_json = serde_json::to_string(&status).unwrap_or_else(|_| r#""idle""#.to_string());
             let snapshot = SessionStateSnapshot {
-                session_id: self.core.session_id.clone().unwrap_or_default(),
+                session_id: self.session_core.session_id.clone().unwrap_or_default(),
                 status_json,
                 model: self.session.model().map(|s| s.to_string()),
                 provider: self.session.provider().map(|s| s.to_string()),
@@ -298,12 +298,12 @@ impl super::loop_::AgentLoop {
         // 2. No streaming flush occurred (non-streaming provider, or all
         //    content arrived in the Finished event). Use the legacy path:
         //    persist_think_to_conversation + strip_think_block.
-        let streamed = self.core.streaming_flush_count.load(Ordering::Relaxed) > 0;
+        let streamed = self.session_core.streaming_flush_count.load(Ordering::Relaxed) > 0;
 
         if streamed {
             // Path 1: Content was already flushed on role transitions.
             // Flush the last streaming line (e.g., final assistant segment).
-            self.core.flush_streaming_line(self.session.conversation.as_ref());
+            self.session_core.flush_streaming_line(self.session.conversation.as_ref());
             tracing::debug!(
                 iteration,
                 "ADR-022: streaming flush path — skipping legacy persistence"
@@ -315,20 +315,10 @@ impl super::loop_::AgentLoop {
             if !assistant_text.is_empty() {
                 conversation.append_message("assistant", &assistant_text, None);
             }
-            // Update cached total_lines: persist_think_to_conversation writes
-            // 0 or 1 entry (thought), plus 1 for assistant. These bypass
-            // flush_streaming_line(), so we must increment manually.
-            let thought_written =
-                response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
-                || extract_think_block(&content).is_some();
-            let assistant_written = !assistant_text.is_empty();
-            let entries_written =
-                (if thought_written { 1 } else { 0 }) + (if assistant_written { 1 } else { 0 });
-            self.core.increment_total_lines(entries_written);
 
             // ADR-021: Remove streaming line after legacy persistence
             // (handle_text_response already wrote thought + assistant to JSONL)
-            self.core.remove_streaming_line();
+            self.session_core.remove_streaming_line();
         }
 
         self.session.history.append(ChatMessage {

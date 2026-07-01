@@ -165,6 +165,12 @@ impl DebugObserverSlot {
         DebugObserverSlot::Dev(impl_)
     }
 
+    // Clone always returns Production — sessions never clone a Dev observer.
+    // This matches the old clone_for_session behavior.
+    pub fn clone_production(&self) -> Self {
+        DebugObserverSlot::Production
+    }
+
     // ── Trait-delegated methods ──
 
     /// Delegate [`DebugObserver::on_iteration_start`].

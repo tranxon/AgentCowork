@@ -72,7 +72,7 @@ impl AgentLoop {
         let approval_handle = self.approval_handle.clone();
         let approval_gate = self.core.approval_gate.clone();
         let shell_threshold = *self.core.shell_approval_threshold();
-        let use_gateway_approval = self.core.approval_handle.is_some();
+        let use_gateway_approval = self.session_core.approval_handle.is_some();
         tracing::info!(
             use_gateway_approval,
             has_approval_gate = approval_gate.is_some(),
@@ -89,7 +89,7 @@ impl AgentLoop {
                 let tx = tx.clone();
                 let approval_handle = approval_handle.clone();
                 let approval_gate = approval_gate.clone();
-                let work_dir = self.core.current_work_dir.clone();
+                let work_dir = self.session_core.current_work_dir.clone();
                 tokio::spawn(async move {
                     // Shell risk check: if this is a shell command and risk >= threshold,
                     // request user approval before execution.
@@ -211,7 +211,7 @@ impl AgentLoop {
                     // Urgent stop via Notify — fired by Gateway gRPC
                     // (Stop / Restart-in-Debug) for immediate tool cancellation.
                     // Takes priority over the 500ms poll fallback.
-                    _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                    _ = self.session_core.urgent_stop.as_ref().unwrap().notified() => {
                         match self.poll_control() {
                             c @ (ControlDecision::Stop | ControlDecision::Pause) => {
                                 tracing::info!(signal = ?c, "Control signal via Notify — aborting tools");
@@ -264,7 +264,7 @@ impl AgentLoop {
                         }
                         break;
                     }
-                    _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                    _ = self.session_core.urgent_stop.as_ref().unwrap().notified() => {
                         match self.poll_control() {
                             c @ (ControlDecision::Stop | ControlDecision::Pause) => {
                                 tracing::info!(signal = ?c, "Control signal via Notify — aborting tools");
@@ -631,7 +631,7 @@ impl AgentLoop {
         // This final flush captures any remaining content in the last
         // streaming line (e.g., the assistant text that preceded the
         // tool_call).
-        let flushed = self.core.flush_streaming_line(self.session.conversation.as_ref());
+        let flushed = self.session_core.flush_streaming_line(self.session.conversation.as_ref());
         tracing::info!(
             flushed_role = flushed.as_ref().map(|c| {
                 // We can't easily get the role here, but we can log content length
@@ -644,10 +644,10 @@ impl AgentLoop {
         // ADR-022: Only use legacy persistence if no streaming flush occurred.
         // When streaming already flushed thought content on role transitions,
         // persist_think_to_conversation would create a duplicate entry.
-        let streamed = self.core.streaming_flush_count.load(Ordering::Relaxed) > 0;
+        let streamed = self.session_core.streaming_flush_count.load(Ordering::Relaxed) > 0;
         tracing::info!(
             streamed,
-            streaming_flush_count = self.core.streaming_flush_count.load(Ordering::Relaxed),
+            streaming_flush_count = self.session_core.streaming_flush_count.load(Ordering::Relaxed),
             has_reasoning = response.reasoning_content.is_some(),
             reasoning_len = response.reasoning_content.as_ref().map(|r| r.len()).unwrap_or(0),
             "ADR-022 prepare_tool_calls: streamed={}",
@@ -660,12 +660,6 @@ impl AgentLoop {
             // or  thinking... response tags without streaming them.
             if let Some(ref conversation) = self.session.conversation {
                 crate::agent::loop_session::persist_think_to_conversation(conversation, response);
-                let thought_written =
-                    response.reasoning_content.as_ref().map(|r| !r.is_empty()).unwrap_or(false)
-                    || crate::agent::loop_session::extract_think_block(&response.content).is_some();
-                if thought_written {
-                    self.core.increment_total_lines(1);
-                }
             }
         }
 
@@ -697,10 +691,6 @@ impl AgentLoop {
                     "tool_call_id": tc.id,
                 });
                 conversation.append_message("tool_call", &tc.function.arguments, Some(metadata));
-            }
-            // Bypasses flush_streaming_line — increment cached total_lines.
-            if !deduped_calls.is_empty() {
-                self.core.increment_total_lines(deduped_calls.len());
             }
         }
 
@@ -850,10 +840,6 @@ impl AgentLoop {
                     "tool_call_id": tc.id,
                 });
                 conversation.append_message("tool_result", result_content, Some(metadata));
-            }
-            // Bypasses flush_streaming_line — increment cached total_lines.
-            if !tool_results.is_empty() {
-                self.core.increment_total_lines(tool_results.len());
             }
         }
     }

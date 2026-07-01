@@ -182,7 +182,7 @@ impl AgentLoop {
             );
 
             // Notify frontend that compaction has started (both manual and auto paths).
-            let _ = self.core.try_send_chunk(ChunkEvent::CompactingStarted);
+            let _ = self.session_core.try_send_chunk(ChunkEvent::CompactingStarted);
 
             // Build combined text from history for model-aware token counting.
             let combined_text: String =
@@ -315,7 +315,7 @@ impl AgentLoop {
             // the "compacting..." indicator (both success and error paths).
             // Also send updated context usage so the frontend shows the new
             // token count and percentage after compaction.
-            let _ = self.core.try_send_chunk(ChunkEvent::CompactingEnded);
+            let _ = self.session_core.try_send_chunk(ChunkEvent::CompactingEnded);
 
             // Compute and send updated context usage after compaction.
             let caps = self.core.get_model_capabilities(model_name);
@@ -337,7 +337,7 @@ impl AgentLoop {
                     usable_context: usable,
                     usage_percent,
                 };
-                let _ = self.core.try_send_chunk(ChunkEvent::ContextUsage(ctx_info));
+                let _ = self.session_core.try_send_chunk(ChunkEvent::ContextUsage(ctx_info));
             }
         } else if usage_percent >= 95.0 {
             // Stage 3: emergency trim without attempting compaction
@@ -576,7 +576,7 @@ impl AgentLoop {
             let model_caps = self.get_model_capabilities(current_model);
             let max_output_limit = self.core.max_output_tokens_limit_for_model(current_model);
             tracing::debug!(
-                has_chunk_tx = self.core.chunk_tx.is_some(),
+                has_chunk_tx = self.session_core.chunk_tx.is_some(),
                 has_model_caps = model_caps.is_some(),
                 has_usage = true,
                 "ContextUsage: checking preconditions"
@@ -620,7 +620,7 @@ impl AgentLoop {
                 }
 
                 if !self
-                    .core
+                    .session_core
                     .try_send_chunk(ChunkEvent::ContextUsage(ctx_usage))
                 {
                     tracing::debug!(
@@ -644,7 +644,7 @@ impl AgentLoop {
                     "ContextUsage: NOT sent — missing model capabilities for '{}'",
                     current_model
                 );
-                let _ = self.core.try_send_chunk(ChunkEvent::Error {
+                let _ = self.session_core.try_send_chunk(ChunkEvent::Error {
                     user_message: msg,
                     detail: String::new(),
                     error_type: "ContextOverflow".to_string(),

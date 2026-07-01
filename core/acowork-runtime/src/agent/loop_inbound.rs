@@ -316,16 +316,14 @@ impl AgentLoop {
             let assistant_text = strip_think_block(content);
             if !assistant_text.is_empty() {
                 conversation.append_message("assistant", &assistant_text, None);
-                // Bypasses flush_streaming_line — increment cached total_lines.
-                self.core.increment_total_lines(1);
             }
         }
 
         // ADR-021: Remove streaming line after stop persistence
-        self.core.remove_streaming_line();
+        self.session_core.remove_streaming_line();
 
         // Notify frontend via chunk channel
-        let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+        let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
             content: content.to_string(),
         });
 

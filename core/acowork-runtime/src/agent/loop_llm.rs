@@ -88,7 +88,7 @@ impl AgentLoop {
         // Reset the streaming flush counter at the start of each stream.
         // handle_text_response / prepare_tool_calls check this counter
         // to decide whether to skip legacy persistence paths.
-        self.core.reset_streaming_flush_count();
+        self.session_core.reset_streaming_flush_count();
 
         // ToolCallChunk accumulation buffer: indexed by tool_call sequential index
         let mut tool_call_args_buffer: HashMap<u64, String> = HashMap::new();
@@ -117,8 +117,8 @@ impl AgentLoop {
                                 ControlDecision::Stop => {
                                     tracing::info!("LLM stream stopped by user — aborting");
                                     // ADR-021: Flush partial content to JSONL before stopping
-                                    self.core.flush_streaming_line(self.session.conversation.as_ref());
-                                    let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+                                    self.session_core.flush_streaming_line(self.session.conversation.as_ref());
+                                    let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
                                         content: accumulated_content.clone(),
                                     });
                                     return Ok(build_stopped_response(
@@ -130,8 +130,8 @@ impl AgentLoop {
                                     tracing::info!("LLM stream paused by debug — aborting");
                                     self.pending_interrupt = Some(ControlDecision::Pause);
                                     // ADR-021: Flush partial content to JSONL before pausing
-                                    self.core.flush_streaming_line(self.session.conversation.as_ref());
-                                    let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+                                    self.session_core.flush_streaming_line(self.session.conversation.as_ref());
+                                    let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
                                         content: accumulated_content.clone(),
                                     });
                                     return Ok(build_stopped_response(
@@ -155,12 +155,11 @@ impl AgentLoop {
                     // assistant line. The provider layer already split think
                     // tags into separate ReasoningContent events, so a Content
                     // event here means we are in assistant mode.
-                    self.core.flush_and_new_streaming_line(
-                        "assistant",
-                        self.session.conversation.as_ref(),
+                    self.session_core.flush_and_new_streaming_line(
+                        "assistant", self.session.conversation.as_ref(),
                     );
-                    self.core.append_streaming_delta("assistant", &chunk);
-                    self.core.notify_new_data_available();
+                    self.session_core.append_streaming_delta("assistant", &chunk);
+                    self.session_core.notify_new_data_available();
                 }
                 StreamEvent::ReasoningContent(chunk) => {
                     // Record start of reasoning on first chunk
@@ -173,12 +172,11 @@ impl AgentLoop {
                     // ADR-022: Role transition. If we were in an assistant
                     // streaming line, flush it to JSONL and start a new
                     // thought line.
-                    self.core.flush_and_new_streaming_line(
-                        "thought",
-                        self.session.conversation.as_ref(),
+                    self.session_core.flush_and_new_streaming_line(
+                        "thought", self.session.conversation.as_ref(),
                     );
-                    self.core.append_streaming_delta("thought", &chunk);
-                    self.core.notify_new_data_available();
+                    self.session_core.append_streaming_delta("thought", &chunk);
+                    self.session_core.notify_new_data_available();
                 }
                 StreamEvent::ToolCallStart(tc) => {
                     // Mark reasoning finished when tool calls start after reasoning
@@ -284,7 +282,7 @@ impl AgentLoop {
                 StreamEvent::Error(e) => {
                     // ADR-021: Flush partial content to JSONL on error
                     // so the user can see what the AI was trying to say
-                    self.core.flush_streaming_line(self.session.conversation.as_ref());
+                    self.session_core.flush_streaming_line(self.session.conversation.as_ref());
 
                     // Check for context overflow and attempt recovery.
                     // Use structured error_type instead of string matching.
@@ -342,7 +340,7 @@ impl AgentLoop {
                 }
                 // Urgent stop via Notify — fired by Gateway gRPC
                 // for immediate LLM stream cancellation.
-                _ = self.core.urgent_stop.as_ref().unwrap().notified() => {
+                _ = self.session_core.urgent_stop.as_ref().unwrap().notified() => {
                     match self.poll_control() {
                         ControlDecision::Stop => {
                             tracing::info!("LLM stream stopped via Notify — aborting");
@@ -354,8 +352,8 @@ impl AgentLoop {
                         ControlDecision::Continue => {}
                     }
                     // ADR-021: Flush partial content to JSONL before stopping
-                    self.core.flush_streaming_line(self.session.conversation.as_ref());
-                    let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+                    self.session_core.flush_streaming_line(self.session.conversation.as_ref());
+                    let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
                         content: accumulated_content.clone(),
                     });
                     return Ok(build_stopped_response(
@@ -374,8 +372,8 @@ impl AgentLoop {
                                 "LLM stream stopped by user during idle period — aborting"
                             );
                             // ADR-021: Flush partial content to JSONL before stopping
-                            self.core.flush_streaming_line(self.session.conversation.as_ref());
-                            let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+                            self.session_core.flush_streaming_line(self.session.conversation.as_ref());
+                            let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
                                 content: accumulated_content.clone(),
                             });
                             return Ok(build_stopped_response(
@@ -387,8 +385,8 @@ impl AgentLoop {
                             tracing::info!("LLM stream paused during idle period — aborting");
                             self.pending_interrupt = Some(ControlDecision::Pause);
                             // ADR-021: Flush partial content to JSONL before pausing
-                            self.core.flush_streaming_line(self.session.conversation.as_ref());
-                            let _ = self.core.try_send_chunk(ChunkEvent::Stopped {
+                            self.session_core.flush_streaming_line(self.session.conversation.as_ref());
+                            let _ = self.session_core.try_send_chunk(ChunkEvent::Stopped {
                                 content: accumulated_content.clone(),
                             });
                             return Ok(build_stopped_response(

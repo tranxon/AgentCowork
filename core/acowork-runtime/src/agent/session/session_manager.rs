@@ -206,10 +206,13 @@ pub struct SessionManager {
     /// Notify and wakes only that session's tokio::select! branches.
     urgent_stops: HashMap<String, Arc<Notify>>,
     /// Per-session committed_lines counter, shared between the writer thread
-    /// (ConversationWriter) and the session's AgentCore. Each session gets its
+    /// (ConversationWriter) and the session's SessionCore. Each session gets its
     /// own independent counter; `committed_lines_for(session_id)` returns the
     /// count for the correct JSONL file.
     session_committed_lines: HashMap<String, Arc<std::sync::atomic::AtomicUsize>>,
+    /// Shared streaming lines map (keyed by session_id), cloned into each
+    /// SessionCore and used by the HTTP handler for `read_messages_since`.
+    streaming_lines: crate::conversation::StreamingStateMap,
     /// Pending embedding config from Gateway EmbeddingConfigUpdate.
     /// Stored for persistence and used on next Agent restart.
     pub pending_embed_config: Option<PendingEmbedConfig>,
@@ -233,6 +236,7 @@ impl SessionManager {
             debug_controllers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             urgent_stops: HashMap::new(),
             session_committed_lines: HashMap::new(),
+            streaming_lines: Arc::new(std::sync::RwLock::new(HashMap::new())),
             pending_embed_config: None,
         }
     }
@@ -377,6 +381,7 @@ impl SessionManager {
             self.runtime_overrides.clone(),
             Some(initial_work_dir),
             session_committed_lines,
+            self.streaming_lines.clone(),
         );
 
         // ADR-014: Create watch channel for session status
@@ -1234,14 +1239,7 @@ After installation, ask the user to re-enable the MCP server.",
     /// Returns a reference to the `Arc<RwLock<HashMap<SessionId, StreamingLine>>>`
     /// so the CLI HTTP handler can call `read_messages_since()`.
     pub fn streaming_lines(&self) -> crate::conversation::StreamingStateMap {
-        self.core.streaming_lines.clone()
-    }
-
-    /// ADR-021: Get the cached total JSONL line count for a session.
-    /// Returns 0 if not yet initialized (cold start — `read_messages_since`
-    /// will scan the file as fallback when passed 0).
-    pub fn total_lines(&self) -> usize {
-        self.core.total_lines.load(std::sync::atomic::Ordering::Relaxed)
+        self.streaming_lines.clone()
     }
 
     /// ADR-022: Per-session committed line count — updated by writer thread
