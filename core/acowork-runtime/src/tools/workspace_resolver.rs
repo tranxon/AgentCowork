@@ -8,9 +8,9 @@
 //!   `SessionManager` per session.
 //!
 //! - **SessionManager**: owns per-session `current_dir` mapping
-//!   (`session_id → workspace_id`). Tool execution queries
-//!   `SessionManager::current_dir_for(session_id)` instead of
-//!   `WorkspaceResolver::current_dir()`.
+//!   (`session_id → workspace_id`). Tool execution reads
+//!   `SessionHandle::current_work_dir` directly (shared Arc with
+//!   `SessionCore`), bypassing `WorkspaceResolver` re-resolution.
 //!
 //! ## Key APIs
 //!

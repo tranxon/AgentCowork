@@ -1731,13 +1731,11 @@ async fn process_gateway_recv(
                         session_manager.set_session_workspace_with_resolver(
                             &session_id,
                             "__agent_home__",
-                            &resolver_guard,
                         );
                     } else {
                         session_manager.set_session_workspace_with_resolver(
                             &session_id,
                             &workspace_id,
-                            &resolver_guard,
                         );
                     }
 

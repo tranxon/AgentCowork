@@ -332,10 +332,11 @@ impl SessionCore {
             // a different role, discard it so ensure_streaming_line won't hit
             // the role-mismatch assertion.
             let mut map = self.streaming_lines.write().unwrap();
-            if let Some(sl) = map.get(&sid) {
-                if sl.role != new_role && sl.accumulated_content.is_empty() {
-                    map.remove(&sid);
-                }
+            if let Some(sl) = map.get(&sid)
+                && sl.role != new_role
+                && sl.accumulated_content.is_empty()
+            {
+                map.remove(&sid);
             }
         }
 

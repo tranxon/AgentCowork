@@ -59,7 +59,7 @@ pub struct SessionHandle {
         Arc<std::sync::RwLock<Option<SessionStateSnapshot>>>,
     /// Per-session workspace ID. Single source of truth, shared with [`SessionCore`].
     /// Written synchronously by [`SessionManager::set_session_workspace`],
-    /// read by `list_sessions` and `current_dir_for`.
+    /// read by `list_sessions` and `session_workspace_id`.
     pub(crate) workspace_id: Arc<RwLock<String>>,
     /// Resolved workspace directory path, shared with [`SessionCore`].
     /// Written synchronously by SessionManager alongside `workspace_id`,

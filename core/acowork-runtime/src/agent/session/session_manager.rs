@@ -649,6 +649,7 @@ impl SessionManager {
         // Clean up per-session mappings
         self.pending_workspaces.remove(session_id);
         self.urgent_stops.remove(session_id);
+        self.session_committed_lines.remove(session_id);
 
         tracing::info!(session_id = %session_id, "SessionManager: closed session");
         Ok(())
@@ -694,6 +695,7 @@ impl SessionManager {
                     let was_finished = handle.join_handle.is_finished();
                     self.sessions.remove(session_id);
                     self.urgent_stops.remove(session_id);
+                    self.session_committed_lines.remove(session_id);
                     tracing::warn!(
                         session_id = %session_id,
                         task_finished = was_finished,
@@ -1358,6 +1360,7 @@ After installation, ask the user to re-enable the MCP server.",
         for id in finished {
             tracing::debug!(session_id = %id, "Reaping finished session handle");
             self.sessions.remove(&id);
+            self.session_committed_lines.remove(&id);
         }
     }
 
@@ -1411,6 +1414,7 @@ After installation, ask the user to re-enable the MCP server.",
             if let Some(handle) = self.sessions.remove(session_id) {
                 let _ = handle.inbound_tx.send(SessionMessage::Close).await;
                 self.urgent_stops.remove(session_id);
+                self.session_committed_lines.remove(session_id);
                 tracing::info!(session_id = %session_id, "Evicted idle session from memory (idle > {:?})", idle_timeout);
             }
         }
@@ -1467,16 +1471,16 @@ After installation, ask the user to re-enable the MCP server.",
         }
     }
 
-    /// Set the session workspace and send the resolved workspace path
-    /// for tool execution. Kept for API compatibility with callers that
-    /// already hold a resolver guard.
+    /// Set the session workspace.
+    ///
+    /// Convenience alias for callers that already hold a resolver guard.
+    /// Delegates to [`set_session_workspace`] which handles resolver
+    /// resolution internally.
     pub fn set_session_workspace_with_resolver(
         &mut self,
         session_id: &str,
         workspace_id: &str,
-        _resolver: &WorkspaceResolver,
     ) {
-        // set_session_workspace already handles resolver internally
         self.set_session_workspace(session_id, workspace_id);
     }
 
@@ -1488,30 +1492,6 @@ After installation, ask the user to re-enable the MCP server.",
             .get(session_id)
             .map(|h| h.workspace_id.read().unwrap().clone())
             .unwrap_or_else(|| "__agent_home__".to_string())
-    }
-
-    /// Get the current working directory path for a session.
-    /// Returns `(path, is_agent_home)`.
-    pub fn current_dir_for(
-        &self,
-        session_id: &str,
-        resolver: &WorkspaceResolver,
-    ) -> (String, bool) {
-        let ws_id = self.session_workspace_id(session_id);
-        if ws_id == "__agent_home__" {
-            return (resolver.agent_home().to_string(), true);
-        }
-        match resolver.find_by_id(&ws_id) {
-            Some(dir) => (dir.path.clone(), false),
-            None => {
-                tracing::warn!(
-                    session_id = %session_id,
-                    workspace_id = %ws_id,
-                    "Session workspace not found in resolver, falling back to agent home"
-                );
-                (resolver.agent_home().to_string(), true)
-            }
-        }
     }
 
     /// Format and send workspace context to a specific session only.
@@ -1581,6 +1561,11 @@ After installation, ask the user to re-enable the MCP server.",
             if let Some(handle) = self.sessions.get(&sid) {
                 *handle.workspace_id.write().unwrap() = "__agent_home__".to_string();
                 *handle.current_work_dir.write().unwrap() = Some(resolver.agent_home().to_string());
+                // Persist the fallback to JSONL so cold restarts don't
+                // re-read the deleted workspace_id from metadata.
+                let _ = handle.send(SessionMessage::SetWorkspaceId {
+                    workspace_id: "__agent_home__".to_string(),
+                });
             }
             tracing::info!(
                 session_id = %sid,

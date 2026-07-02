@@ -1385,7 +1385,7 @@ export function ChatPanel() {
                       {t("chatPanel.taskList", { completed, total })}
                       {!isAllCompleted && currentTodo && (
                         <>
-                          {"   "}
+                          <span className="inline-block w-8"/>
                           <span className="normal-case text-zinc-500 dark:text-zinc-400">
                             {t("chatPanel.currentTask", { current: currentTodo.content })}
                           </span>

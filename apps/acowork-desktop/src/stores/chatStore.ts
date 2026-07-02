@@ -1304,8 +1304,18 @@ export const useChatStore = create<ChatStore>((set, get) => ({
           // 2) Reconcile placeholders. Drop every streaming placeholder that
           //    does not match the current streaming line — those lines have
           //    been flushed to JSONL (or streaming stopped).
+          //
+          //    NOTE: currentPlaceholderId is derived from `streaming` existing
+          //    (not from `streaming.content` being truthy) because the backend
+          //    returns delta content — when no new characters have arrived since
+          //    the last poll, `streaming.content` is an empty string "".
+          //    Using `streaming.content` as a guard would set currentPlaceholderId
+          //    to null on empty-delta polls, causing the filter below to delete
+          //    the existing streaming placeholder and permanently lose its
+          //    accumulated content when the next delta arrives (regression:
+          //    assistant message starts from the middle or flashes empty).
           const currentPlaceholderId =
-            streaming && streaming.content
+            streaming
               ? `${placeholderPrefix}${streaming.line}`
               : null;
           messages = messages.filter(
@@ -1316,6 +1326,9 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
           // 3) Create or grow the current streaming placeholder. Its type is
           //    fixed from the role at creation time and never changed after.
+          //    When streaming.content is empty (no new delta), the existing
+          //    placeholder is preserved by the filter above — we skip the
+          //    append to avoid adding an empty string.
           if (streaming && streaming.content && currentPlaceholderId) {
             const idx = messages.findIndex((m) => m.id === currentPlaceholderId);
             if (idx >= 0) {
