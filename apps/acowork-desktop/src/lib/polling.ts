@@ -123,6 +123,14 @@ export class PollingManager {
     }
 
     // Update line number from the notification.
+    // When totalLines increases, the previous streaming line has been flushed
+    // to JSONL (e.g., role transition from thought→assistant) and a new
+    // streaming line has started. The old charOffset belongs to the flushed
+    // line and must be reset to 0 — otherwise the new line's first poll skips
+    // its opening characters, causing the "first line truncated" bug.
+    if (totalLines > this.lineNumber) {
+      this.charOffset = 0;
+    }
     if (totalLines > 0) {
       this.lineNumber = totalLines;
     }

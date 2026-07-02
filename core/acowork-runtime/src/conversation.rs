@@ -2106,17 +2106,25 @@ pub fn read_messages_since(
     };
     let streaming = streaming.map(|sl| {
         let current_len = sl.accumulated_content.chars().count();
-        // ADR-022: If the frontend's `line_number` is behind this streaming
-        // line's own `line_number`, then the `line_char_offset` it sent
-        // belonged to a *previous* streaming line that has since been flushed
-        // to JSONL (role transition triggers flush + new line). Applying that
-        // stale offset here would skip the beginning of this fresh line and
-        // permanently drop its opening characters. In that case the offset is
-        // meaningless for this line — read it from the start.
+        // ADR-022: Detect stale `line_char_offset` from a previous streaming
+        // line that has since been flushed to JSONL (role transition triggers
+        // flush + new line). Applying a stale offset here would skip the
+        // beginning of this fresh line and permanently drop its opening
+        // characters.
+        //
+        // Case 1: `line_number < sl.line_number` — the frontend's line number
+        //   is behind, so the offset belongs to a previous (now flushed) line.
+        // Case 2: `line_char_offset > current_len` — the offset exceeds the
+        //   current content length, which is impossible for this line (the
+        //   offset is always set to `current_len` in our response). It must
+        //   be from a previous (longer) line that was flushed.
+        // In both cases, reset to 0 to return the full content of this line.
         let effective_offset = if line_number < sl.line_number {
             0
+        } else if line_char_offset > current_len {
+            0
         } else {
-            line_char_offset.min(current_len)
+            line_char_offset
         };
         let delta_content: String = sl.accumulated_content.chars().skip(effective_offset).collect();
         StreamingLineDelta {
@@ -3074,5 +3082,35 @@ mod tests {
             "stale offset from a flushed line must not truncate the new streaming line"
         );
         assert_eq!(streaming.char_offset, "reasoning...".chars().count());
+    }
+
+    /// ADR-022 regression: when the frontend's `line_number` matches the
+    /// streaming line's `line_number` but `line_char_offset` exceeds the
+    /// current content length (stale offset from a previous, longer streaming
+    /// line that was flushed), the offset must be reset to 0 — not clamped
+    /// to `current_len` (which would return an empty delta and lose content).
+    #[test]
+    fn test_read_since_streaming_stale_offset_exceeds_content() {
+        let dir = TempDir::new().unwrap();
+        let entries = vec![
+            make_entry("1", "user", "hi"),
+            make_entry("2", "assistant", "previous long assistant text"),
+        ];
+        let path = write_test_jsonl(&dir, "sess-stale-exceeds", &entries);
+        // New streaming line is short (only 5 chars).
+        let map = make_streaming_map("sess-stale-exceeds", 3, "assistant", "Hello");
+
+        // Frontend sends line_number=3 (matches streaming line) with a stale
+        // offset of 100 that belonged to the previous (longer) assistant line.
+        // The new line only has 5 chars, so offset 100 is clearly stale.
+        let result =
+            read_messages_since(&path, 3, 100, &map, "sess-stale-exceeds", 0).unwrap();
+        let streaming = result.streaming.expect("streaming line expected");
+        assert_eq!(streaming.line, 3);
+        assert_eq!(
+            streaming.content, "Hello",
+            "stale offset exceeding current content length must return full content"
+        );
+        assert_eq!(streaming.char_offset, "Hello".chars().count());
     }
 }
