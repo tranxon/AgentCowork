@@ -2119,9 +2119,7 @@ pub fn read_messages_since(
         //   offset is always set to `current_len` in our response). It must
         //   be from a previous (longer) line that was flushed.
         // In both cases, reset to 0 to return the full content of this line.
-        let effective_offset = if line_number < sl.line_number {
-            0
-        } else if line_char_offset > current_len {
+        let effective_offset = if line_number < sl.line_number || line_char_offset > current_len {
             0
         } else {
             line_char_offset

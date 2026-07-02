@@ -62,8 +62,8 @@ impl AgentLoop {
         // Phase 1: Execute tools in parallel with spawn + select + deadline
         let all_indices: Vec<usize> = (0..tool_calls.len()).collect();
 
-        let tool_timeout = Duration::from_millis(self.core.config.tool_timeout_ms);
-        let iteration_timeout = Duration::from_millis(self.core.config.iteration_timeout_ms);
+        let tool_timeout = Duration::from_millis(self.core.config.timeouts.tool_timeout_ms);
+        let iteration_timeout = Duration::from_millis(self.core.config.timeouts.iteration_timeout_ms);
 
         // Channel to collect results from spawned tasks
         let (tx, mut rx) = mpsc::channel::<(usize, String)>(tool_calls.len());

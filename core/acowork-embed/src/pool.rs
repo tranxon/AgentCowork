@@ -91,6 +91,7 @@ pub fn l2_normalize(vec: &mut [f32]) {
 mod tests {
     use super::*;
 
+    #[expect(dead_code)]
     fn make_hidden_state(seq_len: usize, dim: usize) -> Vec<Vec<f32>> {
         (0..seq_len).map(|i| vec![i as f32 + 0.1; dim]).collect()
     }

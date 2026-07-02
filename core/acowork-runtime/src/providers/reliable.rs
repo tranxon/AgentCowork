@@ -77,6 +77,8 @@ pub struct RetryConfig {
     pub backoff: BackoffStrategy,
     /// Maximum wait time in milliseconds
     pub max_wait_ms: u64,
+    /// Whether server-suggested Retry-After should override computed backoff.
+    pub honor_retry_after: bool,
 }
 
 impl Default for RetryConfig {
@@ -85,6 +87,20 @@ impl Default for RetryConfig {
             max_attempts: 3,
             backoff: BackoffStrategy::Exponential { base_ms: 1000 },
             max_wait_ms: 10000,
+            honor_retry_after: true,
+        }
+    }
+}
+
+impl From<&acowork_core::RetryConfig> for RetryConfig {
+    fn from(config: &acowork_core::RetryConfig) -> Self {
+        Self {
+            max_attempts: config.max_attempts,
+            backoff: BackoffStrategy::Exponential {
+                base_ms: config.backoff_base_ms,
+            },
+            max_wait_ms: config.backoff_cap_ms,
+            honor_retry_after: config.honor_retry_after,
         }
     }
 }
@@ -313,9 +329,10 @@ impl ReliableProvider {
     /// Prefers the server-suggested `retry_after_ms` (from HTTP Retry-After header)
     /// over the backoff strategy. Applies cap via `max_wait_ms` and adds ±25% jitter.
     fn compute_wait(&self, attempt: u32, retry_after_ms: Option<u64>) -> Duration {
-        // Prefer server-suggested wait time; fall back to backoff strategy
-        let base_ms = if let Some(ms) = retry_after_ms {
-            ms
+        // Prefer server-suggested wait time when configured; otherwise fall back to backoff strategy.
+        let base_ms = if self.retry_config.honor_retry_after {
+            retry_after_ms
+                .unwrap_or_else(|| self.retry_config.backoff.wait_duration(attempt).as_millis() as u64)
         } else {
             self.retry_config.backoff.wait_duration(attempt).as_millis() as u64
         };
@@ -491,6 +508,21 @@ mod tests {
         assert_eq!(backoff.wait_duration(0), Duration::from_millis(1000));
         assert_eq!(backoff.wait_duration(1), Duration::from_millis(2000));
         assert_eq!(backoff.wait_duration(2), Duration::from_millis(4000));
+    }
+
+    #[test]
+    fn test_retry_config_from_core_config() {
+        let core = acowork_core::RetryConfig {
+            max_attempts: 5,
+            backoff_base_ms: 250,
+            backoff_cap_ms: 2_000,
+            honor_retry_after: false,
+        };
+        let runtime = RetryConfig::from(&core);
+        assert_eq!(runtime.max_attempts, 5);
+        assert_eq!(runtime.max_wait_ms, 2_000);
+        assert!(!runtime.honor_retry_after);
+        assert_eq!(runtime.backoff.wait_duration(0), Duration::from_millis(250));
     }
 
     #[test]

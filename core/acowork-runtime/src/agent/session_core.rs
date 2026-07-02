@@ -424,7 +424,7 @@ impl SessionCore {
             },
             timeouts,
         );
-        let retry_config = crate::providers::reliable::RetryConfig::default();
+        let retry_config = crate::providers::reliable::RetryConfig::from(&config.timeouts.retry);
         let mut reliable =
             crate::providers::reliable::ReliableProvider::new(raw, retry_config);
 

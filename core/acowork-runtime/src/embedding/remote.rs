@@ -7,6 +7,8 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use acowork_core::Timeouts;
+
 use super::{EmbeddingError, EmbeddingProvider};
 
 // ── Remote Embedding Provider ───────────────────────────────────────────
@@ -47,19 +49,19 @@ impl RemoteEmbeddingProvider {
         model: &str,
         dimension: usize,
     ) -> Self {
-        let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .build()
-            .expect("Failed to build HTTP client");
+        Self::with_config_and_timeouts(base_url, api_key, model, dimension, &Timeouts::default())
+    }
 
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            api_key: api_key.map(ToString::to_string),
-            model: model.to_string(),
-            dimension,
-            http_client,
-        }
+    /// Create with custom configuration and centralized timeout values.
+    pub fn with_config_and_timeouts(
+        base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        dimension: usize,
+        timeouts: &Timeouts,
+    ) -> Self {
+        Self::try_with_config_and_timeouts(base_url, api_key, model, dimension, timeouts)
+            .expect("Failed to build HTTP client")
     }
 
     /// Create with custom configuration (fallible — for production use).
@@ -69,9 +71,26 @@ impl RemoteEmbeddingProvider {
         model: &str,
         dimension: usize,
     ) -> Result<Self, EmbeddingError> {
+        Self::try_with_config_and_timeouts(
+            base_url,
+            api_key,
+            model,
+            dimension,
+            &Timeouts::default(),
+        )
+    }
+
+    /// Create with custom configuration and centralized timeout values (fallible).
+    pub fn try_with_config_and_timeouts(
+        base_url: &str,
+        api_key: Option<&str>,
+        model: &str,
+        dimension: usize,
+        timeouts: &Timeouts,
+    ) -> Result<Self, EmbeddingError> {
         let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(timeouts.tool_http())
+            .connect_timeout(timeouts.provider_connect())
             .build()
             .map_err(|e| EmbeddingError::Remote(format!("Failed to build HTTP client: {e}")))?;
 

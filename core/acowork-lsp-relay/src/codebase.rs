@@ -25,6 +25,7 @@
 //! `textDocument/didOpen`). When `expect_response` is false, the handler
 //! sends the message and returns immediately.
 
+use acowork_core::timeout_config::constants;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -42,10 +43,10 @@ use crate::server::AppState;
 static RPC_ID_COUNTER: AtomicU64 = AtomicU64::new(1_000_000);
 
 /// Timeout for individual LSP JSON-RPC requests.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: std::time::Duration = constants::LSP_REQUEST;
 
 /// Timeout for the LSP `initialize` handshake.
-const INIT_TIMEOUT: Duration = Duration::from_secs(60);
+const INIT_TIMEOUT: std::time::Duration = constants::LSP_INIT;
 
 // ── Request / Response types ───────────────────────────────────────────
 
@@ -271,9 +272,7 @@ async fn ensure_initialized(
     });
 
     // Send initialize and wait for response.
-    let response =
-        send_request_and_wait(entry, id, &init_request, INIT_TIMEOUT)
-            .await?;
+    let response = send_request_and_wait(entry, id, &init_request, INIT_TIMEOUT).await?;
 
     // Cache the InitializeResult.
     if let Some(result) = response.get("result") {
@@ -322,8 +321,8 @@ async fn send_request_and_wait(
     let mut rx = entry.stdout_tx.subscribe();
 
     // Send the request.
-    let msg = serde_json::to_string(request)
-        .map_err(|e| format!("Failed to serialize request: {e}"))?;
+    let msg =
+        serde_json::to_string(request).map_err(|e| format!("Failed to serialize request: {e}"))?;
     entry
         .stdin_tx
         .send(msg)
@@ -370,8 +369,8 @@ async fn send_request_and_wait(
 mod tests {
     use super::*;
     use crate::pool::LspPool;
-    use acowork_core::event_bus::EventBus;
     use crate::state::LspRelayState;
+    use acowork_core::event_bus::EventBus;
 
     /// Build a test AppState with an empty pool and fresh event bus.
     fn test_state() -> Arc<AppState> {
@@ -394,12 +393,9 @@ mod tests {
             expect_response: true,
         };
 
-        let resp = codebase_rpc(
-            State(Arc::clone(&state)),
-            Json(req_body),
-        )
-        .await
-        .unwrap();
+        let resp = codebase_rpc(State(Arc::clone(&state)), Json(req_body))
+            .await
+            .unwrap();
 
         assert!(!resp.success);
         assert!(resp.error.is_some());
@@ -424,12 +420,9 @@ mod tests {
             expect_response: false,
         };
 
-        let resp = codebase_rpc(
-            State(Arc::clone(&state)),
-            Json(req_body),
-        )
-        .await
-        .unwrap();
+        let resp = codebase_rpc(State(Arc::clone(&state)), Json(req_body))
+            .await
+            .unwrap();
 
         // Should fail because no LSP server for "brainfuck", but the
         // expect_response=false path is not reached.

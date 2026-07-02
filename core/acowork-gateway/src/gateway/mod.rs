@@ -32,7 +32,9 @@ pub struct Gateway {
 impl Gateway {
     /// Create a new Gateway instance with the given configuration
     pub fn new(config: GatewayConfig) -> Result<Self, GatewayError> {
-        let idle_timeout = config.idle_timeout_secs;
+        config.validate()?;
+
+        let idle_timeout = config.timeouts.idle_timeout_secs;
         let log_file_size_mb = config.log_file_size_mb;
         let log_file_count = config.log_file_count;
         let vault_dir = config.vault_dir.clone();
@@ -574,7 +576,7 @@ impl Gateway {
         let socket_path = self.config.socket_path.clone();
 
         // Spawn the idle timeout checker in a background task
-        let idle_timeout = self.config.idle_timeout_secs;
+        let idle_timeout = self.config.timeouts.idle_timeout_secs;
         let _idle_handle = tokio::spawn(async move {
             if idle_timeout > 0 {
                 let mut interval =
@@ -642,10 +644,9 @@ impl Gateway {
 
         // ADR-021 Phase 2: Single Bridge control channel for all events.
         // Data channel (L1 chunks) removed — frontend now polls via HTTP.
-        let (bridge_ctrl_tx, _) =
-            tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(
-                self.config.data_flow.bridge_ctrl_capacity,
-            );
+        let (bridge_ctrl_tx, _) = tokio::sync::broadcast::channel::<crate::http::routes::BridgeEvent>(
+            self.config.data_flow.bridge_ctrl_capacity,
+        );
         let http_bridge_ctrl_tx = Some(bridge_ctrl_tx.clone());
 
         // S1.14 / Task #12: Create shared session_pending for HTTP ↔ gRPC bridge.
@@ -706,17 +707,16 @@ impl Gateway {
         {
             let data_dir = std::path::PathBuf::from(&self.config.data_dir);
             let lsp_relay_port = crate::lifecycle::lsp_relay::LSP_RELAY_DEFAULT_PORT;
-            let gateway_health_url = format!(
-                "http://127.0.0.1:{}/health",
-                self.config.http.port
-            );
+            let gateway_health_url = format!("http://127.0.0.1:{}/health", self.config.http.port);
 
             // Check if an LSP Relay is already running on the expected port
             let existing_health =
                 crate::lifecycle::lsp_relay::check_lsp_relay_health(lsp_relay_port).await;
             if let Some(health) = existing_health {
-                let relay_state =
-                    crate::lifecycle::lsp_relay::attach_existing_lsp_relay(lsp_relay_port, Some(health));
+                let relay_state = crate::lifecycle::lsp_relay::attach_existing_lsp_relay(
+                    lsp_relay_port,
+                    Some(health),
+                );
                 tracing::info!(
                     port = relay_state.port,
                     ready = relay_state.ready,
@@ -726,12 +726,13 @@ impl Gateway {
                     let mut gw = shared_state.write().await;
                     gw.lsp_relay_process = Some(relay_state);
                 }
-                lsp_relay_supervisor_cfg =
-                    Some(crate::lifecycle::lsp_relay_supervisor::LspRelaySupervisorConfig {
+                lsp_relay_supervisor_cfg = Some(
+                    crate::lifecycle::lsp_relay_supervisor::LspRelaySupervisorConfig {
                         data_dir,
                         port: lsp_relay_port,
                         gateway_health_url,
-                    });
+                    },
+                );
             } else {
                 match crate::lifecycle::lsp_relay::spawn_lsp_relay(
                     &data_dir,
@@ -751,12 +752,13 @@ impl Gateway {
                             gw.lsp_relay_process = Some(relay_state);
                         }
                         lsp_relay_child = Some(child);
-                        lsp_relay_supervisor_cfg =
-                            Some(crate::lifecycle::lsp_relay_supervisor::LspRelaySupervisorConfig {
+                        lsp_relay_supervisor_cfg = Some(
+                            crate::lifecycle::lsp_relay_supervisor::LspRelaySupervisorConfig {
                                 data_dir,
                                 port: lsp_relay_port,
                                 gateway_health_url,
-                            });
+                            },
+                        );
                     }
                     Err(e) => {
                         tracing::warn!(
@@ -826,10 +828,9 @@ impl Gateway {
         // so HTTP handlers find gRPC-connected agents via the same path.
         let grpc_state = shared_state.clone();
         let grpc_bridge_ctrl_tx = Some(bridge_ctrl_tx);
-        let (capability_tx, _) =
-            tokio::sync::broadcast::channel::<acowork_core::protocol::GatewayResponse>(
-                self.config.data_flow.capability_broadcast_capacity,
-            );
+        let (capability_tx, _) = tokio::sync::broadcast::channel::<
+            acowork_core::protocol::GatewayResponse,
+        >(self.config.data_flow.capability_broadcast_capacity);
         let grpc_data_flow_config = self.config.data_flow.clone();
         let grpc_handle = tokio::spawn(async move {
             let grpc_addr = crate::grpc::server::default_grpc_addr();
@@ -1083,9 +1084,8 @@ mod tests {
             log_level: "info".to_string(),
             log_file_size_mb: 10,
             log_file_count: 20,
-            idle_timeout_secs: 0,
+            timeouts: acowork_core::Timeouts::default(),
             max_iterations: 20,
-            iteration_timeout_ms: 30000,
             dev_mode: true,
             http: crate::config::HttpConfig::default(),
             default_provider: None,

@@ -7,6 +7,8 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
+use acowork_core::Timeouts;
+
 use super::{EmbeddingError, EmbeddingProvider};
 
 /// Ollama embedding provider using the `/api/embed` endpoint.
@@ -45,18 +47,18 @@ impl OllamaEmbeddingProvider {
 
     /// Create with full configuration.
     pub fn with_config(base_url: &str, model: &str, dimension: usize) -> Self {
-        let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
-            .build()
-            .expect("Failed to build HTTP client for Ollama embedding");
+        Self::with_config_and_timeouts(base_url, model, dimension, &Timeouts::default())
+    }
 
-        Self {
-            base_url: base_url.trim_end_matches('/').to_string(),
-            model: model.to_string(),
-            dimension,
-            http_client,
-        }
+    /// Create with full configuration and centralized timeout values.
+    pub fn with_config_and_timeouts(
+        base_url: &str,
+        model: &str,
+        dimension: usize,
+        timeouts: &Timeouts,
+    ) -> Self {
+        Self::try_with_config_and_timeouts(base_url, model, dimension, timeouts)
+            .expect("Failed to build HTTP client for Ollama embedding")
     }
 
     /// Create a new Ollama embedding provider with defaults (fallible).
@@ -72,9 +74,19 @@ impl OllamaEmbeddingProvider {
         model: &str,
         dimension: usize,
     ) -> Result<Self, EmbeddingError> {
+        Self::try_with_config_and_timeouts(base_url, model, dimension, &Timeouts::default())
+    }
+
+    /// Create with full configuration and centralized timeout values (fallible).
+    pub fn try_with_config_and_timeouts(
+        base_url: &str,
+        model: &str,
+        dimension: usize,
+        timeouts: &Timeouts,
+    ) -> Result<Self, EmbeddingError> {
         let http_client = Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(timeouts.tool_http())
+            .connect_timeout(timeouts.provider_connect())
             .build()
             .map_err(|e| EmbeddingError::Local(format!("Failed to build HTTP client: {e}")))?;
 

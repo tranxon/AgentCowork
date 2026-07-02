@@ -59,9 +59,7 @@ pub(crate) async fn phase_d_run(
             .await
             .is_err()
         {
-            tracing::warn!(
-                "Failed to send AgentReady to Gateway — stream may already be closed"
-            );
+            tracing::warn!("Failed to send AgentReady to Gateway — stream may already be closed");
         } else {
             tracing::info!("AgentReady sent to Gateway for agent={}", ctx.agent_id);
         }
@@ -82,8 +80,9 @@ pub(crate) async fn phase_d_run(
         ctx.skill_registry.clone(),
         ctx.workspace_resolver.clone(),
         initial_session_id,
-        config.session_idle_timeout_secs,
+        config.timeouts.session_idle_timeout_secs,
         config.max_sessions,
+        config.timeouts.clone(),
         ctx.mcp_notifier.subscribe(),
         mcp_startup_rx,
         mcp_runtime_tx,

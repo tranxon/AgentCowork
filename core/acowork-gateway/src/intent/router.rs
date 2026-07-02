@@ -19,8 +19,11 @@ use crate::intent::privacy;
 use crate::ipc::server::SharedState;
 use crate::ipc::session::SessionManager;
 
-/// Default timeout for synchronous Intent routing (30 seconds)
-pub const DEFAULT_INTENT_TIMEOUT_SECS: u64 = 30;
+/// Default timeout for synchronous Intent routing.
+pub const DEFAULT_INTENT_TIMEOUT: Duration =
+    acowork_core::timeout_config::constants::INTENT_DEFAULT;
+/// Backward-compatible seconds view of [`DEFAULT_INTENT_TIMEOUT`].
+pub const DEFAULT_INTENT_TIMEOUT_SECS: u64 = DEFAULT_INTENT_TIMEOUT.as_secs();
 
 /// Intent routing errors
 #[derive(Debug, Clone, thiserror::Error)]
@@ -89,7 +92,7 @@ impl IntentRouter {
     pub fn new() -> Self {
         Self {
             pending: Arc::new(Mutex::new(HashMap::new())),
-            default_timeout: Duration::from_secs(DEFAULT_INTENT_TIMEOUT_SECS),
+            default_timeout: DEFAULT_INTENT_TIMEOUT,
         }
     }
 

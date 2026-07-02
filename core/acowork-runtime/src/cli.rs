@@ -335,6 +335,9 @@ async fn async_main(
         phase_a_init_agent, phase_b_init_session, phase_c_spawn_subsystems, phase_d_run,
     };
 
+    // Phase 0: fail-fast validation of timeout configuration.
+    config.validate().map_err(crate::error::RuntimeError::Config)?;
+
     // Phase A: per-agent initialization (package, gateway, provider, tools, embedding).
     let mut agent_ctx = phase_a_init_agent(&config).await?;
 
@@ -528,6 +531,7 @@ pub(crate) async fn run_gateway_loop(
     _initial_session_id: String,
     _session_idle_timeout_secs: u64,
     max_sessions: usize,
+    timeouts: acowork_core::Timeouts,
     mut mcp_config_rx: tokio::sync::watch::Receiver<()>,
     mut mcp_startup_rx: Option<
         tokio::sync::mpsc::Receiver<crate::tools::mcp_manager::McpConnectResult>,
@@ -563,6 +567,7 @@ pub(crate) async fn run_gateway_loop(
                         &budget_provider,
                         &log_reload_handle,
                         max_sessions,
+                        &timeouts,
                         &mcp_runtime_tx,
                     ).await {
                         LoopAction::Continue => continue,
@@ -757,6 +762,7 @@ pub(crate) async fn run_gateway_loop(
                 &budget_provider,
                 &log_reload_handle,
                 max_sessions,
+                &timeouts,
                 &mcp_runtime_tx,
             )
             .await
@@ -816,6 +822,7 @@ async fn process_gateway_recv(
     budget_provider: &str,
     log_reload_handle: &Option<LogReloadHandle>,
     max_sessions: usize,
+    timeouts: &acowork_core::Timeouts,
     mcp_runtime_tx: &tokio::sync::mpsc::Sender<crate::tools::mcp_manager::McpConnectResult>,
 ) -> LoopAction {
     use acowork_core::protocol::GatewayResponse;
@@ -2097,19 +2104,20 @@ async fn process_gateway_recv(
                     let endpoint = embed_endpoint.clone();
                     let model_id = embed_model_id.clone();
                     let dim = embed_dimension;
+                    let timeouts = timeouts.clone();
 
                     if let Some(store) = store {
                         let old_dim = store.embedding_dim();
 
                         tokio::spawn(async move {
                             // Build the new embedding provider for re-embedding.
-                            let migration_provider =
-                                crate::embedding::remote::RemoteEmbeddingProvider::with_config(
-                                    &endpoint,
-                                    None,
-                                    &model_id,
-                                    dim,
-                                );
+                            let migration_provider = crate::embedding::remote::RemoteEmbeddingProvider::with_config_and_timeouts(
+                                &endpoint,
+                                None,
+                                &model_id,
+                                dim,
+                                &timeouts,
+                            );
                             let migration_provider = std::sync::Arc::new(migration_provider)
                                 as std::sync::Arc<dyn crate::embedding::EmbeddingProvider>;
 

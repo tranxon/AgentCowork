@@ -32,9 +32,11 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
     use crate::embedding::{EmbeddingConfig, EmbeddingProvider, FallbackEmbeddingProvider};
     use crate::package::loader::load_package;
     use crate::package::prompt_builder::build_system_prompt_with_mode;
+    use crate::startup::super_mod::{
+        RuntimeResourceCache, connect_gateway_client, read_resource_cache, save_resource_cache,
+    };
     use crate::tools::builtin;
     use crate::tools::registry::ToolRegistry;
-    use crate::startup::super_mod::{read_resource_cache, save_resource_cache, RuntimeResourceCache, connect_gateway_client};
 
     // ── Step 1: Load .agent package ─────────────────────────────────
     tracing::info!(path = %config.package_path, "Loading .agent package");
@@ -84,7 +86,8 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
     }
 
     // ── Step 3: Build system prompt ─────────────────────────────────
-    let skill_mode = crate::startup::super_mod::resolve_skill_mode(&loaded.manifest, &config.work_dir);
+    let skill_mode =
+        crate::startup::super_mod::resolve_skill_mode(&loaded.manifest, &config.work_dir);
     let system_prompt = build_system_prompt_with_mode(&loaded.package_dir, skill_mode)?;
     tracing::debug!(prompt_len = system_prompt.len(), "System prompt built");
 
@@ -189,11 +192,12 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
         .unwrap_or(512);
 
     if let Some(ref endpoint) = embed_endpoint {
-        match RemoteEmbeddingProvider::try_with_config(
+        match RemoteEmbeddingProvider::try_with_config_and_timeouts(
             endpoint,
             None,
             &embed_model_id,
             embed_dimension,
+            &config.timeouts,
         ) {
             Ok(ep) => {
                 tracing::info!(
@@ -210,7 +214,13 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
         }
     }
 
-    let ollama_primary = OllamaEmbeddingProvider::try_new().map_err(|e| {
+    let ollama_primary = OllamaEmbeddingProvider::try_with_config_and_timeouts(
+        "http://localhost:11434",
+        "nomic-embed-text",
+        768,
+        &config.timeouts,
+    )
+    .map_err(|e| {
         RuntimeError::Config(format!("Failed to create Ollama embedding provider: {e}"))
     })?;
     let ollama_dim = ollama_primary.dimension();
@@ -263,17 +273,20 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
         }
     };
 
-    let remote_fallback =
-        RemoteEmbeddingProvider::try_with_config(&base_url, api_key.as_deref(), &model, dim)
-            .map_err(|e| {
-                RuntimeError::Config(format!("Failed to create remote embedding provider: {e}"))
-            })?;
+    let remote_fallback = RemoteEmbeddingProvider::try_with_config_and_timeouts(
+        &base_url,
+        api_key.as_deref(),
+        &model,
+        dim,
+        &config.timeouts,
+    )
+    .map_err(|e| {
+        RuntimeError::Config(format!("Failed to create remote embedding provider: {e}"))
+    })?;
     embedding_providers.push((Box::new(remote_fallback), 5000));
 
-    let fallback_emb = FallbackEmbeddingProvider::with_providers(
-        embedding_providers,
-        EmbeddingConfig::default(),
-    );
+    let fallback_emb =
+        FallbackEmbeddingProvider::with_providers(embedding_providers, EmbeddingConfig::default());
     // Lock the dimension to the first provider's dimension.
     // This prevents dimension mismatch when fallback providers have
     // different dimensions. The locked dimension must match the Grafeo
@@ -310,7 +323,7 @@ pub(crate) async fn phase_a_init_agent(config: &RuntimeConfig) -> Result<AgentBo
     for tool in builtin::all_builtin_tools(
         &workspace_resolver,
         &config.agent_id,
-        config.tool_http_timeout_ms,
+        config.timeouts.tool_http_timeout_ms,
         has_search_providers,
         None,
         Some(memory_session.clone()),

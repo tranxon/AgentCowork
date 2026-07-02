@@ -115,7 +115,7 @@ pub async fn get_config(
         packages_dir: config.packages_dir.clone(),
         data_dir: config.data_dir.clone(),
         log_level: config.log_level.clone(),
-        idle_timeout_secs: config.idle_timeout_secs,
+        idle_timeout_secs: config.timeouts.idle_timeout_secs,
         dev_mode: config.dev_mode,
         http: HttpConfigResponse {
             enabled: config.http.enabled,
@@ -152,6 +152,9 @@ pub async fn update_config(
         updates.push(format!("log_level={}", level));
     }
     if let Some(timeout) = body.idle_timeout_secs {
+        if timeout == 0 {
+            return Err(ApiError::bad_request("idle_timeout_secs must be > 0"));
+        }
         updates.push(format!("idle_timeout_secs={}", timeout));
     }
     if let Some(ref provider) = body.default_provider {
@@ -189,7 +192,7 @@ pub async fn update_config(
             config.log_level = level.clone();
         }
         if let Some(timeout) = body.idle_timeout_secs {
-            config.idle_timeout_secs = timeout;
+            config.timeouts.idle_timeout_secs = timeout;
         }
         // Update default_provider: Some("name") sets it, Some("") clears it
         if let Some(ref provider) = body.default_provider {
@@ -225,9 +228,10 @@ pub async fn update_config(
 
     // Persist config to disk (so changes survive Gateway restart)
     if let Some(ref cfg) = config_snapshot
-        && let Err(e) = cfg.save() {
-            tracing::warn!("Failed to persist configuration: {}", e);
-        }
+        && let Err(e) = cfg.save()
+    {
+        tracing::warn!("Failed to persist configuration: {}", e);
+    }
 
     // Apply log file count change immediately
     if let Some(count) = body.log_file_count {
@@ -343,21 +347,21 @@ pub async fn delete_logs(
         // log files alone (they belong to other processes).
         let log_dir = crate::config::GatewayConfig::project_data_dir().join("logs");
         if log_dir.exists()
-            && let Ok(entries) = std::fs::read_dir(&log_dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                    if name.starts_with("gateway-")
-                        && path.extension().is_some_and(|ext| ext == "log")
-                    {
-                        if let Err(e) = std::fs::remove_file(&path) {
-                            tracing::warn!("Failed to delete Gateway log {:?}: {}", path, e);
-                        } else {
-                            total_deleted += 1;
-                        }
+            && let Ok(entries) = std::fs::read_dir(&log_dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("gateway-") && path.extension().is_some_and(|ext| ext == "log")
+                {
+                    if let Err(e) = std::fs::remove_file(&path) {
+                        tracing::warn!("Failed to delete Gateway log {:?}: {}", path, e);
+                    } else {
+                        total_deleted += 1;
                     }
                 }
             }
+        }
         tracing::info!("Gateway logs cleaned from {:?}", log_dir);
     }
 

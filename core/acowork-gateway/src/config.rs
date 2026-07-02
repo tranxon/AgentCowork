@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::cli::Cli;
 use crate::error::GatewayError;
-use acowork_core::defaults;
+use acowork_core::{Timeouts, defaults};
 use serde::{Deserialize, Serialize};
 
 /// Compute the single application root directory for the gateway.
@@ -33,9 +33,10 @@ use serde::{Deserialize, Serialize};
 /// `%APPDATA%` subdirs on Windows, and a single dir on macOS.
 pub(crate) fn project_root() -> PathBuf {
     if let Ok(p) = std::env::var("ACOWORK_HOME")
-        && !p.is_empty() {
-            return PathBuf::from(p);
-        }
+        && !p.is_empty()
+    {
+        return PathBuf::from(p);
+    }
 
     #[cfg(windows)]
     let home_var = std::env::var("USERPROFILE").ok();
@@ -73,15 +74,12 @@ pub struct GatewayConfig {
     /// Maximum number of log files to keep (0 = unlimited, default 20)
     #[serde(default = "default_log_file_count")]
     pub log_file_count: u64,
-    /// Default idle timeout in seconds (0 = no timeout)
-    #[serde(default = "default_idle_timeout")]
-    pub idle_timeout_secs: u64,
+    /// Centralized timeout configuration flattened into the historical TOML keys.
+    #[serde(flatten)]
+    pub timeouts: Timeouts,
     /// Default max iterations per agent run
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
-    /// Default iteration timeout in milliseconds
-    #[serde(default = "default_iteration_timeout_ms")]
-    pub iteration_timeout_ms: u64,
     /// Development mode: allows unsigned packages, relaxed security
     #[serde(default)]
     pub dev_mode: bool,
@@ -235,14 +233,8 @@ fn default_log_file_size_mb() -> u64 {
 fn default_log_file_count() -> u64 {
     20
 }
-fn default_idle_timeout() -> u64 {
-    300
-} // 5 minutes
 fn default_max_iterations() -> u32 {
     20
-}
-fn default_iteration_timeout_ms() -> u64 {
-    30_000
 }
 fn default_max_output_tokens_limit() -> u64 {
     32_768
@@ -373,7 +365,7 @@ impl GatewayConfig {
         };
 
         // Merge: CLI > env > file > defaults
-        Ok(Self {
+        let config = Self {
             config_source_path: config_path,
             socket_path: cli
                 .socket_path
@@ -410,18 +402,14 @@ impl GatewayConfig {
                 .as_ref()
                 .map(|c| c.log_file_count)
                 .unwrap_or_else(default_log_file_count),
-            idle_timeout_secs: file_config
+            timeouts: file_config
                 .as_ref()
-                .map(|c| c.idle_timeout_secs)
-                .unwrap_or_else(default_idle_timeout),
+                .map(|c| c.timeouts.clone())
+                .unwrap_or_default(),
             max_iterations: file_config
                 .as_ref()
                 .map(|c| c.max_iterations)
                 .unwrap_or_else(default_max_iterations),
-            iteration_timeout_ms: file_config
-                .as_ref()
-                .map(|c| c.iteration_timeout_ms)
-                .unwrap_or_else(default_iteration_timeout_ms),
             dev_mode: file_config.as_ref().map(|c| c.dev_mode).unwrap_or(true),
             http: {
                 let mut http = file_config
@@ -459,7 +447,10 @@ impl GatewayConfig {
                 .as_ref()
                 .map(|c| c.data_flow.clone())
                 .unwrap_or_default(),
-        })
+        };
+
+        config.validate()?;
+        Ok(config)
     }
 
     /// Load config from a TOML file
@@ -485,6 +476,11 @@ impl GatewayConfig {
             std::fs::create_dir_all(dir).map_err(GatewayError::Io)?;
         }
         Ok(())
+    }
+
+    /// Validate startup-sensitive configuration values.
+    pub fn validate(&self) -> Result<(), GatewayError> {
+        acowork_core::timeout_config::validate(&self.timeouts).map_err(GatewayError::Config)
     }
 
     /// Persist the current configuration to its source TOML file.
@@ -538,9 +534,8 @@ impl Default for GatewayConfig {
             log_level: default_log_level(),
             log_file_size_mb: default_log_file_size_mb(),
             log_file_count: default_log_file_count(),
-            idle_timeout_secs: default_idle_timeout(),
+            timeouts: Timeouts::default(),
             max_iterations: default_max_iterations(),
-            iteration_timeout_ms: default_iteration_timeout_ms(),
             dev_mode: true,
             http: HttpConfig::default(),
             default_provider: None,
@@ -603,9 +598,9 @@ mod tests {
         assert!(!config.vault_dir.is_empty());
         assert!(!config.packages_dir.is_empty());
         assert_eq!(config.log_level, "info");
-        assert_eq!(config.idle_timeout_secs, 300);
+        assert_eq!(config.timeouts.idle_timeout_secs, 300);
         assert_eq!(config.max_iterations, 20);
-        assert_eq!(config.iteration_timeout_ms, 30_000);
+        assert_eq!(config.timeouts.iteration_timeout_ms, 900_000);
         assert!(config.http.enabled);
         assert_eq!(config.http.port, 19876);
         assert_eq!(config.http.host, "127.0.0.1");

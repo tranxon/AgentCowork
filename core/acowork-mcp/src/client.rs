@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use acowork_core::timeout_config::constants;
 use anyhow::{Context, Result, anyhow, bail};
 use futures_util::future::join_all;
 use serde_json::json;
@@ -17,13 +18,13 @@ use crate::protocol::{JsonRpcRequest, MCP_PROTOCOL_VERSION, McpToolDef, McpTools
 use crate::transport::{McpTransportConn, create_transport};
 
 /// Timeout for receiving a response from an MCP server during init/list.
-const RECV_TIMEOUT_SECS: u64 = 30;
+const RECV_TIMEOUT: Duration = constants::MCP_RECV;
 
-/// Default timeout for tool calls (seconds) when not configured per-server.
-const DEFAULT_TOOL_TIMEOUT_SECS: u64 = 180;
+/// Default timeout for tool calls when not configured per-server.
+const DEFAULT_TOOL_TIMEOUT: Duration = constants::MCP_DEFAULT_TOOL;
 
-/// Maximum allowed tool call timeout (seconds) — hard safety ceiling.
-const MAX_TOOL_TIMEOUT_SECS: u64 = 600;
+/// Maximum allowed tool call timeout — hard safety ceiling.
+const MAX_TOOL_TIMEOUT: Duration = constants::MCP_MAX_TOOL;
 
 // ── Internal server state ──────────────────────────────────────────────────
 
@@ -104,17 +105,14 @@ impl McpClient {
             }),
         );
 
-        let init_resp = timeout(
-            Duration::from_secs(RECV_TIMEOUT_SECS),
-            transport.send_and_recv(&init_req),
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "MCP server `{}` timed out waiting for initialize response",
-                config.name
-            )
-        })??;
+        let init_resp = timeout(RECV_TIMEOUT, transport.send_and_recv(&init_req))
+            .await
+            .with_context(|| {
+                format!(
+                    "MCP server `{}` timed out waiting for initialize response",
+                    config.name
+                )
+            })??;
 
         if init_resp.error.is_some() {
             bail!(
@@ -131,17 +129,14 @@ impl McpClient {
         // ── Fetch tool list ──────────────────────────────────────────────
         let list_req = JsonRpcRequest::new(2u64, "tools/list", json!({}));
 
-        let list_resp = timeout(
-            Duration::from_secs(RECV_TIMEOUT_SECS),
-            transport.send_and_recv(&list_req),
-        )
-        .await
-        .with_context(|| {
-            format!(
-                "MCP server `{}` timed out waiting for tools/list response",
-                config.name
-            )
-        })??;
+        let list_resp = timeout(RECV_TIMEOUT, transport.send_and_recv(&list_req))
+            .await
+            .with_context(|| {
+                format!(
+                    "MCP server `{}` timed out waiting for tools/list response",
+                    config.name
+                )
+            })??;
 
         let result = list_resp
             .result
@@ -182,13 +177,14 @@ impl McpClient {
         self.is_alive.store(false, Ordering::SeqCst);
         let mut state = self.transport.lock().await;
         if let Some(mut transport) = state.transport.take()
-            && let Err(e) = transport.close().await {
-                tracing::warn!(
-                    "Error closing MCP server `{}`: {:#}",
-                    self.meta.config.name,
-                    e
-                );
-            }
+            && let Err(e) = transport.close().await
+        {
+            tracing::warn!(
+                "Error closing MCP server `{}`: {:#}",
+                self.meta.config.name,
+                e
+            );
+        }
     }
 
     /// Whether the transport connection is believed to be alive.
@@ -268,8 +264,8 @@ impl McpClient {
             .meta
             .config
             .tool_timeout_secs
-            .unwrap_or(DEFAULT_TOOL_TIMEOUT_SECS)
-            .min(MAX_TOOL_TIMEOUT_SECS);
+            .unwrap_or(DEFAULT_TOOL_TIMEOUT.as_secs())
+            .min(MAX_TOOL_TIMEOUT.as_secs());
 
         let mut state = self.transport.lock().await;
         let transport = match state.transport.as_mut() {

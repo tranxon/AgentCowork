@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
+use acowork_core::timeout_config::constants;
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -21,7 +22,7 @@ use crate::protocol::{JSONRPC_VERSION, JsonRpcRequest, JsonRpcResponse};
 const MAX_LINE_BYTES: usize = 4 * 1024 * 1024; // 4 MB
 
 /// Timeout for init/list operations.
-const RECV_TIMEOUT_SECS: u64 = 30;
+const RECV_TIMEOUT: Duration = constants::MCP_RECV;
 
 /// Streamable HTTP Accept header required by MCP HTTP transport.
 const MCP_STREAMABLE_ACCEPT: &str = "application/json, text/event-stream";
@@ -187,7 +188,7 @@ impl McpTransportConn for StdioTransport {
                 error: None,
             });
         }
-        let deadline = std::time::Instant::now() + Duration::from_secs(RECV_TIMEOUT_SECS);
+        let deadline = std::time::Instant::now() + RECV_TIMEOUT;
         loop {
             let remaining = deadline.saturating_duration_since(std::time::Instant::now());
             if remaining.is_zero() {
@@ -319,12 +320,9 @@ impl McpTransportConn for HttpTransport {
             .is_some_and(|v| v.to_ascii_lowercase().contains("text/event-stream"));
 
         if is_sse {
-            let maybe_resp = timeout(
-                Duration::from_secs(RECV_TIMEOUT_SECS),
-                read_first_jsonrpc_from_sse_response(resp),
-            )
-            .await
-            .context("timeout waiting for MCP response from SSE stream")??;
+            let maybe_resp = timeout(RECV_TIMEOUT, read_first_jsonrpc_from_sse_response(resp))
+                .await
+                .context("timeout waiting for MCP response from SSE stream")??;
             return maybe_resp
                 .ok_or_else(|| anyhow!("MCP server returned no response in SSE stream"));
         }

@@ -14,6 +14,7 @@
 //! The two methods differ in return type, match arm, and timeout semantics,
 //! so premature abstraction would increase understanding cost.
 
+use acowork_core::timeout_config::constants;
 use tokio::sync::{mpsc, oneshot};
 
 use crate::agent::inbound::InboundMessage;
@@ -22,11 +23,8 @@ use crate::agent::session_state::SessionStatus;
 use crate::security::approval_gate::ApprovalRequest;
 
 /// Default approval/question timeout: 5 minutes.
-///
-/// D5 dedup: previously duplicated as `APPROVAL_TIMEOUT_SECS` (u64) in
-/// `await_approval_decision` and `send_tool_approval_needed`, plus
-/// `DEFAULT_TIMEOUT_SECS` (u32) in `await_question_answer`.
-const APPROVAL_TIMEOUT_SECS: u64 = 300;
+const APPROVAL_TIMEOUT: std::time::Duration = constants::APPROVAL;
+const APPROVAL_TIMEOUT_SECS: u64 = APPROVAL_TIMEOUT.as_secs();
 
 /// User's decision on a tool approval request.
 #[derive(Debug, Clone)]
@@ -215,7 +213,7 @@ impl AgentLoop {
                 }
                 // Timeout: auto-reject to prevent permanent deadlock when
                 // a concurrent approval request is orphaned.
-                _ = tokio::time::sleep(std::time::Duration::from_secs(APPROVAL_TIMEOUT_SECS)) => {
+                _ = tokio::time::sleep(APPROVAL_TIMEOUT) => {
                     let reason_msg = format!("tool approval timed out after {}s", APPROVAL_TIMEOUT_SECS);
                     tracing::warn!(
                         request_id = %request_id,
@@ -348,15 +346,17 @@ impl AgentLoop {
 
     /// Send ToolApprovalNeeded chunk event to Gateway (via chunk channel).
     fn send_tool_approval_needed(&self, request_id: &str, req: &ApprovalRequest) {
-        let _ = self.session_core.try_send_chunk(ChunkEvent::ToolApprovalNeeded {
-            request_id: request_id.to_string(),
-            tool_name: req.tool_name.clone(),
-            action: req.action.clone(),
-            risk_level: req.risk_level.label().to_string(),
-            reason: req.reason.clone(),
-            tool_call_id: req.tool_call_id.clone(),
-            approval_timeout_secs: APPROVAL_TIMEOUT_SECS,
-        });
+        let _ = self
+            .session_core
+            .try_send_chunk(ChunkEvent::ToolApprovalNeeded {
+                request_id: request_id.to_string(),
+                tool_name: req.tool_name.clone(),
+                action: req.action.clone(),
+                risk_level: req.risk_level.label().to_string(),
+                reason: req.reason.clone(),
+                tool_call_id: req.tool_call_id.clone(),
+                approval_timeout_secs: APPROVAL_TIMEOUT_SECS,
+            });
     }
 
     /// Handle an approval request received on the approval_rx channel.

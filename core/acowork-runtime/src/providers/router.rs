@@ -34,9 +34,11 @@ pub struct ProviderTimeouts {
 impl From<&crate::config::RuntimeConfig> for ProviderTimeouts {
     fn from(config: &crate::config::RuntimeConfig) -> Self {
         Self {
-            request_timeout: Duration::from_millis(config.provider_request_timeout_ms),
-            connect_timeout: Duration::from_millis(config.provider_connect_timeout_ms),
-            stream_read_timeout: Duration::from_millis(config.provider_stream_read_timeout_ms),
+            request_timeout: Duration::from_millis(config.timeouts.provider_request_timeout_ms),
+            connect_timeout: Duration::from_millis(config.timeouts.provider_connect_timeout_ms),
+            stream_read_timeout: Duration::from_millis(
+                config.timeouts.provider_stream_read_timeout_ms,
+            ),
         }
     }
 }

@@ -1,15 +1,21 @@
 //! Agent Runtime configuration
 
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+
+use acowork_core::timeout_config::constants;
+use acowork_core::Timeouts;
 
 use crate::cli::Cli;
 
 /// Default HTTP timeout for built-in tools (30 seconds).
-pub const DEFAULT_TOOL_HTTP_TIMEOUT_MS: u64 = 30_000;
+///
+/// Centralized in `acowork_core::timeout_config::constants::TOOL_HTTP`.
+/// Re-exported here for backward compatibility with search backends and
+/// `web_fetch` that use `DEFAULT_TOOL_HTTP_TIMEOUT` as a fallback default.
+pub const DEFAULT_TOOL_HTTP_TIMEOUT: std::time::Duration = constants::TOOL_HTTP;
 
-/// Default HTTP timeout for built-in tools as Duration.
-pub const DEFAULT_TOOL_HTTP_TIMEOUT: Duration = Duration::from_millis(DEFAULT_TOOL_HTTP_TIMEOUT_MS);
+/// Millisecond equivalent of [`DEFAULT_TOOL_HTTP_TIMEOUT`].
+pub const DEFAULT_TOOL_HTTP_TIMEOUT_MS: u64 = DEFAULT_TOOL_HTTP_TIMEOUT.as_millis() as u64;
 
 /// Default LLM temperature when no override is configured (session-level,
 /// agent-level, or runtime override). Applied uniformly across all sessions
@@ -52,12 +58,9 @@ pub struct RuntimeConfig {
     /// Maximum iterations per conversation
     #[serde(default = "default_max_iterations")]
     pub max_iterations: u32,
-    /// Iteration timeout in milliseconds (overall timeout for the entire iteration)
-    #[serde(default = "default_iteration_timeout_ms")]
-    pub iteration_timeout_ms: u64,
-    /// Single tool execution timeout in milliseconds
-    #[serde(default = "default_tool_timeout_ms")]
-    pub tool_timeout_ms: u64,
+    /// Centralized timeout configuration flattened into the historical TOML keys.
+    #[serde(flatten)]
+    pub timeouts: Timeouts,
     /// Maximum history tokens
     #[serde(default = "default_history_max_tokens")]
     pub history_max_tokens: u64,
@@ -67,22 +70,6 @@ pub struct RuntimeConfig {
     #[serde(default = "default_shell_approval_threshold")]
     pub shell_approval_threshold: String,
 
-    // ── Timeout configuration ──
-    /// LLM provider HTTP request timeout in milliseconds
-    #[serde(default = "default_provider_request_timeout_ms")]
-    pub provider_request_timeout_ms: u64,
-    /// LLM provider TCP connect timeout in milliseconds
-    #[serde(default = "default_provider_connect_timeout_ms")]
-    pub provider_connect_timeout_ms: u64,
-    /// LLM provider stream read per-chunk timeout in milliseconds
-    #[serde(default = "default_provider_stream_read_timeout_ms")]
-    pub provider_stream_read_timeout_ms: u64,
-    /// Default HTTP timeout for built-in tools in milliseconds
-    #[serde(default = "default_tool_http_timeout_ms")]
-    pub tool_http_timeout_ms: u64,
-    /// Session idle timeout in seconds before eviction
-    #[serde(default = "default_session_idle_timeout_secs")]
-    pub session_idle_timeout_secs: u64,
     /// Maximum number of session files (JSONL) to keep on disk.
     /// When this limit is exceeded at session creation, the oldest
     /// sessions (by `last_active_at`) are permanently deleted.
@@ -177,40 +164,12 @@ fn default_max_iterations() -> u32 {
     200
 }
 
-fn default_iteration_timeout_ms() -> u64 {
-    900000
-}
-
-fn default_tool_timeout_ms() -> u64 {
-    600000
-}
-
 fn default_history_max_tokens() -> u64 {
     128000
 }
 
 fn default_shell_approval_threshold() -> String {
     "medium".to_string()
-}
-
-fn default_provider_request_timeout_ms() -> u64 {
-    600000 // 10 min: LLM streaming can be long (thinking + generation)
-}
-
-fn default_provider_connect_timeout_ms() -> u64 {
-    10000 // 10 sec
-}
-
-fn default_provider_stream_read_timeout_ms() -> u64 {
-    45000 // 45 sec per-chunk interval
-}
-
-fn default_tool_http_timeout_ms() -> u64 {
-    DEFAULT_TOOL_HTTP_TIMEOUT_MS
-}
-
-fn default_session_idle_timeout_secs() -> u64 {
-    300 // 5 min
 }
 
 fn default_max_sessions() -> usize {
@@ -240,15 +199,9 @@ impl Default for RuntimeConfig {
             log_file_size_mb: default_log_file_size_mb(),
             log_file_count: default_log_file_count(),
             max_iterations: default_max_iterations(),
-            iteration_timeout_ms: default_iteration_timeout_ms(),
-            tool_timeout_ms: default_tool_timeout_ms(),
+            timeouts: Timeouts::default(),
             history_max_tokens: default_history_max_tokens(),
             shell_approval_threshold: default_shell_approval_threshold(),
-            provider_request_timeout_ms: default_provider_request_timeout_ms(),
-            provider_connect_timeout_ms: default_provider_connect_timeout_ms(),
-            provider_stream_read_timeout_ms: default_provider_stream_read_timeout_ms(),
-            tool_http_timeout_ms: default_tool_http_timeout_ms(),
-            session_idle_timeout_secs: default_session_idle_timeout_secs(),
             max_sessions: default_max_sessions(),
             min_distill_chars: default_min_distill_chars(),
             distill_max_tokens: default_distill_max_tokens(),
@@ -283,5 +236,10 @@ impl RuntimeConfig {
     /// Returns None if not set (standalone mode).
     pub fn get_gateway_address(&self) -> Option<&str> {
         self.gateway_socket.as_deref()
+    }
+
+    /// Validate startup-sensitive configuration values.
+    pub fn validate(&self) -> Result<(), String> {
+        acowork_core::timeout_config::validate(&self.timeouts)
     }
 }

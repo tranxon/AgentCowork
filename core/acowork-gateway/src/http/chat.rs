@@ -249,9 +249,10 @@ pub async fn send_message(
 
     // Use frontend-generated message_id when provided (for ID-based dedup).
     // Only fall back to Gateway-generated ID for legacy clients.
-    let message_id = body.message_id.clone().unwrap_or_else(|| {
-        format!("msg-{}", uuid::Uuid::new_v4())
-    });
+    let message_id = body
+        .message_id
+        .clone()
+        .unwrap_or_else(|| format!("msg-{}", uuid::Uuid::new_v4()));
 
     // Push message to agent via SessionManager (if available)
     // S1.6 will implement the full response bridge
@@ -270,9 +271,10 @@ pub async fn send_message(
                 // Resolve document references if document_ids was provided
                 if let Some(ref doc_ids) = body.document_ids
                     && !doc_ids.is_empty()
-                        && let Some(docs) = resolve_document_refs(&state, sid, doc_ids).await {
-                            params["documents"] = docs;
-                        }
+                    && let Some(docs) = resolve_document_refs(&state, sid, doc_ids).await
+                {
+                    params["documents"] = docs;
+                }
             }
             // Pass through multimodal content_parts (e.g. text + image_url)
             if let Some(ref parts) = body.content_parts {
@@ -280,9 +282,10 @@ pub async fn send_message(
             }
             // Pass through attached_context (files/selections added by user)
             if let Some(ref ctx) = body.attached_context
-                && !ctx.is_empty() {
-                    params["attached_context"] = serde_json::json!(ctx);
-                }
+                && !ctx.is_empty()
+            {
+                params["attached_context"] = serde_json::json!(ctx);
+            }
             let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-api".to_string(),
                 action: "chat_message".to_string(),
@@ -871,9 +874,10 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
 
     // Use frontend-generated message_id when provided (for ID-based dedup).
     // Only fall back to Gateway-generated ID for legacy clients.
-    let message_id = client_msg.message_id.clone().unwrap_or_else(|| {
-        format!("msg-{}", uuid::Uuid::new_v4())
-    });
+    let message_id = client_msg
+        .message_id
+        .clone()
+        .unwrap_or_else(|| format!("msg-{}", uuid::Uuid::new_v4()));
 
     // Push to agent via SessionManager
     let mut pushed_ok = false;
@@ -891,9 +895,10 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
                 // Resolve document references if document_ids was provided
                 if let Some(ref doc_ids) = client_msg.document_ids
                     && !doc_ids.is_empty()
-                        && let Some(docs) = resolve_document_refs(state, sid, doc_ids).await {
-                            params["documents"] = docs;
-                        }
+                    && let Some(docs) = resolve_document_refs(state, sid, doc_ids).await
+                {
+                    params["documents"] = docs;
+                }
             }
             // Pass through multimodal content_parts (e.g. text + image_url)
             if let Some(ref parts) = client_msg.content_parts {
@@ -901,9 +906,10 @@ async fn handle_ws_text(socket: &mut WebSocket, agent_id: &str, state: &AppState
             }
             // Pass through attached_context (files/selections added by user)
             if let Some(ref ctx) = client_msg.attached_context
-                && !ctx.is_empty() {
-                    params["attached_context"] = serde_json::json!(ctx);
-                }
+                && !ctx.is_empty()
+            {
+                params["attached_context"] = serde_json::json!(ctx);
+            }
             let intent = acowork_core::protocol::GatewayResponse::IntentReceived {
                 from: "http-ws".to_string(),
                 action: "chat_message".to_string(),
@@ -1375,9 +1381,7 @@ pub async fn get_session_messages(
         .get("cursor")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    let has_more = data
-        .get("has_more")
-        .and_then(|v| v.as_bool());
+    let has_more = data.get("has_more").and_then(|v| v.as_bool());
 
     // ADR-021: Extract total_lines and streaming delta from Runtime response
     let total_lines = data
@@ -1390,8 +1394,16 @@ pub async fn get_session_messages(
         }
         Some(StreamingDeltaResponse {
             line: v.get("line").and_then(|l| l.as_u64()).unwrap_or(0) as usize,
-            role: v.get("role").and_then(|r| r.as_str()).unwrap_or("").to_string(),
-            content: v.get("content").and_then(|c| c.as_str()).unwrap_or("").to_string(),
+            role: v
+                .get("role")
+                .and_then(|r| r.as_str())
+                .unwrap_or("")
+                .to_string(),
+            content: v
+                .get("content")
+                .and_then(|c| c.as_str())
+                .unwrap_or("")
+                .to_string(),
             char_offset: v.get("char_offset").and_then(|c| c.as_u64()).unwrap_or(0) as usize,
         })
     });
@@ -1694,8 +1706,9 @@ pub async fn delete_session(
 
 // ── S1.14: IPC forwarding helpers ──────────────────────────────────────────────
 
-/// Default timeout for waiting for session IPC response (10 seconds)
-const SESSION_IPC_TIMEOUT_SECS: u64 = 10;
+/// Default timeout for waiting for session IPC response.
+const SESSION_IPC_TIMEOUT: std::time::Duration =
+    acowork_core::timeout_config::constants::SESSION_IPC;
 
 /// Forward a session query to Runtime via IPC push and wait for the response.
 ///
@@ -1750,7 +1763,7 @@ async fn forward_session_query(
     drop(mgr); // Release lock before awaiting
 
     // Wait for response with timeout
-    match tokio::time::timeout(std::time::Duration::from_secs(SESSION_IPC_TIMEOUT_SECS), rx).await {
+    match tokio::time::timeout(SESSION_IPC_TIMEOUT, rx).await {
         Ok(Ok(data)) => Ok(data),
         Ok(Err(_)) => Err(ApiError::internal(
             "Session response channel closed unexpectedly",
@@ -1815,7 +1828,7 @@ async fn wait_for_session_response(
         pending.insert(request_id.to_string(), tx);
     }
 
-    match tokio::time::timeout(std::time::Duration::from_secs(SESSION_IPC_TIMEOUT_SECS), rx).await {
+    match tokio::time::timeout(SESSION_IPC_TIMEOUT, rx).await {
         Ok(Ok(data)) => Ok(data),
         Ok(Err(_)) => Err("Session response channel closed".to_string()),
         Err(_) => {
@@ -1878,15 +1891,16 @@ async fn resolve_document_refs(
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             let meta_path = docs_dir.join(format!("{}.meta.json", filename));
             if let Ok(meta_bytes) = std::fs::read_to_string(&meta_path)
-                && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_bytes) {
-                    docs.push(serde_json::json!({
-                        "id": doc_id,
-                        "filename": meta.get("filename").and_then(|v| v.as_str()).unwrap_or(""),
-                        "abs_path": meta.get("abs_path").and_then(|v| v.as_str()).unwrap_or(""),
-                        "format": meta.get("format").and_then(|v| v.as_str()).unwrap_or(""),
-                        "size": meta.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
-                    }));
-                }
+                && let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_bytes)
+            {
+                docs.push(serde_json::json!({
+                    "id": doc_id,
+                    "filename": meta.get("filename").and_then(|v| v.as_str()).unwrap_or(""),
+                    "abs_path": meta.get("abs_path").and_then(|v| v.as_str()).unwrap_or(""),
+                    "format": meta.get("format").and_then(|v| v.as_str()).unwrap_or(""),
+                    "size": meta.get("size_bytes").and_then(|v| v.as_u64()).unwrap_or(0),
+                }));
+            }
             break;
         }
     }

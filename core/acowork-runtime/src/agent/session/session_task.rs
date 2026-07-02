@@ -448,7 +448,7 @@ impl SessionTask {
             core_mut.update_provider(new_provider, model);
         } else {
             let raw = core_mut.provider.clone();
-            let retry_config = crate::providers::reliable::RetryConfig::default();
+            let retry_config = crate::providers::reliable::RetryConfig::from(&core_mut.config.timeouts.retry);
             let mut reliable = crate::providers::reliable::ReliableProvider::new(raw, retry_config);
             if let Some(status) = &session_core.retry_session_status
                 && let Some(handle) = &session_core.retry_wait_handle
@@ -1291,11 +1291,12 @@ impl SessionTask {
                             // (not the fallback chain) to ensure consistent
                             // embeddings during migration.
                             let migration_provider =
-                                crate::embedding::remote::RemoteEmbeddingProvider::with_config(
+                                crate::embedding::remote::RemoteEmbeddingProvider::with_config_and_timeouts(
                                     &embed_endpoint,
                                     None,
                                     &embed_model_id,
                                     embed_dimension,
+                                    &agent_loop.core.config.timeouts,
                                 );
                             let migration_provider =
                                 std::sync::Arc::new(migration_provider)
@@ -1339,11 +1340,12 @@ impl SessionTask {
 
                     // Build the new ONNX provider.
                     let new_onnx_provider =
-                        crate::embedding::remote::RemoteEmbeddingProvider::with_config(
+                        crate::embedding::remote::RemoteEmbeddingProvider::with_config_and_timeouts(
                             &embed_endpoint,
                             None,
                             &embed_model_id,
                             embed_dimension,
+                            &agent_loop.core.config.timeouts,
                         );
                     // Wrap as FallbackEmbeddingProvider with ONNX as primary,
                     // keeping the existing provider chain as fallback (if available).

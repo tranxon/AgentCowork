@@ -1837,7 +1837,10 @@ mod tests {
         ));
 
         let config = RuntimeConfig {
-            iteration_timeout_ms: 100,
+            timeouts: acowork_core::Timeouts {
+                iteration_timeout_ms: 100,
+                ..Default::default()
+            },
             ..Default::default()
         }; // 100ms timeout
         let budget = test_budget();
@@ -2174,8 +2177,11 @@ mod tests {
 
         // Very short iteration timeout so slow_tool gets aborted
         let config = RuntimeConfig {
-            iteration_timeout_ms: 200,
-            tool_timeout_ms: 10000, // tool_timeout is long, iteration timeout is short
+            timeouts: acowork_core::Timeouts {
+                iteration_timeout_ms: 200,
+                tool_timeout_ms: 10000, // tool_timeout is long, iteration timeout is short
+                ..Default::default()
+            },
             ..Default::default()
         };
         let budget = test_budget();
@@ -2282,8 +2288,11 @@ mod tests {
         // tool_timeout_ms is 100ms (shorter than tool execution),
         // iteration_timeout_ms is 30000ms (much longer)
         let config = RuntimeConfig {
-            tool_timeout_ms: 100,
-            iteration_timeout_ms: 30000,
+            timeouts: acowork_core::Timeouts {
+                tool_timeout_ms: 100,
+                iteration_timeout_ms: 30000,
+                ..Default::default()
+            },
             ..Default::default()
         };
         let budget = test_budget();

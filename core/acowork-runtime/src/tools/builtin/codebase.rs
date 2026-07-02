@@ -21,14 +21,13 @@
 //! The tool is conditionally registered: only when the Gateway reports
 //! a running LSP Relay via `AgentHelloConfig.lsp_relay_endpoint`.
 
-use std::time::Duration;
-
+use acowork_core::timeout_config::constants;
 use acowork_core::tools::traits::{Tool, ToolResult, ToolSpec};
 use async_trait::async_trait;
 use serde_json::Value;
 
 /// Timeout for individual LSP requests via the relay.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const REQUEST_TIMEOUT: std::time::Duration = constants::LSP_REQUEST;
 
 /// The codebase tool — proxies LSP requests to the LSP Relay.
 pub struct CodebaseTool {
@@ -175,8 +174,7 @@ impl Tool for CodebaseTool {
                         ok: false,
                         content: String::new(),
                         error: Some(
-                            "Action 'hover' requires 'file', 'line', and 'character'"
-                                .to_string(),
+                            "Action 'hover' requires 'file', 'line', and 'character'".to_string(),
                         ),
                         token_usage: None,
                     });
@@ -199,10 +197,7 @@ impl Tool for CodebaseTool {
                         token_usage: None,
                     });
                 }
-                (
-                    "workspace/symbol",
-                    serde_json::json!({ "query": query }),
-                )
+                ("workspace/symbol", serde_json::json!({ "query": query }))
             }
             "diagnostic" => {
                 if file.is_empty() {
@@ -244,13 +239,7 @@ impl Tool for CodebaseTool {
             "expect_response": true,
         });
 
-        match self
-            .client
-            .post(&url)
-            .json(&request_body)
-            .send()
-            .await
-        {
+        match self.client.post(&url).json(&request_body).send().await {
             Ok(resp) => {
                 let body: Value = resp.json().await.unwrap_or_default();
                 let success = body["success"].as_bool().unwrap_or(false);
